@@ -186,7 +186,7 @@ Describe 'Resolve-VMView' {
 
     It 'returns the view when exactly one match exists' {
         $fakeView = [pscustomobject]@{ Name = 'SRV-APP-01' }
-        $index = @{ 'SRV-APP-01' = [System.Collections.Generic.List[object]]@($fakeView) }
+        $index = @{ 'SRV-APP-01' = @($fakeView) }
         $result = Resolve-VMView -VmIndex $index -VMName 'SRV-APP-01'
         $result.Error | Should -BeNullOrEmpty
         $result.View  | Should -Be $fakeView
@@ -195,7 +195,7 @@ Describe 'Resolve-VMView' {
     It 'returns an error when multiple VMs share the same name' {
         $view1 = [pscustomobject]@{ Name = 'SRV-DUP' }
         $view2 = [pscustomobject]@{ Name = 'SRV-DUP' }
-        $index = @{ 'SRV-DUP' = [System.Collections.Generic.List[object]]@($view1, $view2) }
+        $index = @{ 'SRV-DUP' = @($view1, $view2) }
         $result = Resolve-VMView -VmIndex $index -VMName 'SRV-DUP'
         $result.View  | Should -BeNullOrEmpty
         $result.Error | Should -BeLike '*ambigu*'
@@ -304,7 +304,9 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'returns success with the first candidate when it works' {
-        Mock Invoke-VMScript { [pscustomobject]@{ ScriptOutput = 'ok' } }
+        Mock Invoke-GuestScriptSafe {
+            [pscustomobject]@{ Success = $true; Output = 'ok'; Error = $null }
+        }
 
         $candidates = @(New-FakeCred 'ADMIN-01' '.\Administrator')
 
@@ -320,10 +322,12 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
 
     It 'falls back to a second candidate when the first fails' {
         $script:fallbackCallCount = 0
-        Mock Invoke-VMScript {
+        Mock Invoke-GuestScriptSafe {
             $script:fallbackCallCount++
-            if ($script:fallbackCallCount -eq 1) { throw 'Auth failed' }
-            [pscustomobject]@{ ScriptOutput = 'ok' }
+            if ($script:fallbackCallCount -eq 1) {
+                return [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
+            }
+            return [pscustomobject]@{ Success = $true; Output = 'ok'; Error = $null }
         }
 
         $candidates = @(
@@ -342,7 +346,9 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'returns failure when all candidates fail' {
-        Mock Invoke-VMScript { throw 'Auth failed' }
+        Mock Invoke-GuestScriptSafe {
+            [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
+        }
 
         $candidates = @(
             (New-FakeCred 'ADMIN-01' '.\Administrator'),
@@ -361,11 +367,10 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'tries the preferred credential first' {
-        $script:preferredTriedFirst = $false
-        Mock Invoke-VMScript {
-            # Only the Administrateur (ADMIN-02) call should be first
-            $script:preferredTriedFirst = ($GuestCredential.UserName -eq '.\Administrateur')
-            throw 'Auth failed'
+        $script:triedUsers = [System.Collections.Generic.List[string]]::new()
+        Mock Invoke-GuestScriptSafe {
+            $script:triedUsers.Add($GuestCredential.UserName)
+            return [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
         }
 
         $candidates = @(
@@ -380,6 +385,6 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             -CredentialCandidates $candidates `
             -PreferredCredentialLabel 'ADMIN-02' | Out-Null
 
-        $script:preferredTriedFirst | Should -BeTrue
+        $script:triedUsers[0] | Should -Be '.\Administrateur'
     }
 }
