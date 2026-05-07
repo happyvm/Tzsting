@@ -236,7 +236,7 @@ Describe 'Invoke-GuestScriptSafe' {
     }
 
     It 'returns Success=true and trimmed output on success' {
-        Mock Invoke-VMScript {
+        Mock -CommandName 'Invoke-VMScript' -MockWith {
             [pscustomobject]@{ ScriptOutput = "  hello`r  " }
         }
 
@@ -257,7 +257,7 @@ Describe 'Invoke-GuestScriptSafe' {
     }
 
     It 'returns Success=false and the exception message on failure' {
-        Mock Invoke-VMScript { throw 'Connection refused' }
+        Mock -CommandName 'Invoke-VMScript' -MockWith { throw 'Connection refused' }
 
         $cred = [System.Management.Automation.PSCredential]::new(
             'user',
@@ -281,7 +281,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
         Import-FunctionFromScript -Name 'Invoke-GuestScriptSafe'
         Import-FunctionFromScript -Name 'Invoke-WindowsGuestScriptWithCredentialFallback'
 
-        function New-FakeCred {
+        function Get-FakeCredential {
             param([string]$Label, [string]$User)
             $sec = ConvertTo-SecureString 'x' -AsPlainText -Force
             [pscustomobject]@{
@@ -308,7 +308,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             [pscustomobject]@{ Success = $true; Output = 'ok'; Error = $null }
         }
 
-        $candidates = @(New-FakeCred 'ADMIN-01' '.\Administrator')
+        $candidates = @(Get-FakeCredential 'ADMIN-01' '.\Administrator')
 
         $result = Invoke-WindowsGuestScriptWithCredentialFallback `
             -VMObject ([pscustomobject]@{}) `
@@ -321,18 +321,18 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'falls back to a second candidate when the first fails' {
-        $script:fallbackCallCount = 0
+        $script:guestCallCount = 0
         Mock Invoke-GuestScriptSafe {
-            $script:fallbackCallCount++
-            if ($script:fallbackCallCount -eq 1) {
-                return [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
+            $script:guestCallCount++
+            if ($script:guestCallCount -eq 1) {
+                return [pscustomobject]@{ Success = $false; Output = $null; Error = 'fail' }
             }
             return [pscustomobject]@{ Success = $true; Output = 'ok'; Error = $null }
         }
 
         $candidates = @(
-            (New-FakeCred 'ADMIN-01' '.\Administrator'),
-            (New-FakeCred 'ADMIN-02' '.\Administrateur')
+            (Get-FakeCredential 'ADMIN-01' '.\Administrator'),
+            (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
         $result = Invoke-WindowsGuestScriptWithCredentialFallback `
@@ -343,6 +343,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
 
         $result.Success         | Should -BeTrue
         $result.CredentialLabel | Should -Be 'ADMIN-02'
+        $script:guestCallCount  | Should -Be 2
     }
 
     It 'returns failure when all candidates fail' {
@@ -351,8 +352,8 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
         }
 
         $candidates = @(
-            (New-FakeCred 'ADMIN-01' '.\Administrator'),
-            (New-FakeCred 'ADMIN-02' '.\Administrateur')
+            (Get-FakeCredential 'ADMIN-01' '.\Administrator'),
+            (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
         $result = Invoke-WindowsGuestScriptWithCredentialFallback `
@@ -367,24 +368,24 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'tries the preferred credential first' {
-        $script:triedUsers = [System.Collections.Generic.List[string]]::new()
         Mock Invoke-GuestScriptSafe {
-            $script:triedUsers.Add($GuestCredential.UserName)
             return [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
         }
 
         $candidates = @(
-            (New-FakeCred 'ADMIN-01' '.\Administrator'),
-            (New-FakeCred 'ADMIN-02' '.\Administrateur')
+            (Get-FakeCredential 'ADMIN-01' '.\Administrator'),
+            (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
-        Invoke-WindowsGuestScriptWithCredentialFallback `
+        $result = Invoke-WindowsGuestScriptWithCredentialFallback `
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
             -CredentialCandidates $candidates `
-            -PreferredCredentialLabel 'ADMIN-02' | Out-Null
+            -PreferredCredentialLabel 'ADMIN-02'
 
-        $script:triedUsers[0] | Should -Be '.\Administrateur'
+        # When ADMIN-02 is preferred it is tried first, so its label appears
+        # first in the combined error string built by the function.
+        $result.Error.IndexOf('ADMIN-02') | Should -BeLessThan ($result.Error.IndexOf('ADMIN-01'))
     }
 }
