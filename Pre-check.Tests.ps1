@@ -1,8 +1,23 @@
-$script:repoRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { (Get-Location).Path }
+$script:repoRoot = $null
+if ($PSScriptRoot) {
+    $script:repoRoot = $PSScriptRoot
+} elseif ($PSCommandPath) {
+    $script:repoRoot = Split-Path -Parent $PSCommandPath
+} elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+    $script:repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    $script:repoRoot = (Get-Location).Path
+}
+
+if ([string]::IsNullOrWhiteSpace($script:repoRoot)) {
+    throw 'Unable to determine repository root for Pre-check.Tests.ps1'
+}
+
+$script:repoRoot = (Resolve-Path -LiteralPath $script:repoRoot).Path
 $script:scriptPath = Join-Path $script:repoRoot 'Pre-check.ps1'
 $script:ast = $null
 
-function Import-FunctionFromScript {
+function global:Import-FunctionFromScript {
     param(
         [Parameter(Mandatory = $true)][string]$Name
     )
