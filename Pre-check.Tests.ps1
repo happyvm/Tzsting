@@ -36,7 +36,7 @@ Describe 'Pre-check.ps1 - quality gates' {
             return
         }
 
-        $issues = Invoke-ScriptAnalyzer -Path $script:scriptPath -Severity Warning, Error
+        $issues = Invoke-ScriptAnalyzer -Path $PSScriptRoot -Recurse -Severity Error, Warning
         $issues | Should -BeNullOrEmpty
     }
 }
