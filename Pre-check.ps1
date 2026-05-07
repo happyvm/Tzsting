@@ -343,7 +343,9 @@ foreach ($file in @($detailCsv, $summaryCsv, $errorCsv)) {
 
 $CsvDelimiter = ';'
 
+Write-Host ("[STEP] Start reading CSV: {0}" -f $InputCsv)
 $rawRows = @(Import-Csv -Path $InputCsv -Delimiter $CsvDelimiter)
+Write-Host ("[STEP] End reading CSV - {0} line(s) loaded" -f $rawRows.Count)
 
 if (-not $rawRows -or $rawRows.Count -eq 0) {
     throw "Le CSV est vide."
@@ -478,6 +480,64 @@ try {
     }
 
     # ========================================================
+    # Tagging en début de traitement
+    # ========================================================
+
+    Write-Host "[STEP] Start tagging"
+
+    $script:tagCache = @{}
+    $tagStatusByVmLot = @{}
+    $detailRows = New-Object System.Collections.Generic.List[object]
+    $errorRows  = New-Object System.Collections.Generic.List[object]
+
+    $tagCounter = 0
+    $tagTotal = $inputRows.Count
+
+    foreach ($row in $inputRows) {
+        $tagCounter++
+        $vmName = $row.VMName
+        $lotName = $row.Lot
+        $rowKey = "$vmName||$lotName"
+        $tagStatusByVmLot[$rowKey] = "NotProcessed"
+
+        Write-Host ("Tagging {0}/{1}: {2} (lot {3})" -f $tagCounter, $tagTotal, $vmName, $lotName)
+
+        if (-not $vmIndex.ContainsKey($vmName)) {
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VM introuvable dans vCenter" })
+            continue
+        }
+
+        $matches = @($vmIndex[$vmName])
+        if ($matches.Count -gt 1) {
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "Nom de VM ambigu : plusieurs VM portent ce nom dans vCenter" })
+            continue
+        }
+
+        try {
+            $vmObject = Get-VIObjectByVIView -VIView $matches[0] -ErrorAction Stop
+            $lotTag = Get-OrCreate-LotTag -LotName $lotName -Category $tagCategory
+            $currentAssignments = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue)
+            $assignmentsToRemove = @($currentAssignments | Where-Object { $_.Tag.Name -ne $lotName })
+            if ($assignmentsToRemove.Count -gt 0) { $assignmentsToRemove | Remove-TagAssignment -Confirm:$false | Out-Null }
+            $alreadyAssigned = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue | Where-Object { $_.Tag.Name -eq $lotName })
+
+            if ($alreadyAssigned.Count -eq 0) {
+                New-TagAssignment -Tag $lotTag -Entity $vmObject -ErrorAction Stop | Out-Null
+                $tagStatusByVmLot[$rowKey] = "Assigned"
+            }
+            else {
+                $tagStatusByVmLot[$rowKey] = "AlreadyAssigned"
+            }
+        }
+        catch {
+            $tagStatusByVmLot[$rowKey] = "TagError"
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = $_.Exception.Message })
+        }
+    }
+
+    Write-Host "[STEP] End tagging"
+
+    # ========================================================
     # Détermination des credentials nécessaires
     # ========================================================
 
@@ -531,6 +591,7 @@ try {
     $windowsGuestCredentials = @()
     $linuxGuestCredential = $null
 
+    Write-Host "[STEP] Start check password"
     if (-not $SkipGuestOperations -and $needWindowsCredentials) {
         foreach ($definition in ($WindowsCredentialDefinitions | Where-Object { $_.Enabled -eq $true })) {
             $credential = Get-Credential `
@@ -557,13 +618,11 @@ try {
         }
     }
 
+    Write-Host "[STEP] End check password"
+
     # ========================================================
     # Traitement
     # ========================================================
-
-    $script:tagCache = @{}
-    $detailRows = New-Object System.Collections.Generic.List[object]
-    $errorRows  = New-Object System.Collections.Generic.List[object]
 
     $vmCounter = 0
     $vmTotal = $inputRows.Count
@@ -596,50 +655,9 @@ try {
         }
 
         $vmView = $matches[0]
-        $vmObject = $null
-        $tagStatus = "NotProcessed"
-
-        try {
-            $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
-            $lotTag = Get-OrCreate-LotTag -LotName $lotName -Category $tagCategory
-
-            $currentAssignments = @(
-                Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue
-            )
-
-            $assignmentsToRemove = @(
-                $currentAssignments | Where-Object { $_.Tag.Name -ne $lotName }
-            )
-
-            if ($assignmentsToRemove.Count -gt 0) {
-                $assignmentsToRemove | Remove-TagAssignment -Confirm:$false | Out-Null
-            }
-
-            $currentAssignments = @(
-                Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue
-            )
-
-            $alreadyAssigned = @(
-                $currentAssignments | Where-Object { $_.Tag.Name -eq $lotName }
-            )
-
-            if ($alreadyAssigned.Count -eq 0) {
-                New-TagAssignment -Tag $lotTag -Entity $vmObject -ErrorAction Stop | Out-Null
-                $tagStatus = "Assigned"
-            }
-            else {
-                $tagStatus = "AlreadyAssigned"
-            }
-        }
-        catch {
-            $tagStatus = "TagError"
-
-            $errorRows.Add([PSCustomObject]@{
-                VMName = $vmName
-                Lot    = $lotName
-                Error  = $_.Exception.Message
-            })
-        }
+        $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
+        $rowKey = "$vmName||$lotName"
+        $tagStatus = if ($tagStatusByVmLot.ContainsKey($rowKey)) { $tagStatusByVmLot[$rowKey] } else { "NotProcessed" }
 
         # ----------------------------------------------------
         # NB_last_backup
