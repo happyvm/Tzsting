@@ -268,14 +268,14 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         [string]$ScriptType,
 
         [Parameter(Mandatory = $true)]
-        [object[]]$AuthCandidates,
+        [object[]]$CredentialCandidates,
 
-        [string]$PreferredAuthLabel,
+        [string]$PreferredCredentialLabel,
 
         [int]$ToolsWaitSecs = 20
     )
 
-    if (-not $AuthCandidates -or $AuthCandidates.Count -eq 0) {
+    if (-not $CredentialCandidates -or $CredentialCandidates.Count -eq 0) {
         return [PSCustomObject]@{
             Success         = $false
             Output          = $null
@@ -285,13 +285,15 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($PreferredAuthLabel)) {
-        $preferred = @($AuthCandidates | Where-Object { $_.Label -eq $PreferredAuthLabel })
-        $others    = @($AuthCandidates | Where-Object { $_.Label -ne $PreferredAuthLabel })
-        $orderedCandidates = @($preferred + $others)
+    if (-not [string]::IsNullOrWhiteSpace($PreferredCredentialLabel)) {
+        $ordered = [System.Collections.Generic.List[object]]::new()
+        foreach ($c in $CredentialCandidates) {
+            if ($c.Label -eq $PreferredCredentialLabel) { $ordered.Insert(0, $c) } else { $ordered.Add($c) }
+        }
+        $orderedCandidates = $ordered
     }
     else {
-        $orderedCandidates = @($AuthCandidates)
+        $orderedCandidates = $CredentialCandidates
     }
 
     $attemptErrors = New-Object System.Collections.Generic.List[string]
@@ -562,6 +564,7 @@ try {
 
     $script:tagCache = @{}
     $tagStatusByVmLot = @{}
+    $vmObjectCache = @{}
     $detailRows = New-Object System.Collections.Generic.List[object]
     $errorRows  = New-Object System.Collections.Generic.List[object]
 
@@ -589,6 +592,7 @@ try {
 
         try {
             $vmObject = Get-VIObjectByVIView -VIView $resolved.View -ErrorAction Stop
+            $vmObjectCache[$vmName] = $vmObject
             $lotTag = Get-OrCreate-LotTag -LotName $lotName -Category $tagCategory
             $currentAssignments = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue)
             $assignmentsToRemove = @($currentAssignments | Where-Object { $_.Tag.Name -ne $lotName })
@@ -731,13 +735,19 @@ try {
 
         $vmView = $resolved.View
 
-        try {
-            $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
+        if ($vmObjectCache.ContainsKey($vmName)) {
+            $vmObject = $vmObjectCache[$vmName]
         }
-        catch {
-            Write-ExecutionLog "Impossible de résoudre l'objet VIView pour $vmName : $_" -Level ERROR
-            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VIView resolution failed: $_" })
-            continue
+        else {
+            try {
+                $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
+                $vmObjectCache[$vmName] = $vmObject
+            }
+            catch {
+                Write-ExecutionLog "Impossible de résoudre l'objet VIView pour $vmName : $_" -Level ERROR
+                $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VIView resolution failed: $_" })
+                continue
+            }
         }
 
         $rowKey = "$vmName||$lotName"
