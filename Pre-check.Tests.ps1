@@ -242,7 +242,7 @@ Describe 'Invoke-GuestScriptSafe' {
 
         $cred = [System.Management.Automation.PSCredential]::new(
             'user',
-            (ConvertTo-SecureString 'pass' -AsPlainText -Force)
+            [System.Security.SecureString]::new()
         )
 
         $result = Invoke-GuestScriptSafe `
@@ -261,7 +261,7 @@ Describe 'Invoke-GuestScriptSafe' {
 
         $cred = [System.Management.Automation.PSCredential]::new(
             'user',
-            (ConvertTo-SecureString 'pass' -AsPlainText -Force)
+            [System.Security.SecureString]::new()
         )
 
         $result = Invoke-GuestScriptSafe `
@@ -283,7 +283,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
 
         function Get-FakeCredential {
             param([string]$Label, [string]$User)
-            $sec = ConvertTo-SecureString 'x' -AsPlainText -Force
+            $sec = [System.Security.SecureString]::new()
             [pscustomobject]@{
                 Label      = $Label
                 UserName   = $User
@@ -297,7 +297,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
-            -CredentialCandidates @()
+            -AuthCandidates @()
 
         $result.Success | Should -BeFalse
         $result.Error   | Should -Not -BeNullOrEmpty
@@ -314,7 +314,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
-            -CredentialCandidates $candidates
+            -AuthCandidates $candidates
 
         $result.Success         | Should -BeTrue
         $result.CredentialLabel | Should -Be 'ADMIN-01'
@@ -339,7 +339,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
-            -CredentialCandidates $candidates
+            -AuthCandidates $candidates
 
         $result.Success         | Should -BeTrue
         $result.CredentialLabel | Should -Be 'ADMIN-02'
@@ -360,7 +360,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
-            -CredentialCandidates $candidates
+            -AuthCandidates $candidates
 
         $result.Success | Should -BeFalse
         $result.Error   | Should -BeLike '*ADMIN-01*'
@@ -381,8 +381,8 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
-            -CredentialCandidates $candidates `
-            -PreferredCredentialLabel 'ADMIN-02'
+            -AuthCandidates $candidates `
+            -PreferredAuthLabel 'ADMIN-02'
 
         # When ADMIN-02 is preferred it is tried first, so its label appears
         # first in the combined error string built by the function.
