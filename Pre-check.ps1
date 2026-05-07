@@ -591,6 +591,8 @@ try {
     $windowsGuestCredentials = @()
     $linuxGuestCredential = $null
 
+    $preferredWindowsCredentialLabel = $null
+
     Write-Host "[STEP] Start check password"
     if (-not $SkipGuestOperations -and $needWindowsCredentials) {
         foreach ($definition in ($WindowsCredentialDefinitions | Where-Object { $_.Enabled -eq $true })) {
@@ -751,6 +753,7 @@ try {
                     if ($null -eq $linuxGuestCredential) {
                         $uptimeStatus = "Error"
                         $guestOperationError = "Aucun credential Linux configuré ou saisi."
+                        $linuxCredentialLabelUsed = "nopassword"
                     }
                     else {
                         $linuxScript = @'
@@ -789,6 +792,7 @@ cat /proc/uptime | awk '{print $1}'
                         else {
                             $uptimeStatus = "Error"
                             $guestOperationError = $uptimeResult.Error
+                            $linuxCredentialLabelUsed = "nopassword"
                         }
                     }
                 }
@@ -805,6 +809,10 @@ cat /proc/uptime | awk '{print $1}'
                         ($windowsYear -eq $null -and $guestFullName -notmatch "2003")
                     )
 
+                    if (-not $windowsGuestCredentials -or $windowsGuestCredentials.Count -eq 0) {
+                        $windowsCredentialLabelUsed = "nopassword"
+                    }
+
                     # Windows 2008+ : uptime en jours
                     if ($isWindows2008OrHigher) {
                         $windowsUptimeScript = @'
@@ -816,12 +824,13 @@ wmic os get LastBootUpTime /value
                             -ScriptText $windowsUptimeScript `
                             -ScriptType Bat `
                             -CredentialCandidates $windowsGuestCredentials `
-                            -PreferredCredentialLabel $windowsCredentialLabelUsed `
+                            -PreferredCredentialLabel $preferredWindowsCredentialLabel `
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($uptimeResult.Success) {
                             $windowsCredentialLabelUsed = $uptimeResult.CredentialLabel
                             $windowsCredentialUserUsed  = $uptimeResult.CredentialUser
+                            $preferredWindowsCredentialLabel = $uptimeResult.CredentialLabel
 
                             $uptimeDays = Get-UptimeDaysFromWmicOutput -WmicOutput $uptimeResult.Output
 
@@ -838,6 +847,7 @@ wmic os get LastBootUpTime /value
                         else {
                             $uptimeStatus = "Error"
                             $guestOperationError = $uptimeResult.Error
+                            $windowsCredentialLabelUsed = "nopassword"
                             $windowsCredentialAttemptErrors = $uptimeResult.Error
                         }
                     }
@@ -860,18 +870,20 @@ ipconfig /all > "$ipconfigPathCandidate"
                             -ScriptText $ipconfigScript `
                             -ScriptType Bat `
                             -CredentialCandidates $windowsGuestCredentials `
-                            -PreferredCredentialLabel $windowsCredentialLabelUsed `
+                            -PreferredCredentialLabel $preferredWindowsCredentialLabel `
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($ipconfigResult.Success) {
                             $windowsCredentialLabelUsed = $ipconfigResult.CredentialLabel
                             $windowsCredentialUserUsed  = $ipconfigResult.CredentialUser
+                            $preferredWindowsCredentialLabel = $ipconfigResult.CredentialLabel
                             $ipconfigPath = $ipconfigPathCandidate
                             $ipconfigStatus = "OK"
                         }
                         else {
                             $ipconfigStatus = "Error"
                             $ipconfigError = $ipconfigResult.Error
+                            $windowsCredentialLabelUsed = "nopassword"
 
                             if ([string]::IsNullOrWhiteSpace($windowsCredentialAttemptErrors)) {
                                 $windowsCredentialAttemptErrors = $ipconfigResult.Error
@@ -895,8 +907,6 @@ ipconfig /all > "$ipconfigPathCandidate"
             PowerState                    = $vmView.Runtime.PowerState
 
             GuestFamily                   = $guestFamily
-            GuestFullName                 = $guestFullName
-            GuestId                       = $guestId
             WindowsYearDetected           = $windowsYear
             VMwareToolsRunning            = $toolsRunning
 
