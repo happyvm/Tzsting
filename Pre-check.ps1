@@ -126,7 +126,7 @@ function Get-GuestFamily {
 
     $text = "$GuestFullName $GuestId"
 
-    if ($text -match "(?i)windows|win") {
+    if ($text -match "(?i)\bwindows?\b") {
         return "Windows"
     }
 
