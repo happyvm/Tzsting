@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Script de lotissement de migration VMware.
 
