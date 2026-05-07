@@ -848,11 +848,11 @@ wmic os get LastBootUpTime /value
                     # Windows 2003 / 2008 / 2008 R2 : ipconfig /all dans C:\temp
                     if ($isWindows2003 -or $isWindows2008) {
                         $safeVmFileName = ($vmName -replace '[\\/:*?"<>| ]', '_')
-                        $ipconfigPath = "C:\temp\ipconfig_all_$safeVmFileName.txt"
+                        $ipconfigPathCandidate = "C:\temp\ipconfig_all_$safeVmFileName.txt"
 
                         $ipconfigScript = @"
 if not exist C:\temp mkdir C:\temp
-ipconfig /all > "$ipconfigPath"
+ipconfig /all > "$ipconfigPathCandidate"
 "@
 
                         $ipconfigResult = Invoke-WindowsGuestScriptWithCredentialFallback `
@@ -866,6 +866,7 @@ ipconfig /all > "$ipconfigPath"
                         if ($ipconfigResult.Success) {
                             $windowsCredentialLabelUsed = $ipconfigResult.CredentialLabel
                             $windowsCredentialUserUsed  = $ipconfigResult.CredentialUser
+                            $ipconfigPath = $ipconfigPathCandidate
                             $ipconfigStatus = "OK"
                         }
                         else {
