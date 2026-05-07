@@ -321,11 +321,11 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'falls back to a second candidate when the first fails' {
-        $script:fallbackCallCount = 0
+        $script:guestCallCount = 0
         Mock Invoke-GuestScriptSafe {
-            $script:fallbackCallCount++
-            if ($script:fallbackCallCount -eq 1) {
-                return [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
+            $script:guestCallCount++
+            if ($script:guestCallCount -eq 1) {
+                return [pscustomobject]@{ Success = $false; Output = $null; Error = 'fail' }
             }
             return [pscustomobject]@{ Success = $true; Output = 'ok'; Error = $null }
         }
@@ -343,6 +343,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
 
         $result.Success         | Should -BeTrue
         $result.CredentialLabel | Should -Be 'ADMIN-02'
+        $script:guestCallCount  | Should -Be 2
     }
 
     It 'returns failure when all candidates fail' {
@@ -367,9 +368,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
     }
 
     It 'tries the preferred credential first' {
-        $script:triedUsers = [System.Collections.Generic.List[string]]::new()
         Mock Invoke-GuestScriptSafe {
-            $script:triedUsers.Add($GuestCredential.UserName)
             return [pscustomobject]@{ Success = $false; Output = $null; Error = 'Auth failed' }
         }
 
@@ -378,13 +377,15 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
-        Invoke-WindowsGuestScriptWithCredentialFallback `
+        $result = Invoke-WindowsGuestScriptWithCredentialFallback `
             -VMObject ([pscustomobject]@{}) `
             -ScriptText 'dir' `
             -ScriptType Bat `
             -CredentialCandidates $candidates `
-            -PreferredCredentialLabel 'ADMIN-02' | Out-Null
+            -PreferredCredentialLabel 'ADMIN-02'
 
-        $script:triedUsers[0] | Should -Be '.\Administrateur'
+        # When ADMIN-02 is preferred it is tried first, so its label appears
+        # first in the combined error string built by the function.
+        $result.Error.IndexOf('ADMIN-02') | Should -BeLessThan ($result.Error.IndexOf('ADMIN-01'))
     }
 }
