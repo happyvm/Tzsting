@@ -42,7 +42,7 @@ function global:Import-FunctionFromScript {
 
         if ($parseErrors) {
             $messages = ($parseErrors | ForEach-Object { $_.Message }) -join '; '
-            throw "Unable to parse $scriptPath: $messages"
+            throw "Unable to parse ${scriptPath}: $messages"
         }
     }
 
