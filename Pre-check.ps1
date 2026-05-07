@@ -47,8 +47,6 @@ param(
 
     [string]$CustomAttributeName = "NB_last_backup",
 
-    [char]$Delimiter = ';',
-
     [int]$ToolsWaitSecs = 20,
 
     [switch]$SkipGuestOperations
@@ -343,7 +341,9 @@ foreach ($file in @($detailCsv, $summaryCsv, $errorCsv)) {
     }
 }
 
-$rawRows = @(Import-Csv -Path $InputCsv -Delimiter $Delimiter)
+$CsvDelimiter = ';'
+
+$rawRows = @(Import-Csv -Path $InputCsv -Delimiter $CsvDelimiter)
 
 if (-not $rawRows -or $rawRows.Count -eq 0) {
     throw "Le CSV est vide."
@@ -922,14 +922,14 @@ ipconfig /all > "$ipconfigPath"
 
     $detailRows |
         Sort-Object Lot, VMName |
-        Export-Csv -Path $detailCsv -NoTypeInformation -Encoding UTF8 -Delimiter $Delimiter
+        Export-Csv -Path $detailCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
     $summaryRows |
-        Export-Csv -Path $summaryCsv -NoTypeInformation -Encoding UTF8 -Delimiter $Delimiter
+        Export-Csv -Path $summaryCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
     if ($errorRows.Count -gt 0) {
         $errorRows |
-            Export-Csv -Path $errorCsv -NoTypeInformation -Encoding UTF8 -Delimiter $Delimiter
+            Export-Csv -Path $errorCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
     }
 
     Write-Host ""
