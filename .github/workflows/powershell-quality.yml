@@ -21,6 +21,15 @@ jobs:
           Install-Module -Name Pester -Scope CurrentUser -Force -SkipPublisherCheck
           Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
 
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found $($issues.Count) error(s)."
+          }
+
       - name: Run Pester tests
         shell: pwsh
         run: |
