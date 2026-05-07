@@ -32,6 +32,15 @@
     migration_lot_detail.csv
     migration_lot_summary.csv
     migration_lot_errors.csv
+
+.PARAMETER LogFile
+    Chemin vers un fichier de log. Si vide (défaut), la sortie va uniquement sur la console.
+
+.PARAMETER UptimeThresholdDays
+    Seuil d'uptime en jours au-delà duquel UptimeOver45Days est vrai (défaut : 45).
+
+.PARAMETER CsvDelimiter
+    Délimiteur CSV pour la lecture du fichier d'entrée et l'écriture des fichiers de sortie (défaut : ;).
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -56,7 +65,10 @@ param(
     [string]$LogFile = "",
 
     # Seuil d'uptime en jours au-delà duquel une VM est signalée (UptimeOver45Days).
-    [int]$UptimeThresholdDays = 45
+    [int]$UptimeThresholdDays = 45,
+
+    # Délimiteur utilisé pour la lecture du CSV d'entrée et l'écriture des CSV de sortie.
+    [string]$CsvDelimiter = ";"
 )
 
 # ============================================================
@@ -391,8 +403,6 @@ foreach ($file in @($detailCsv, $summaryCsv, $errorCsv)) {
     }
 }
 
-$CsvDelimiter = ';'
-
 Write-Log ("Lecture du CSV : {0}" -f $InputCsv)
 $rawRows = @(Import-Csv -Path $InputCsv -Delimiter $CsvDelimiter)
 Write-Log ("{0} ligne(s) chargée(s)" -f $rawRows.Count)
@@ -574,7 +584,6 @@ try {
         $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $vmName
 
         if ($resolved.Error) {
-            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = $resolved.Error })
             continue
         }
 
@@ -583,7 +592,9 @@ try {
             $lotTag = Get-OrCreate-LotTag -LotName $lotName -Category $tagCategory
             $currentAssignments = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue)
             $assignmentsToRemove = @($currentAssignments | Where-Object { $_.Tag.Name -ne $lotName })
-            if ($assignmentsToRemove.Count -gt 0) { $assignmentsToRemove | Remove-TagAssignment -Confirm:$false | Out-Null }
+            if ($assignmentsToRemove.Count -gt 0 -and $PSCmdlet.ShouldProcess($vmName, "Supprimer le tag existant '$($assignmentsToRemove[0].Tag.Name)'")) {
+                $assignmentsToRemove | Remove-TagAssignment -Confirm:$false | Out-Null
+            }
             $alreadyAssigned = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue | Where-Object { $_.Tag.Name -eq $lotName })
 
             if ($alreadyAssigned.Count -eq 0) {
@@ -655,7 +666,7 @@ try {
         }
     }
 
-    $windowsGuestCredentials = @()
+    $windowsGuestCredentials = [System.Collections.Generic.List[object]]::new()
     $linuxGuestCredential = $null
 
     $preferredWindowsCredentialLabel = $null
@@ -667,11 +678,11 @@ try {
                 -UserName $definition.UserName `
                 -Message "Mot de passe du compte Windows [$($definition.Label)] - $($definition.UserName)"
 
-            $windowsGuestCredentials += [PSCustomObject]@{
+            $windowsGuestCredentials.Add([PSCustomObject]@{
                 Label      = $definition.Label
                 UserName   = $credential.UserName
                 Credential = $credential
-            }
+            })
         }
     }
 
@@ -866,6 +877,8 @@ awk '{print $1}' /proc/uptime
                             $linuxCredentialLabelUsed = "nopassword"
                         }
                     }
+
+                    $ipconfigStatus = "NotApplicable"
                 }
 
                 # ------------------------------
@@ -925,6 +938,7 @@ wmic os get LastBootUpTime /value
                     }
 
                     # Windows 2003 / 2008 / 2008 R2 : ipconfig /all dans C:\temp
+                    # Versions plus récentes : ipconfig non applicable
                     if ($isWindows2003 -or $isWindows2008) {
                         $safeVmFileName = ($vmName -replace '[\\/:*?"<>| ]', '_')
                         $ipconfigPathCandidate = "C:\temp\ipconfig_all_$safeVmFileName.txt"
@@ -961,6 +975,9 @@ ipconfig /all > "$ipconfigPathCandidate"
                                 $windowsCredentialAttemptErrors = $windowsCredentialAttemptErrors + " || " + $ipconfigResult.Error
                             }
                         }
+                    }
+                    else {
+                        $ipconfigStatus = "NotApplicable"
                     }
                 }
             }
@@ -1067,5 +1084,5 @@ ipconfig /all > "$ipconfigPathCandidate"
     $summaryRows | Format-Table -AutoSize
 }
 finally {
-    Disconnect-VIServer -Server $VCenter -Confirm:$false | Out-Null
+    Disconnect-VIServer -Server $VCenter -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 }
