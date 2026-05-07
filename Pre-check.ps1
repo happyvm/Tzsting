@@ -350,15 +350,27 @@ if (-not $rawRows -or $rawRows.Count -eq 0) {
 }
 
 $columns = @($rawRows[0].PSObject.Properties.Name)
+$normalizedColumnMap = @{}
 
-if ($columns -notcontains "vmname" -or $columns -notcontains "tag") {
-    throw "Le CSV doit contenir les colonnes suivantes : vmname, tag"
+foreach ($column in $columns) {
+    $normalized = ([string]$column).Trim().ToLowerInvariant()
+    if (-not [string]::IsNullOrWhiteSpace($normalized) -and -not $normalizedColumnMap.ContainsKey($normalized)) {
+        $normalizedColumnMap[$normalized] = $column
+    }
 }
+
+if (-not $normalizedColumnMap.ContainsKey("vmname") -or -not $normalizedColumnMap.ContainsKey("tag")) {
+    $detectedColumns = ($columns -join ", ")
+    throw "Le CSV doit contenir les colonnes suivantes : vmname, tag. Colonnes détectées : $detectedColumns"
+}
+
+$vmNameColumn = $normalizedColumnMap["vmname"]
+$tagColumn = $normalizedColumnMap["tag"]
 
 $inputRows = @(
     foreach ($row in $rawRows) {
-        $vmName = ([string]$row.vmname).Trim()
-        $lot    = ([string]$row.tag).Trim()
+        $vmName = ([string]$row.$vmNameColumn).Trim()
+        $lot    = ([string]$row.$tagColumn).Trim()
 
         if (-not [string]::IsNullOrWhiteSpace($vmName) -and -not [string]::IsNullOrWhiteSpace($lot)) {
             [PSCustomObject]@{
