@@ -1,10 +1,25 @@
-$script:scriptPath = Join-Path $PSScriptRoot 'Pre-check.ps1'
-$script:ast = [System.Management.Automation.Language.Parser]::ParseFile($script:scriptPath, [ref]$null, [ref]$null)
+$script:repoRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { (Get-Location).Path }
+$script:scriptPath = Join-Path $script:repoRoot 'Pre-check.ps1'
+$script:ast = $null
 
 function Import-FunctionFromScript {
     param(
         [Parameter(Mandatory = $true)][string]$Name
     )
+
+    if (-not (Test-Path -LiteralPath $script:scriptPath)) {
+        throw "Script file not found: $script:scriptPath"
+    }
+
+    if (-not $script:ast) {
+        $parseErrors = $null
+        $script:ast = [System.Management.Automation.Language.Parser]::ParseFile($script:scriptPath, [ref]$null, [ref]$parseErrors)
+
+        if ($parseErrors) {
+            $messages = ($parseErrors | ForEach-Object { $_.Message }) -join '; '
+            throw "Unable to parse $script:scriptPath: $messages"
+        }
+    }
 
     $funcAst = $script:ast.Find({
         param($node)
@@ -20,6 +35,8 @@ function Import-FunctionFromScript {
 
 Describe 'Pre-check.ps1 - quality gates' {
     It 'is syntactically valid PowerShell' {
+        Test-Path -LiteralPath $script:scriptPath | Should -BeTrue
+
         $tokens = $null
         $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($script:scriptPath, [ref]$tokens, [ref]$errors) | Out-Null
@@ -36,7 +53,7 @@ Describe 'Pre-check.ps1 - quality gates' {
             return
         }
 
-        $issues = Invoke-ScriptAnalyzer -Path $PSScriptRoot -Recurse -Severity Error, Warning, Information
+        $issues = Invoke-ScriptAnalyzer -Path $script:repoRoot -Recurse -Severity Error, Warning, Information
         $issues | Should -BeNullOrEmpty
     }
 }
