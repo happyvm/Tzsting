@@ -236,7 +236,7 @@ Describe 'Invoke-GuestScriptSafe' {
     }
 
     It 'returns Success=true and trimmed output on success' {
-        Mock -CommandName 'Invoke-VMScript' -Force -MockWith {
+        Mock -CommandName 'Invoke-VMScript' -MockWith {
             [pscustomobject]@{ ScriptOutput = "  hello`r  " }
         }
 
@@ -257,7 +257,7 @@ Describe 'Invoke-GuestScriptSafe' {
     }
 
     It 'returns Success=false and the exception message on failure' {
-        Mock -CommandName 'Invoke-VMScript' -Force -MockWith { throw 'Connection refused' }
+        Mock -CommandName 'Invoke-VMScript' -MockWith { throw 'Connection refused' }
 
         $cred = [System.Management.Automation.PSCredential]::new(
             'user',
