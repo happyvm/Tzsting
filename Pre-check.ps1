@@ -116,7 +116,7 @@ $LinuxCredentialDefinition = [PSCustomObject]@{
 # Fonctions
 # ============================================================
 
-function Write-Log {
+function Write-ExecutionLog {
     param(
         [string]$Message,
         [ValidateSet("INFO", "WARN", "ERROR")]
@@ -127,9 +127,9 @@ function Write-Log {
     $line = "[$ts][$Level] $Message"
 
     switch ($Level) {
-        "WARN"  { Write-Host $line -ForegroundColor Yellow }
-        "ERROR" { Write-Host $line -ForegroundColor Red }
-        default { Write-Host $line }
+        "WARN"  { Write-Warning $line }
+        "ERROR" { Write-Error $line }
+        default { Write-Information $line -InformationAction Continue }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($script:LogPath)) {
@@ -268,14 +268,14 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         [string]$ScriptType,
 
         [Parameter(Mandatory = $true)]
-        [object[]]$CredentialCandidates,
+        [object[]]$AuthCandidates,
 
-        [string]$PreferredCredentialLabel,
+        [string]$PreferredAuthLabel,
 
         [int]$ToolsWaitSecs = 20
     )
 
-    if (-not $CredentialCandidates -or $CredentialCandidates.Count -eq 0) {
+    if (-not $AuthCandidates -or $AuthCandidates.Count -eq 0) {
         return [PSCustomObject]@{
             Success         = $false
             Output          = $null
@@ -285,13 +285,13 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($PreferredCredentialLabel)) {
-        $preferred = @($CredentialCandidates | Where-Object { $_.Label -eq $PreferredCredentialLabel })
-        $others    = @($CredentialCandidates | Where-Object { $_.Label -ne $PreferredCredentialLabel })
+    if (-not [string]::IsNullOrWhiteSpace($PreferredAuthLabel)) {
+        $preferred = @($AuthCandidates | Where-Object { $_.Label -eq $PreferredAuthLabel })
+        $others    = @($AuthCandidates | Where-Object { $_.Label -ne $PreferredAuthLabel })
         $orderedCandidates = @($preferred + $others)
     }
     else {
-        $orderedCandidates = @($CredentialCandidates)
+        $orderedCandidates = @($AuthCandidates)
     }
 
     $attemptErrors = New-Object System.Collections.Generic.List[string]
@@ -403,9 +403,9 @@ foreach ($file in @($detailCsv, $summaryCsv, $errorCsv)) {
     }
 }
 
-Write-Log ("Lecture du CSV : {0}" -f $InputCsv)
+Write-ExecutionLog ("Lecture du CSV : {0}" -f $InputCsv)
 $rawRows = @(Import-Csv -Path $InputCsv -Delimiter $CsvDelimiter)
-Write-Log ("{0} ligne(s) chargée(s)" -f $rawRows.Count)
+Write-ExecutionLog ("{0} ligne(s) chargée(s)" -f $rawRows.Count)
 
 if (-not $rawRows -or $rawRows.Count -eq 0) {
     throw "Le CSV est vide."
@@ -464,7 +464,7 @@ if ($vmInMultipleLots.Count -gt 0) {
 # Connexion vCenter
 # ============================================================
 
-Write-Log "AVERTISSEMENT : La validation des certificats SSL vCenter est désactivée (InvalidCertificateAction = Ignore)." -Level WARN
+Write-ExecutionLog "AVERTISSEMENT : La validation des certificats SSL vCenter est désactivée (InvalidCertificateAction = Ignore)." -Level WARN
 Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false | Out-Null
 
 $vcenterCredential = Get-Credential -Message "Compte vCenter"
@@ -518,7 +518,7 @@ try {
         Select-Object -First 1
 
     if (-not $backupField) {
-        Write-Log "Attribut personnalisé '$CustomAttributeName' introuvable. La colonne sera vide." -Level WARN
+        Write-ExecutionLog "Attribut personnalisé '$CustomAttributeName' introuvable. La colonne sera vide." -Level WARN
     }
 
     # ========================================================
@@ -558,7 +558,7 @@ try {
     # Tagging en début de traitement
     # ========================================================
 
-    Write-Log "Début du tagging"
+    Write-ExecutionLog "Début du tagging"
 
     $script:tagCache = @{}
     $tagStatusByVmLot = @{}
@@ -617,7 +617,7 @@ try {
     }
 
     Write-Progress -Activity "Tagging des VM" -Completed
-    Write-Log "Fin du tagging"
+    Write-ExecutionLog "Fin du tagging"
 
     # ========================================================
     # Détermination des credentials nécessaires
@@ -671,7 +671,7 @@ try {
 
     $preferredWindowsCredentialLabel = $null
 
-    Write-Log "Début saisie des mots de passe"
+    Write-ExecutionLog "Début saisie des mots de passe"
     if (-not $SkipGuestOperations -and $needWindowsCredentials) {
         foreach ($definition in ($WindowsCredentialDefinitions | Where-Object { $_.Enabled -eq $true })) {
             $credential = Get-Credential `
@@ -698,7 +698,7 @@ try {
         }
     }
 
-    Write-Log "Fin saisie des mots de passe"
+    Write-ExecutionLog "Fin saisie des mots de passe"
 
     # ========================================================
     # Traitement
@@ -716,7 +716,7 @@ try {
             -Status ("VM {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName) `
             -PercentComplete (($vmCounter / $vmTotal) * 100)
 
-        Write-Log ("Traitement de la machine {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
+        Write-ExecutionLog ("Traitement de la machine {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
 
         $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $vmName
 
@@ -735,7 +735,7 @@ try {
             $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
         }
         catch {
-            Write-Log "Impossible de résoudre l'objet VIView pour $vmName : $_" -Level ERROR
+            Write-ExecutionLog "Impossible de résoudre l'objet VIView pour $vmName : $_" -Level ERROR
             $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VIView resolution failed: $_" })
             continue
         }
@@ -930,7 +930,7 @@ wmic os get LastBootUpTime /value
                             $windowsCredentialAttemptErrors = $uptimeResult.Error
                         }
                     }
-                    elseif ($windowsYear -eq $null) {
+                    elseif ($null -eq $windowsYear) {
                         $uptimeStatus = "SkippedUnknownWindowsVersion"
                     }
                     else {
@@ -1066,21 +1066,21 @@ ipconfig /all > "$ipconfigPathCandidate"
     $errorRows |
         Export-Csv -Path $errorCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
-    Write-Host ""
-    Write-Log ("Export détail des VM    : {0}" -f $detailCsv)
-    Write-Log ("Export synthèse par lot : {0}" -f $summaryCsv)
-    Write-Log ("Export erreurs          : {0}" -f $errorCsv)
+    Write-Information "" -InformationAction Continue
+    Write-ExecutionLog ("Export détail des VM    : {0}" -f $detailCsv)
+    Write-ExecutionLog ("Export synthèse par lot : {0}" -f $summaryCsv)
+    Write-ExecutionLog ("Export erreurs          : {0}" -f $errorCsv)
 
     $over45 = @($detailRows | Where-Object { $_.UptimeOver45Days -eq $true }).Count
-    Write-Host ""
-    Write-Log "--- Résumé d'exécution ---"
-    Write-Log ("VMs traitées : {0} | Erreurs structurelles : {1} | Uptime > {2} jours : {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $over45)
+    Write-Information "" -InformationAction Continue
+    Write-ExecutionLog "--- Résumé d'exécution ---"
+    Write-ExecutionLog ("VMs traitées : {0} | Erreurs structurelles : {1} | Uptime > {2} jours : {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $over45)
 
     if ($errorRows.Count -gt 0) {
-        Write-Log ("ATTENTION : {0} erreur(s) structurelle(s) détectée(s) — consulter {1}" -f $errorRows.Count, $errorCsv) -Level WARN
+        Write-ExecutionLog ("ATTENTION : {0} erreur(s) structurelle(s) détectée(s) — consulter {1}" -f $errorRows.Count, $errorCsv) -Level WARN
     }
 
-    Write-Host ""
+    Write-Information "" -InformationAction Continue
     $summaryRows | Format-Table -AutoSize
 }
 finally {
