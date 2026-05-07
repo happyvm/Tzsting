@@ -12,7 +12,7 @@ Describe 'Pre-check.ps1 - quality gates' {
         $errors | Should -BeNullOrEmpty
     }
 
-    It 'passes ScriptAnalyzer error rules when module is available' {
+    It 'passes ScriptAnalyzer warning+error rules when module is available' {
         $analyzer = Get-Module -ListAvailable -Name PSScriptAnalyzer
 
         if (-not $analyzer) {
@@ -20,7 +20,7 @@ Describe 'Pre-check.ps1 - quality gates' {
             return
         }
 
-        $issues = Invoke-ScriptAnalyzer -Path $scriptPath -Severity Error
+        $issues = Invoke-ScriptAnalyzer -Path $scriptPath -Severity Warning, Error
         $issues | Should -BeNullOrEmpty
     }
 }
