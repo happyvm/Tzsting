@@ -268,14 +268,14 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         [string]$ScriptType,
 
         [Parameter(Mandatory = $true)]
-        [object[]]$CredentialCandidates,
+        [object[]]$AuthCandidates,
 
-        [string]$PreferredCredentialLabel,
+        [string]$PreferredAuthLabel,
 
         [int]$ToolsWaitSecs = 20
     )
 
-    if (-not $CredentialCandidates -or $CredentialCandidates.Count -eq 0) {
+    if (-not $AuthCandidates -or $AuthCandidates.Count -eq 0) {
         return [PSCustomObject]@{
             Success         = $false
             Output          = $null
@@ -285,15 +285,15 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($PreferredCredentialLabel)) {
+    if (-not [string]::IsNullOrWhiteSpace($PreferredAuthLabel)) {
         $ordered = [System.Collections.Generic.List[object]]::new()
-        foreach ($c in $CredentialCandidates) {
-            if ($c.Label -eq $PreferredCredentialLabel) { $ordered.Insert(0, $c) } else { $ordered.Add($c) }
+        foreach ($c in $AuthCandidates) {
+            if ($c.Label -eq $PreferredAuthLabel) { $ordered.Insert(0, $c) } else { $ordered.Add($c) }
         }
         $orderedCandidates = $ordered
     }
     else {
-        $orderedCandidates = $CredentialCandidates
+        $orderedCandidates = $AuthCandidates
     }
 
     $attemptErrors = New-Object System.Collections.Generic.List[string]
@@ -912,8 +912,8 @@ wmic os get LastBootUpTime /value
                             -VMObject $vmObject `
                             -ScriptText $windowsUptimeScript `
                             -ScriptType Bat `
-                            -CredentialCandidates $windowsGuestCredentials `
-                            -PreferredCredentialLabel $preferredWindowsCredentialLabel `
+                            -AuthCandidates $windowsGuestCredentials `
+                            -PreferredAuthLabel $preferredWindowsCredentialLabel `
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($uptimeResult.Success) {
@@ -962,8 +962,8 @@ ipconfig /all > "$ipconfigPathCandidate"
                             -VMObject $vmObject `
                             -ScriptText $ipconfigScript `
                             -ScriptType Bat `
-                            -CredentialCandidates $windowsGuestCredentials `
-                            -PreferredCredentialLabel $preferredWindowsCredentialLabel `
+                            -AuthCandidates $windowsGuestCredentials `
+                            -PreferredAuthLabel $preferredWindowsCredentialLabel `
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($ipconfigResult.Success) {
