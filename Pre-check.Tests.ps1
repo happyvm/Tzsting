@@ -281,7 +281,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
         Import-FunctionFromScript -Name 'Invoke-GuestScriptSafe'
         Import-FunctionFromScript -Name 'Invoke-WindowsGuestScriptWithCredentialFallback'
 
-        function New-FakeCred {
+        function Get-FakeCredential {
             param([string]$Label, [string]$User)
             $sec = ConvertTo-SecureString 'x' -AsPlainText -Force
             [pscustomobject]@{
@@ -308,7 +308,7 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
             [pscustomobject]@{ Success = $true; Output = 'ok'; Error = $null }
         }
 
-        $candidates = @(New-FakeCred 'ADMIN-01' '.\Administrator')
+        $candidates = @(Get-FakeCredential 'ADMIN-01' '.\Administrator')
 
         $result = Invoke-WindowsGuestScriptWithCredentialFallback `
             -VMObject ([pscustomobject]@{}) `
@@ -331,8 +331,8 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
         }
 
         $candidates = @(
-            (New-FakeCred 'ADMIN-01' '.\Administrator'),
-            (New-FakeCred 'ADMIN-02' '.\Administrateur')
+            (Get-FakeCredential 'ADMIN-01' '.\Administrator'),
+            (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
         $result = Invoke-WindowsGuestScriptWithCredentialFallback `
@@ -351,8 +351,8 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
         }
 
         $candidates = @(
-            (New-FakeCred 'ADMIN-01' '.\Administrator'),
-            (New-FakeCred 'ADMIN-02' '.\Administrateur')
+            (Get-FakeCredential 'ADMIN-01' '.\Administrator'),
+            (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
         $result = Invoke-WindowsGuestScriptWithCredentialFallback `
@@ -374,8 +374,8 @@ Describe 'Invoke-WindowsGuestScriptWithCredentialFallback' {
         }
 
         $candidates = @(
-            (New-FakeCred 'ADMIN-01' '.\Administrator'),
-            (New-FakeCred 'ADMIN-02' '.\Administrateur')
+            (Get-FakeCredential 'ADMIN-01' '.\Administrator'),
+            (Get-FakeCredential 'ADMIN-02' '.\Administrateur')
         )
 
         Invoke-WindowsGuestScriptWithCredentialFallback `
