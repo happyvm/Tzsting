@@ -15,7 +15,7 @@
     - Récupère l'uptime en jours via VMware Tools :
         - Linux
         - Windows 2008 et supérieur
-    - Indique si l'uptime est supérieur à 45 jours
+    - Indique si l'uptime est supérieur à $UptimeThresholdDays jours
     - Pour Windows 2003 / 2008 / 2008 R2 :
         - exécute ipconfig /all
         - stocke le résultat dans C:\temp dans la VM
@@ -34,6 +34,7 @@
     migration_lot_errors.csv
 #>
 
+[CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory = $true)]
     [string]$VCenter,
@@ -49,7 +50,13 @@ param(
 
     [int]$ToolsWaitSecs = 20,
 
-    [switch]$SkipGuestOperations
+    [switch]$SkipGuestOperations,
+
+    # Chemin vers un fichier de log (facultatif). Si vide, la sortie va uniquement sur la console.
+    [string]$LogFile = "",
+
+    # Seuil d'uptime en jours au-delà duquel une VM est signalée (UptimeOver45Days).
+    [int]$UptimeThresholdDays = 45
 )
 
 # ============================================================
@@ -96,6 +103,49 @@ $LinuxCredentialDefinition = [PSCustomObject]@{
 # ============================================================
 # Fonctions
 # ============================================================
+
+function Write-Log {
+    param(
+        [string]$Message,
+        [ValidateSet("INFO", "WARN", "ERROR")]
+        [string]$Level = "INFO"
+    )
+
+    $ts   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $line = "[$ts][$Level] $Message"
+
+    switch ($Level) {
+        "WARN"  { Write-Host $line -ForegroundColor Yellow }
+        "ERROR" { Write-Host $line -ForegroundColor Red }
+        default { Write-Host $line }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LogPath)) {
+        $line | Out-File -FilePath $script:LogPath -Append -Encoding UTF8
+    }
+}
+
+function Resolve-VMView {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$VmIndex,
+
+        [Parameter(Mandatory = $true)]
+        [string]$VMName
+    )
+
+    if (-not $VmIndex.ContainsKey($VMName)) {
+        return [PSCustomObject]@{ View = $null; Error = "VM introuvable dans vCenter" }
+    }
+
+    $vmMatches = @($VmIndex[$VMName])
+
+    if ($vmMatches.Count -gt 1) {
+        return [PSCustomObject]@{ View = $null; Error = "Nom de VM ambigu : plusieurs VM portent ce nom dans vCenter" }
+    }
+
+    return [PSCustomObject]@{ View = $vmMatches[0]; Error = $null }
+}
 
 function Get-WindowsYearFromText {
     param(
@@ -321,7 +371,7 @@ function Get-OrCreate-LotTag {
 # Préparation
 # ============================================================
 
-Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false | Out-Null
+$script:LogPath = $LogFile
 
 if (-not (Test-Path $InputCsv)) {
     throw "CSV introuvable : $InputCsv"
@@ -343,9 +393,9 @@ foreach ($file in @($detailCsv, $summaryCsv, $errorCsv)) {
 
 $CsvDelimiter = ';'
 
-Write-Host ("[STEP] Start reading CSV: {0}" -f $InputCsv)
+Write-Log ("Lecture du CSV : {0}" -f $InputCsv)
 $rawRows = @(Import-Csv -Path $InputCsv -Delimiter $CsvDelimiter)
-Write-Host ("[STEP] End reading CSV - {0} line(s) loaded" -f $rawRows.Count)
+Write-Log ("{0} ligne(s) chargée(s)" -f $rawRows.Count)
 
 if (-not $rawRows -or $rawRows.Count -eq 0) {
     throw "Le CSV est vide."
@@ -404,8 +454,17 @@ if ($vmInMultipleLots.Count -gt 0) {
 # Connexion vCenter
 # ============================================================
 
+Write-Log "AVERTISSEMENT : La validation des certificats SSL vCenter est désactivée (InvalidCertificateAction = Ignore)." -Level WARN
+Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false | Out-Null
+
 $vcenterCredential = Get-Credential -Message "Compte vCenter"
-Connect-VIServer -Server $VCenter -Credential $vcenterCredential | Out-Null
+
+try {
+    Connect-VIServer -Server $VCenter -Credential $vcenterCredential -ErrorAction Stop | Out-Null
+}
+catch {
+    throw "Impossible de se connecter à $VCenter : $_"
+}
 
 try {
     # ========================================================
@@ -449,41 +508,47 @@ try {
         Select-Object -First 1
 
     if (-not $backupField) {
-        Write-Warning "Attribut personnalisé '$CustomAttributeName' introuvable. La colonne sera vide."
+        Write-Log "Attribut personnalisé '$CustomAttributeName' introuvable. La colonne sera vide." -Level WARN
     }
 
     # ========================================================
     # Chargement des VM vCenter
     # ========================================================
 
-    $allVmViews = Get-View -ViewType VirtualMachine -Property `
-        Name,
-        Runtime.PowerState,
-        Summary.Config,
-        Summary.Storage,
-        Config.GuestFullName,
-        Config.GuestId,
-        Guest.GuestFullName,
-        Guest.GuestId,
-        Guest.ToolsStatus,
-        Guest.ToolsRunningStatus,
-        CustomValue
+    # Filtre serveur par nom pour éviter de charger toutes les VM de vCenter.
+    # Get-View filtre en "contains", le $vmIndex garantit la résolution exacte.
+    $namePattern = ($inputRows.VMName | ForEach-Object { [regex]::Escape($_) }) -join '|'
+
+    $allVmViews = Get-View -ViewType VirtualMachine `
+        -Filter @{ "Name" = $namePattern } `
+        -Property `
+            Name,
+            Runtime.PowerState,
+            Summary.Config,
+            Summary.Storage,
+            Config.GuestFullName,
+            Config.GuestId,
+            Guest.GuestFullName,
+            Guest.GuestId,
+            Guest.ToolsStatus,
+            Guest.ToolsRunningStatus,
+            CustomValue
 
     $vmIndex = @{}
 
     foreach ($vmView in $allVmViews) {
         if (-not $vmIndex.ContainsKey($vmView.Name)) {
-            $vmIndex[$vmView.Name] = @()
+            $vmIndex[$vmView.Name] = [System.Collections.Generic.List[object]]::new()
         }
 
-        $vmIndex[$vmView.Name] += $vmView
+        $vmIndex[$vmView.Name].Add($vmView)
     }
 
     # ========================================================
     # Tagging en début de traitement
     # ========================================================
 
-    Write-Host "[STEP] Start tagging"
+    Write-Log "Début du tagging"
 
     $script:tagCache = @{}
     $tagStatusByVmLot = @{}
@@ -500,21 +565,21 @@ try {
         $rowKey = "$vmName||$lotName"
         $tagStatusByVmLot[$rowKey] = "NotProcessed"
 
-        Write-Host ("Tagging {0}/{1}: {2} (lot {3})" -f $tagCounter, $tagTotal, $vmName, $lotName)
+        Write-Progress -Activity "Tagging des VM" `
+            -Status ("VM {0}/{1} : {2} (lot {3})" -f $tagCounter, $tagTotal, $vmName, $lotName) `
+            -PercentComplete (($tagCounter / $tagTotal) * 100)
 
-        if (-not $vmIndex.ContainsKey($vmName)) {
-            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VM introuvable dans vCenter" })
-            continue
-        }
+        Write-Verbose ("Tagging {0}/{1}: {2} (lot {3})" -f $tagCounter, $tagTotal, $vmName, $lotName)
 
-        $matches = @($vmIndex[$vmName])
-        if ($matches.Count -gt 1) {
-            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "Nom de VM ambigu : plusieurs VM portent ce nom dans vCenter" })
+        $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $vmName
+
+        if ($resolved.Error) {
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = $resolved.Error })
             continue
         }
 
         try {
-            $vmObject = Get-VIObjectByVIView -VIView $matches[0] -ErrorAction Stop
+            $vmObject = Get-VIObjectByVIView -VIView $resolved.View -ErrorAction Stop
             $lotTag = Get-OrCreate-LotTag -LotName $lotName -Category $tagCategory
             $currentAssignments = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue)
             $assignmentsToRemove = @($currentAssignments | Where-Object { $_.Tag.Name -ne $lotName })
@@ -522,8 +587,13 @@ try {
             $alreadyAssigned = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue | Where-Object { $_.Tag.Name -eq $lotName })
 
             if ($alreadyAssigned.Count -eq 0) {
-                New-TagAssignment -Tag $lotTag -Entity $vmObject -ErrorAction Stop | Out-Null
-                $tagStatusByVmLot[$rowKey] = "Assigned"
+                if ($PSCmdlet.ShouldProcess($vmName, "Assigner le tag '$lotName'")) {
+                    New-TagAssignment -Tag $lotTag -Entity $vmObject -ErrorAction Stop | Out-Null
+                    $tagStatusByVmLot[$rowKey] = "Assigned"
+                }
+                else {
+                    $tagStatusByVmLot[$rowKey] = "WhatIf"
+                }
             }
             else {
                 $tagStatusByVmLot[$rowKey] = "AlreadyAssigned"
@@ -535,7 +605,8 @@ try {
         }
     }
 
-    Write-Host "[STEP] End tagging"
+    Write-Progress -Activity "Tagging des VM" -Completed
+    Write-Log "Fin du tagging"
 
     # ========================================================
     # Détermination des credentials nécessaires
@@ -546,17 +617,13 @@ try {
 
     if (-not $SkipGuestOperations) {
         foreach ($row in $inputRows) {
-            if (-not $vmIndex.ContainsKey($row.VMName)) {
+            $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $row.VMName
+
+            if ($resolved.Error) {
                 continue
             }
 
-            $matches = @($vmIndex[$row.VMName])
-
-            if ($matches.Count -ne 1) {
-                continue
-            }
-
-            $vmView = $matches[0]
+            $vmView = $resolved.View
 
             if ($vmView.Runtime.PowerState -ne "poweredOn") {
                 continue
@@ -593,7 +660,7 @@ try {
 
     $preferredWindowsCredentialLabel = $null
 
-    Write-Host "[STEP] Start check password"
+    Write-Log "Début saisie des mots de passe"
     if (-not $SkipGuestOperations -and $needWindowsCredentials) {
         foreach ($definition in ($WindowsCredentialDefinitions | Where-Object { $_.Enabled -eq $true })) {
             $credential = Get-Credential `
@@ -620,7 +687,7 @@ try {
         }
     }
 
-    Write-Host "[STEP] End check password"
+    Write-Log "Fin saisie des mots de passe"
 
     # ========================================================
     # Traitement
@@ -634,30 +701,34 @@ try {
         $vmName = $row.VMName
         $lotName = $row.Lot
 
-        Write-Host ("Traitement de la machine {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
+        Write-Progress -Activity "Traitement des VM" `
+            -Status ("VM {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName) `
+            -PercentComplete (($vmCounter / $vmTotal) * 100)
 
-        if (-not $vmIndex.ContainsKey($vmName)) {
+        Write-Log ("Traitement de la machine {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
+
+        $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $vmName
+
+        if ($resolved.Error) {
             $errorRows.Add([PSCustomObject]@{
                 VMName = $vmName
                 Lot    = $lotName
-                Error  = "VM introuvable dans vCenter"
+                Error  = $resolved.Error
             })
             continue
         }
 
-        $matches = @($vmIndex[$vmName])
+        $vmView = $resolved.View
 
-        if ($matches.Count -gt 1) {
-            $errorRows.Add([PSCustomObject]@{
-                VMName = $vmName
-                Lot    = $lotName
-                Error  = "Nom de VM ambigu : plusieurs VM portent ce nom dans vCenter"
-            })
+        try {
+            $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
+        }
+        catch {
+            Write-Log "Impossible de résoudre l'objet VIView pour $vmName : $_" -Level ERROR
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VIView resolution failed: $_" })
             continue
         }
 
-        $vmView = $matches[0]
-        $vmObject = Get-VIObjectByVIView -VIView $vmView -ErrorAction Stop
         $rowKey = "$vmName||$lotName"
         $tagStatus = if ($tagStatusByVmLot.ContainsKey($rowKey)) { $tagStatusByVmLot[$rowKey] } else { "NotProcessed" }
 
@@ -757,7 +828,7 @@ try {
                     }
                     else {
                         $linuxScript = @'
-cat /proc/uptime | awk '{print $1}'
+awk '{print $1}' /proc/uptime
 '@
 
                         $uptimeResult = Invoke-GuestScriptSafe `
@@ -778,7 +849,7 @@ cat /proc/uptime | awk '{print $1}'
                                 [ref]$parsedSeconds
                             )) {
                                 $uptimeDays = [math]::Round(($parsedSeconds / 86400), 2)
-                                $uptimeOver45Days = [bool]($uptimeDays -gt 45)
+                                $uptimeOver45Days = [bool]($uptimeDays -gt $UptimeThresholdDays)
                                 $uptimeStatus = "OK"
 
                                 $linuxCredentialLabelUsed = $linuxGuestCredential.Label
@@ -804,17 +875,12 @@ cat /proc/uptime | awk '{print $1}'
                     $isWindows2003 = ($windowsYear -eq 2003)
                     $isWindows2008 = ($windowsYear -eq 2008)
 
-                    $isWindows2008OrHigher = (
-                        ($windowsYear -ne $null -and $windowsYear -ge 2008) -or
-                        ($windowsYear -eq $null -and $guestFullName -notmatch "2003")
-                    )
-
                     if (-not $windowsGuestCredentials -or $windowsGuestCredentials.Count -eq 0) {
                         $windowsCredentialLabelUsed = "nopassword"
                     }
 
                     # Windows 2008+ : uptime en jours
-                    if ($isWindows2008OrHigher) {
+                    if ($null -ne $windowsYear -and $windowsYear -ge 2008) {
                         $windowsUptimeScript = @'
 wmic os get LastBootUpTime /value
 '@
@@ -836,7 +902,7 @@ wmic os get LastBootUpTime /value
 
                             if ($null -ne $uptimeDays) {
                                 $uptimeDays = [math]::Round([double]$uptimeDays, 2)
-                                $uptimeOver45Days = [bool]($uptimeDays -gt 45)
+                                $uptimeOver45Days = [bool]($uptimeDays -gt $UptimeThresholdDays)
                                 $uptimeStatus = "OK"
                             }
                             else {
@@ -850,6 +916,9 @@ wmic os get LastBootUpTime /value
                             $windowsCredentialLabelUsed = "nopassword"
                             $windowsCredentialAttemptErrors = $uptimeResult.Error
                         }
+                    }
+                    elseif ($windowsYear -eq $null) {
+                        $uptimeStatus = "SkippedUnknownWindowsVersion"
                     }
                     else {
                         $uptimeStatus = "SkippedWindowsBefore2008"
@@ -935,6 +1004,8 @@ ipconfig /all > "$ipconfigPathCandidate"
         })
     }
 
+    Write-Progress -Activity "Traitement des VM" -Completed
+
     # ========================================================
     # Synthèse par lot
     # ========================================================
@@ -974,17 +1045,22 @@ ipconfig /all > "$ipconfigPathCandidate"
     $summaryRows |
         Export-Csv -Path $summaryCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
-    if ($errorRows.Count -gt 0) {
-        $errorRows |
-            Export-Csv -Path $errorCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
-    }
+    # Toujours exporter le fichier d'erreurs (au minimum avec l'en-tête)
+    $errorRows |
+        Export-Csv -Path $errorCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
     Write-Host ""
-    Write-Host "Export détail des VM    : $detailCsv"
-    Write-Host "Export synthèse par lot : $summaryCsv"
+    Write-Log ("Export détail des VM    : {0}" -f $detailCsv)
+    Write-Log ("Export synthèse par lot : {0}" -f $summaryCsv)
+    Write-Log ("Export erreurs          : {0}" -f $errorCsv)
+
+    $over45 = @($detailRows | Where-Object { $_.UptimeOver45Days -eq $true }).Count
+    Write-Host ""
+    Write-Log "--- Résumé d'exécution ---"
+    Write-Log ("VMs traitées : {0} | Erreurs structurelles : {1} | Uptime > {2} jours : {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $over45)
 
     if ($errorRows.Count -gt 0) {
-        Write-Warning "Des erreurs structurelles ont été détectées : $errorCsv"
+        Write-Log ("ATTENTION : {0} erreur(s) structurelle(s) détectée(s) — consulter {1}" -f $errorRows.Count, $errorCsv) -Level WARN
     }
 
     Write-Host ""
