@@ -24,10 +24,10 @@ jobs:
       - name: Run PSScriptAnalyzer
         shell: pwsh
         run: |
-          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error
+          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning, Information
           if ($issues) {
             $issues | Format-Table -AutoSize
-            throw "PSScriptAnalyzer found $($issues.Count) error(s)."
+            throw "PSScriptAnalyzer found $($issues.Count) issue(s) (Error/Warning/Information)."
           }
 
       - name: Run Pester tests
