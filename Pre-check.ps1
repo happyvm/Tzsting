@@ -565,9 +565,15 @@ try {
     $detailRows = New-Object System.Collections.Generic.List[object]
     $errorRows  = New-Object System.Collections.Generic.List[object]
 
+    $vmCounter = 0
+    $vmTotal = $inputRows.Count
+
     foreach ($row in $inputRows) {
+        $vmCounter++
         $vmName = $row.VMName
         $lotName = $row.Lot
+
+        Write-Host ("Traitement de la machine {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
 
         if (-not $vmIndex.ContainsKey($vmName)) {
             $errorRows.Add([PSCustomObject]@{
