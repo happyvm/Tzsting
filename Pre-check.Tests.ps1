@@ -1,38 +1,48 @@
-$script:repoRoot = $null
-if ($PSScriptRoot) {
-    $script:repoRoot = $PSScriptRoot
-} elseif ($PSCommandPath) {
-    $script:repoRoot = Split-Path -Parent $PSCommandPath
-} elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
-    $script:repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-} else {
-    $script:repoRoot = (Get-Location).Path
-}
-
-if ([string]::IsNullOrWhiteSpace($script:repoRoot)) {
-    throw 'Unable to determine repository root for Pre-check.Tests.ps1'
-}
-
-$script:repoRoot = (Resolve-Path -LiteralPath $script:repoRoot).Path
-$script:scriptPath = Join-Path $script:repoRoot 'Pre-check.ps1'
 $script:ast = $null
+
+function global:Get-TestRepoRoot {
+    if ($PSScriptRoot) {
+        return (Resolve-Path -LiteralPath $PSScriptRoot).Path
+    }
+
+    if ($PSCommandPath) {
+        return (Resolve-Path -LiteralPath (Split-Path -Parent $PSCommandPath)).Path
+    }
+
+    if ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+        return (Resolve-Path -LiteralPath (Split-Path -Parent $MyInvocation.MyCommand.Path)).Path
+    }
+
+    return (Get-Location).Path
+}
+
+function global:Get-TestScriptPath {
+    $repoRoot = Get-TestRepoRoot
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+        throw 'Unable to determine repository root for Pre-check.Tests.ps1'
+    }
+
+    return (Join-Path $repoRoot 'Pre-check.ps1')
+}
 
 function global:Import-FunctionFromScript {
     param(
         [Parameter(Mandatory = $true)][string]$Name
     )
 
-    if (-not (Test-Path -LiteralPath $script:scriptPath)) {
-        throw "Script file not found: $script:scriptPath"
+    $scriptPath = Get-TestScriptPath
+
+    if (-not (Test-Path -LiteralPath $scriptPath)) {
+        throw "Script file not found: $scriptPath"
     }
 
     if (-not $script:ast) {
         $parseErrors = $null
-        $script:ast = [System.Management.Automation.Language.Parser]::ParseFile($script:scriptPath, [ref]$null, [ref]$parseErrors)
+        $script:ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$parseErrors)
 
         if ($parseErrors) {
             $messages = ($parseErrors | ForEach-Object { $_.Message }) -join '; '
-            throw "Unable to parse $script:scriptPath: $messages"
+            throw "Unable to parse $scriptPath: $messages"
         }
     }
 
@@ -42,7 +52,7 @@ function global:Import-FunctionFromScript {
     }, $true)
 
     if (-not $funcAst) {
-        throw "Function '$Name' not found in $script:scriptPath"
+        throw "Function '$Name' not found in $scriptPath"
     }
 
     . ([scriptblock]::Create($funcAst.Extent.Text))
@@ -50,11 +60,12 @@ function global:Import-FunctionFromScript {
 
 Describe 'Pre-check.ps1 - quality gates' {
     It 'is syntactically valid PowerShell' {
-        Test-Path -LiteralPath $script:scriptPath | Should -BeTrue
+        $scriptPath = Get-TestScriptPath
+        Test-Path -LiteralPath $scriptPath | Should -BeTrue
 
         $tokens = $null
         $errors = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($script:scriptPath, [ref]$tokens, [ref]$errors) | Out-Null
+        [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         $errors | Should -BeNullOrEmpty
     }
@@ -68,7 +79,7 @@ Describe 'Pre-check.ps1 - quality gates' {
             return
         }
 
-        $issues = Invoke-ScriptAnalyzer -Path $script:repoRoot -Recurse -Severity Error, Warning, Information
+        $issues = Invoke-ScriptAnalyzer -Path (Get-TestRepoRoot) -Recurse -Severity Error, Warning, Information
         $issues | Should -BeNullOrEmpty
     }
 }
