@@ -37,7 +37,7 @@
     Chemin vers un fichier de log. Si vide (défaut), la sortie va uniquement sur la console.
 
 .PARAMETER UptimeThresholdDays
-    Seuil d'uptime en jours au-delà duquel UptimeOver45Days est vrai (défaut : 45).
+    Seuil d'uptime en jours au-delà duquel UptimeOverThreshold est vrai (défaut : 45).
 
 .PARAMETER CsvDelimiter
     Délimiteur CSV pour la lecture du fichier d'entrée et l'écriture des fichiers de sortie (défaut : ;).
@@ -64,7 +64,7 @@ param(
     # Chemin vers un fichier de log (facultatif). Si vide, la sortie va uniquement sur la console.
     [string]$LogFile = "",
 
-    # Seuil d'uptime en jours au-delà duquel une VM est signalée (UptimeOver45Days).
+    # Seuil d'uptime en jours au-delà duquel une VM est signalée (UptimeOverThreshold).
     [int]$UptimeThresholdDays = 45,
 
     # Délimiteur utilisé pour la lecture du CSV d'entrée et l'écriture des CSV de sortie.
@@ -357,7 +357,7 @@ function Get-UptimeDaysFromWmicOutput {
     return $null
 }
 
-function Get-OrCreate-LotTag {
+function Resolve-LotTag {
     param(
         [Parameter(Mandatory = $true)]
         [string]$LotName,
@@ -451,11 +451,13 @@ if (-not $inputRows -or $inputRows.Count -eq 0) {
     throw "Aucune ligne exploitable dans le CSV."
 }
 
-$vmInMultipleLots = $inputRows |
-    Group-Object VMName |
-    Where-Object {
-        @($_.Group.Lot | Sort-Object -Unique).Count -gt 1
-    }
+$vmInMultipleLots = @(
+    $inputRows |
+        Group-Object VMName |
+        Where-Object {
+            @($_.Group.Lot | Sort-Object -Unique).Count -gt 1
+        }
+)
 
 if ($vmInMultipleLots.Count -gt 0) {
     $badVMs = ($vmInMultipleLots | Select-Object -ExpandProperty Name) -join ", "
@@ -466,8 +468,8 @@ if ($vmInMultipleLots.Count -gt 0) {
 # Connexion vCenter
 # ============================================================
 
-Write-ExecutionLog "AVERTISSEMENT : La validation des certificats SSL vCenter est désactivée (InvalidCertificateAction = Ignore)." -Level WARN
-Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false | Out-Null
+Write-ExecutionLog "AVERTISSEMENT : La validation des certificats SSL vCenter est désactivée pour cette session (InvalidCertificateAction = Ignore, Scope Session)." -Level WARN
+Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Scope Session -Confirm:$false | Out-Null
 
 $vcenterCredential = Get-Credential -Message "Compte vCenter"
 
@@ -593,7 +595,7 @@ try {
         try {
             $vmObject = Get-VIObjectByVIView -VIView $resolved.View -ErrorAction Stop
             $vmObjectCache[$vmName] = $vmObject
-            $lotTag = Get-OrCreate-LotTag -LotName $lotName -Category $tagCategory
+            $lotTag = Resolve-LotTag -LotName $lotName -Category $tagCategory
             $currentAssignments = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue)
             $assignmentsToRemove = @($currentAssignments | Where-Object { $_.Tag.Name -ne $lotName })
             if ($assignmentsToRemove.Count -gt 0 -and $PSCmdlet.ShouldProcess($vmName, "Supprimer le tag existant '$($assignmentsToRemove[0].Tag.Name)'")) {
@@ -810,7 +812,7 @@ try {
 
         $uptimeStatus = "Skipped"
         $uptimeDays = $null
-        $uptimeOver45Days = $false
+        $uptimeOverThreshold = $false
         $guestOperationError = $null
 
         $ipconfigStatus = "Skipped"
@@ -845,7 +847,7 @@ try {
                     if ($null -eq $linuxGuestCredential) {
                         $uptimeStatus = "Error"
                         $guestOperationError = "Aucun credential Linux configuré ou saisi."
-                        $linuxCredentialLabelUsed = "nopassword"
+                        $linuxCredentialLabelUsed = "NoCredentialConfigured"
                     }
                     else {
                         $linuxScript = @'
@@ -870,7 +872,7 @@ awk '{print $1}' /proc/uptime
                                 [ref]$parsedSeconds
                             )) {
                                 $uptimeDays = [math]::Round(($parsedSeconds / 86400), 2)
-                                $uptimeOver45Days = [bool]($uptimeDays -gt $UptimeThresholdDays)
+                                $uptimeOverThreshold = [bool]($uptimeDays -gt $UptimeThresholdDays)
                                 $uptimeStatus = "OK"
 
                                 $linuxCredentialLabelUsed = $linuxGuestCredential.Label
@@ -884,7 +886,7 @@ awk '{print $1}' /proc/uptime
                         else {
                             $uptimeStatus = "Error"
                             $guestOperationError = $uptimeResult.Error
-                            $linuxCredentialLabelUsed = "nopassword"
+                            $linuxCredentialLabelUsed = "CredentialError"
                         }
                     }
 
@@ -899,19 +901,30 @@ awk '{print $1}' /proc/uptime
                     $isWindows2008 = ($windowsYear -eq 2008)
 
                     if (-not $windowsGuestCredentials -or $windowsGuestCredentials.Count -eq 0) {
-                        $windowsCredentialLabelUsed = "nopassword"
+                        $windowsCredentialLabelUsed = "NoCredentialConfigured"
                     }
 
-                    # Windows 2008+ : uptime en jours
+                    # Windows 2008 : uptime via wmic (CIM/PowerShell non disponibles)
+                    # Windows 2012+ : uptime via CIM PowerShell (wmic déprécié depuis 2012)
                     if ($null -ne $windowsYear -and $windowsYear -ge 2008) {
-                        $windowsUptimeScript = @'
+                        if ($windowsYear -ge 2012) {
+                            $windowsUptimeScript = @'
+$os = Get-CimInstance -ClassName Win32_OperatingSystem
+Write-Output ("LastBootUpTime={0}" -f $os.LastBootUpTime.ToString("yyyyMMddHHmmss"))
+'@
+                            $uptimeScriptType = "PowerShell"
+                        }
+                        else {
+                            $windowsUptimeScript = @'
 wmic os get LastBootUpTime /value
 '@
+                            $uptimeScriptType = "Bat"
+                        }
 
                         $uptimeResult = Invoke-WindowsGuestScriptWithCredentialFallback `
                             -VMObject $vmObject `
                             -ScriptText $windowsUptimeScript `
-                            -ScriptType Bat `
+                            -ScriptType $uptimeScriptType `
                             -AuthCandidates $windowsGuestCredentials `
                             -PreferredAuthLabel $preferredWindowsCredentialLabel `
                             -ToolsWaitSecs $ToolsWaitSecs
@@ -925,18 +938,18 @@ wmic os get LastBootUpTime /value
 
                             if ($null -ne $uptimeDays) {
                                 $uptimeDays = [math]::Round([double]$uptimeDays, 2)
-                                $uptimeOver45Days = [bool]($uptimeDays -gt $UptimeThresholdDays)
+                                $uptimeOverThreshold = [bool]($uptimeDays -gt $UptimeThresholdDays)
                                 $uptimeStatus = "OK"
                             }
                             else {
                                 $uptimeStatus = "ParseError"
-                                $guestOperationError = "Impossible de parser LastBootUpTime depuis WMIC."
+                                $guestOperationError = "Impossible de parser LastBootUpTime depuis la sortie guest."
                             }
                         }
                         else {
                             $uptimeStatus = "Error"
                             $guestOperationError = $uptimeResult.Error
-                            $windowsCredentialLabelUsed = "nopassword"
+                            $windowsCredentialLabelUsed = "CredentialError"
                             $windowsCredentialAttemptErrors = $uptimeResult.Error
                         }
                     }
@@ -976,7 +989,7 @@ ipconfig /all > "$ipconfigPathCandidate"
                         else {
                             $ipconfigStatus = "Error"
                             $ipconfigError = $ipconfigResult.Error
-                            $windowsCredentialLabelUsed = "nopassword"
+                            $windowsCredentialLabelUsed = "CredentialError"
 
                             if ([string]::IsNullOrWhiteSpace($windowsCredentialAttemptErrors)) {
                                 $windowsCredentialAttemptErrors = $ipconfigResult.Error
@@ -1013,7 +1026,7 @@ ipconfig /all > "$ipconfigPathCandidate"
 
             UptimeStatus                  = $uptimeStatus
             UptimeDays                    = if ($null -ne $uptimeDays) { [math]::Round([double]$uptimeDays, 2) } else { $null }
-            UptimeOver45Days              = $uptimeOver45Days
+            UptimeOverThreshold              = $uptimeOverThreshold
 
             IpconfigStatus                = $ipconfigStatus
             IpconfigPath                  = $ipconfigPath
@@ -1052,8 +1065,9 @@ ipconfig /all > "$ipconfigPathCandidate"
                 StorageUsedTotalGB          = [math]::Round((($group | Measure-Object -Property StorageUsedDatastoreGB -Sum).Sum), 2)
                 VMWithoutLastBackup         = @($group | Where-Object { [string]::IsNullOrWhiteSpace($_.NB_last_backup) }).Count
                 VMWithUptimeOK              = @($group | Where-Object { $_.UptimeStatus -eq "OK" }).Count
-                VMWithUptimeErrorOrSkipped  = @($group | Where-Object { $_.UptimeStatus -ne "OK" }).Count
-                VMWithUptimeOver45Days      = @($group | Where-Object { $_.UptimeOver45Days -eq $true }).Count
+                VMWithUptimeError           = @($group | Where-Object { $_.UptimeStatus -in @("Error", "ParseError") }).Count
+                VMWithUptimeSkipped         = @($group | Where-Object { $_.UptimeStatus -like "Skipped*" -or $_.UptimeStatus -eq "NotApplicable" }).Count
+                VMWithUptimeOverThreshold   = @($group | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
                 VMWithIpconfigOK            = @($group | Where-Object { $_.IpconfigStatus -eq "OK" }).Count
                 VMWithIpconfigError         = @($group | Where-Object { $_.IpconfigStatus -eq "Error" }).Count
                 VMWithTagError              = @($group | Where-Object { $_.TagStatus -eq "TagError" }).Count
@@ -1081,10 +1095,10 @@ ipconfig /all > "$ipconfigPathCandidate"
     Write-ExecutionLog ("Export synthèse par lot : {0}" -f $summaryCsv)
     Write-ExecutionLog ("Export erreurs          : {0}" -f $errorCsv)
 
-    $over45 = @($detailRows | Where-Object { $_.UptimeOver45Days -eq $true }).Count
+    $overThreshold = @($detailRows | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
     Write-Information "" -InformationAction Continue
     Write-ExecutionLog "--- Résumé d'exécution ---"
-    Write-ExecutionLog ("VMs traitées : {0} | Erreurs structurelles : {1} | Uptime > {2} jours : {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $over45)
+    Write-ExecutionLog ("VMs traitées : {0} | Erreurs structurelles : {1} | Uptime > {2} jours : {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $overThreshold)
 
     if ($errorRows.Count -gt 0) {
         Write-ExecutionLog ("ATTENTION : {0} erreur(s) structurelle(s) détectée(s) — consulter {1}" -f $errorRows.Count, $errorCsv) -Level WARN
