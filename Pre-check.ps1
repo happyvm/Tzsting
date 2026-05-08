@@ -14,7 +14,7 @@
     - Reads the NB_last_backup custom attribute
     - Retrieves uptime in days via VMware Tools:
         - Linux
-        - Windows 2008 and later
+        - Windows 2003 and later (wmic for 2003/2008, CIM for 2012+)
     - Flags VMs whose uptime exceeds $UptimeThresholdDays days
     - For Windows 2003 / 2008 / 2008 R2:
         - runs ipconfig /all
@@ -889,9 +889,9 @@ awk '{print $1}' /proc/uptime
                         $windowsCredentialLabelUsed = "NoCredentialConfigured"
                     }
 
-                    # Windows 2008: uptime via wmic (CIM/PowerShell not available)
+                    # Windows 2003/2008: uptime via wmic (CIM/PowerShell not available on these versions)
                     # Windows 2012+: uptime via CIM PowerShell (wmic deprecated since 2012)
-                    if ($null -ne $windowsYear -and $windowsYear -ge 2008) {
+                    if ($null -ne $windowsYear -and $windowsYear -ge 2003) {
                         if ($windowsYear -ge 2012) {
                             $windowsUptimeScript = @'
 $os = Get-CimInstance -ClassName Win32_OperatingSystem
@@ -942,18 +942,32 @@ wmic os get LastBootUpTime /value
                         $uptimeStatus = "SkippedUnknownWindowsVersion"
                     }
                     else {
-                        $uptimeStatus = "SkippedWindowsBefore2008"
+                        $uptimeStatus = "SkippedWindowsTooOld"
                     }
 
-                    # Windows 2003 / 2008 / 2008 R2: run ipconfig /all and store output in C:\temp
-                    # Newer versions: not applicable
+                    # Windows 2003 / 2008 / 2008 R2: run ipconfig /all and store output in C:\temp.
+                    # Newer versions: not applicable.
+                    #
+                    # Known pitfalls that can prevent the file from being created:
+                    #   - Quoting the redirect path ("> "C:\path"") fails silently on old CMD
+                    #     versions when run from a VMware Tools guest process context.
+                    #     Fix: no quotes (path has no spaces after sanitisation).
+                    #   - mkdir failure (permissions) is silent in batch; the subsequent
+                    #     redirect then also fails silently and Invoke-VMScript still
+                    #     reports Success=true (cmd exits 0 regardless).
+                    #     Fix: explicit post-execution file-existence verification.
+                    #   - Buffer not fully flushed before the guest process exits.
+                    #     Fix: trailing ping adds ~1 s delay before cmd exits.
                     if ($isWindows2003 -or $isWindows2008) {
-                        $safeVmFileName       = ($vmName -replace '[\\/:*?"<>| ]', '_')
+                        $safeVmFileName        = ($vmName -replace '[\\/:*?"<>| ]', '_')
                         $ipconfigPathCandidate = "C:\temp\ipconfig_all_$safeVmFileName.txt"
 
+                        # No quotes around the path: avoids silent redirect failure on old CMD.
+                        # Trailing ping gives the OS ~1 s to flush the redirect buffer.
                         $ipconfigScript = @"
-if not exist C:\temp mkdir C:\temp
-ipconfig /all > "$ipconfigPathCandidate"
+if not exist C:\temp md C:\temp
+ipconfig /all > $ipconfigPathCandidate
+ping -n 2 127.0.0.1 > nul
 "@
 
                         $ipconfigResult = Invoke-WindowsGuestScriptWithCredentialFallback `
@@ -968,8 +982,27 @@ ipconfig /all > "$ipconfigPathCandidate"
                             $windowsCredentialLabelUsed      = $ipconfigResult.CredentialLabel
                             $windowsCredentialUserUsed       = $ipconfigResult.CredentialUser
                             $preferredWindowsCredentialLabel = $ipconfigResult.CredentialLabel
-                            $ipconfigPath                    = $ipconfigPathCandidate
-                            $ipconfigStatus                  = "OK"
+
+                            # Verify the file was actually created inside the guest.
+                            $verifyScript = "if exist $ipconfigPathCandidate (echo EXISTS) else (echo MISSING)"
+
+                            $verifyResult = Invoke-WindowsGuestScriptWithCredentialFallback `
+                                -VMObject $vmObject `
+                                -ScriptText $verifyScript `
+                                -ScriptType Bat `
+                                -AuthCandidates $windowsGuestCredentials `
+                                -PreferredAuthLabel $preferredWindowsCredentialLabel `
+                                -ToolsWaitSecs $ToolsWaitSecs
+
+                            if ($verifyResult.Success -and $verifyResult.Output -eq "EXISTS") {
+                                $ipconfigPath   = $ipconfigPathCandidate
+                                $ipconfigStatus = "OK"
+                            }
+                            else {
+                                $ipconfigPath   = "NotPresent"
+                                $ipconfigStatus = "FileNotCreated"
+                                $ipconfigError  = "ipconfig script ran but file not found in guest: $ipconfigPathCandidate"
+                            }
                         }
                         else {
                             $ipconfigStatus             = "Error"
@@ -1054,7 +1087,7 @@ ipconfig /all > "$ipconfigPathCandidate"
                 VMWithUptimeSkipped        = @($group | Where-Object { $_.UptimeStatus -like "Skipped*" -or $_.UptimeStatus -eq "NotApplicable" }).Count
                 VMWithUptimeOverThreshold  = @($group | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
                 VMWithIpconfigOK           = @($group | Where-Object { $_.IpconfigStatus -eq "OK" }).Count
-                VMWithIpconfigError        = @($group | Where-Object { $_.IpconfigStatus -eq "Error" }).Count
+                VMWithIpconfigError        = @($group | Where-Object { $_.IpconfigStatus -in @("Error", "FileNotCreated") }).Count
                 VMWithTagError             = @($group | Where-Object { $_.TagStatus -eq "TagError" }).Count
             }
         } |
