@@ -477,17 +477,28 @@ if ($vmInMultipleLots.Count -gt 0) {
 # vCenter connection
 # ============================================================
 
-Write-ExecutionLog "WARNING: vCenter SSL certificate validation is disabled for this session (InvalidCertificateAction = Ignore, Scope Session)." -Level WARN
-Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Scope Session -Confirm:$false | Out-Null
+$script:ConnectedByScript = $false
 
-$vcenterCredential = Get-Credential -Message "vCenter account"
-if ($null -eq $vcenterCredential) { throw "vCenter credential prompt was cancelled." }
+$existingSession = @(
+    (Get-Variable -Name 'DefaultVIServers' -Scope Global -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue) |
+    Where-Object { $_.Name -eq $VCenter -and $_.IsConnected }
+)
 
-try {
-    Connect-VIServer -Server $VCenter -Credential $vcenterCredential -ErrorAction Stop | Out-Null
+if ($existingSession.Count -gt 0) {
+    Write-ExecutionLog "Reusing existing vCenter session for $VCenter"
 }
-catch {
-    throw "Cannot connect to $VCenter : $_"
+else {
+    Write-ExecutionLog "WARNING: vCenter SSL certificate validation is disabled for this session (InvalidCertificateAction = Ignore, Scope Session)." -Level WARN
+    Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Scope Session -Confirm:$false | Out-Null
+
+    try {
+        Connect-VIServer -Server $VCenter -ErrorAction Stop | Out-Null
+        $script:ConnectedByScript = $true
+    }
+    catch {
+        throw "Cannot connect to $VCenter : $_"
+    }
 }
 
 try {
@@ -1131,5 +1142,7 @@ ping -n 2 127.0.0.1 > nul
     $summaryRows | Format-Table -AutoSize
 }
 finally {
-    Disconnect-VIServer -Server $VCenter -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    if ($script:ConnectedByScript) {
+        Disconnect-VIServer -Server $VCenter -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    }
 }
