@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     VMware migration batching pre-check script.
 
