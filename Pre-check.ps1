@@ -22,6 +22,10 @@
     - Essaie jusqu'à 5 credentials Windows locaux
     - Exporte le label du credential Windows qui a fonctionné
 
+    La configuration (valeurs par défaut, usernames des comptes invités) est lue depuis
+    config-precheck.psd1 situé dans le même dossier que le script. Les paramètres passés
+    explicitement en ligne de commande ont toujours priorité sur le fichier de configuration.
+
 .INPUT CSV
     vmname;tag
     SRV-APP-001;LOT-01
@@ -72,44 +76,66 @@ param(
 )
 
 # ============================================================
-# Configuration des comptes invités VMware Tools
-# Les labels servent uniquement au reporting.
-# Les mots de passe ne sont jamais exportés.
-# Adapte les UserName à ton contexte.
+# Chargement de config-precheck.psd1
+# Les paramètres CLI explicites ont priorité sur le fichier.
+# Les mots de passe ne sont jamais stockés dans le fichier de config.
 # ============================================================
 
-$WindowsCredentialDefinitions = @(
-    [PSCustomObject]@{
-        Label    = "WIN-LOCAL-ADMIN-01"
-        UserName = ".\Administrateur"
-        Enabled  = $true
-    },
-    [PSCustomObject]@{
-        Label    = "WIN-LOCAL-ADMIN-02"
-        UserName = ".\Administrator"
-        Enabled  = $true
-    },
-    [PSCustomObject]@{
-        Label    = "WIN-LOCAL-ADMIN-03"
-        UserName = ".\admin"
-        Enabled  = $true
-    },
-    [PSCustomObject]@{
-        Label    = "WIN-LOCAL-ADMIN-04"
-        UserName = ".\adminlocal"
-        Enabled  = $true
-    },
-    [PSCustomObject]@{
-        Label    = "WIN-LOCAL-ADMIN-05"
-        UserName = ".\adm-local"
+$script:ConfigFilePath = Join-Path $PSScriptRoot "config-precheck.psd1"
+
+if (Test-Path -LiteralPath $script:ConfigFilePath) {
+    $cfg = Import-PowerShellDataFile -LiteralPath $script:ConfigFilePath
+
+    if (-not $PSBoundParameters.ContainsKey('OutputFolder')        -and $cfg.ContainsKey('OutputFolder'))        { $OutputFolder        = [string]$cfg.OutputFolder }
+    if (-not $PSBoundParameters.ContainsKey('TagCategoryName')     -and $cfg.ContainsKey('TagCategoryName'))     { $TagCategoryName     = [string]$cfg.TagCategoryName }
+    if (-not $PSBoundParameters.ContainsKey('CustomAttributeName') -and $cfg.ContainsKey('CustomAttributeName')) { $CustomAttributeName = [string]$cfg.CustomAttributeName }
+    if (-not $PSBoundParameters.ContainsKey('ToolsWaitSecs')       -and $cfg.ContainsKey('ToolsWaitSecs'))       { $ToolsWaitSecs       = [int]$cfg.ToolsWaitSecs }
+    if (-not $PSBoundParameters.ContainsKey('LogFile')             -and $cfg.ContainsKey('LogFile'))             { $LogFile             = [string]$cfg.LogFile }
+    if (-not $PSBoundParameters.ContainsKey('UptimeThresholdDays') -and $cfg.ContainsKey('UptimeThresholdDays')) { $UptimeThresholdDays = [int]$cfg.UptimeThresholdDays }
+    if (-not $PSBoundParameters.ContainsKey('CsvDelimiter')        -and $cfg.ContainsKey('CsvDelimiter'))        { $CsvDelimiter        = [string]$cfg.CsvDelimiter }
+}
+else {
+    Write-Warning "config-precheck.psd1 introuvable dans '$PSScriptRoot' — valeurs par défaut du script utilisées."
+    $cfg = $null
+}
+
+# Credentials Windows — chargés depuis le fichier de config si disponible,
+# sinon valeurs de secours intégrées au script.
+if ($cfg -and $cfg.ContainsKey('WindowsCredentials') -and $cfg.WindowsCredentials) {
+    $WindowsCredentialDefinitions = @(
+        foreach ($entry in $cfg.WindowsCredentials) {
+            [PSCustomObject]@{
+                Label    = [string]$entry.Label
+                UserName = [string]$entry.UserName
+                Enabled  = [bool]$entry.Enabled
+            }
+        }
+    )
+}
+else {
+    $WindowsCredentialDefinitions = @(
+        [PSCustomObject]@{ Label = "WIN-LOCAL-ADMIN-01"; UserName = ".\Administrateur"; Enabled = $true }
+        [PSCustomObject]@{ Label = "WIN-LOCAL-ADMIN-02"; UserName = ".\Administrator";  Enabled = $true }
+        [PSCustomObject]@{ Label = "WIN-LOCAL-ADMIN-03"; UserName = ".\admin";          Enabled = $true }
+        [PSCustomObject]@{ Label = "WIN-LOCAL-ADMIN-04"; UserName = ".\adminlocal";     Enabled = $true }
+        [PSCustomObject]@{ Label = "WIN-LOCAL-ADMIN-05"; UserName = ".\adm-local";      Enabled = $true }
+    )
+}
+
+# Credential Linux
+if ($cfg -and $cfg.ContainsKey('LinuxCredential') -and $cfg.LinuxCredential) {
+    $LinuxCredentialDefinition = [PSCustomObject]@{
+        Label    = [string]$cfg.LinuxCredential.Label
+        UserName = [string]$cfg.LinuxCredential.UserName
+        Enabled  = [bool]$cfg.LinuxCredential.Enabled
+    }
+}
+else {
+    $LinuxCredentialDefinition = [PSCustomObject]@{
+        Label    = "LINUX-ADMIN-01"
+        UserName = "root"
         Enabled  = $true
     }
-)
-
-$LinuxCredentialDefinition = [PSCustomObject]@{
-    Label    = "LINUX-ADMIN-01"
-    UserName = "root"
-    Enabled  = $true
 }
 
 # ============================================================
