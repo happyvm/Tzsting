@@ -1,30 +1,30 @@
-﻿<#
+<#
 .SYNOPSIS
-    Script de lotissement de migration VMware.
+    VMware migration batching pre-check script.
 
 .DESCRIPTION
-    - Lit un CSV d'entrée contenant : vmname;tag
-    - tag = lot de migration
-    - Crée/pose un tag vSphere en catégorie Single
-    - Calcule par lot :
-        - nombre de VM
-        - vCPU configurés
-        - RAM configurée
-        - stockage réellement consommé datastore
-    - Récupère l'attribut personnalisé NB_last_backup
-    - Récupère l'uptime en jours via VMware Tools :
+    - Reads an input CSV containing: vmname;tag
+    - tag = migration batch name
+    - Creates/applies a vSphere tag in a Single-cardinality category
+    - Computes per batch:
+        - VM count
+        - configured vCPUs
+        - configured RAM
+        - datastore committed storage
+    - Reads the NB_last_backup custom attribute
+    - Retrieves uptime in days via VMware Tools:
         - Linux
-        - Windows 2008 et supérieur
-    - Indique si l'uptime est supérieur à $UptimeThresholdDays jours
-    - Pour Windows 2003 / 2008 / 2008 R2 :
-        - exécute ipconfig /all
-        - stocke le résultat dans C:\temp dans la VM
-    - Essaie jusqu'à 5 credentials Windows locaux
-    - Exporte le label du credential Windows qui a fonctionné
+        - Windows 2008 and later
+    - Flags VMs whose uptime exceeds $UptimeThresholdDays days
+    - For Windows 2003 / 2008 / 2008 R2:
+        - runs ipconfig /all
+        - stores the output in C:\temp inside the VM
+    - Tries up to 5 local Windows credentials
+    - Exports the label of the credential that succeeded
 
-    La configuration (valeurs par défaut, usernames des comptes invités) est lue depuis
-    config-precheck.psd1 situé dans le même dossier que le script. Les paramètres passés
-    explicitement en ligne de commande ont toujours priorité sur le fichier de configuration.
+    All configurable values (defaults, guest account usernames) are read from
+    config-precheck.psd1 located in the same folder as the script.
+    Parameters supplied explicitly on the command line always take priority.
 
 .INPUT CSV
     vmname;tag
@@ -37,23 +37,27 @@
     migration_lot_summary.csv
     migration_lot_errors.csv
 
+.PARAMETER VCenter
+    vCenter server hostname or IP. Can also be set via the VCenter key in config-precheck.psd1.
+
+.PARAMETER InputCsv
+    Path to the input CSV file. Can also be set via the InputCsv key in config-precheck.psd1.
+
 .PARAMETER LogFile
-    Chemin vers un fichier de log. Si vide (défaut), la sortie va uniquement sur la console.
+    Path to a log file. If empty (default), output goes to the console only.
 
 .PARAMETER UptimeThresholdDays
-    Seuil d'uptime en jours au-delà duquel UptimeOverThreshold est vrai (défaut : 45).
+    Uptime threshold in days above which UptimeOverThreshold is set to true (default: 45).
 
 .PARAMETER CsvDelimiter
-    Délimiteur CSV pour la lecture du fichier d'entrée et l'écriture des fichiers de sortie (défaut : ;).
+    CSV delimiter used for reading the input file and writing output files (default: ;).
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$VCenter,
+    [string]$VCenter  = "",
 
-    [Parameter(Mandatory = $true)]
-    [string]$InputCsv,
+    [string]$InputCsv = "",
 
     [string]$OutputFolder = ".",
 
@@ -65,30 +69,29 @@ param(
 
     [switch]$SkipGuestOperations,
 
-    # Chemin vers un fichier de log (facultatif). Si vide, la sortie va uniquement sur la console.
     [string]$LogFile = "",
 
-    # Seuil d'uptime en jours au-delà duquel une VM est signalée (UptimeOverThreshold).
     [int]$UptimeThresholdDays = 45,
 
-    # Délimiteur utilisé pour la lecture du CSV d'entrée et l'écriture des CSV de sortie.
     [string]$CsvDelimiter = ";"
 )
 
 # ============================================================
-# Chargement de config-precheck.psd1
-# Les paramètres CLI explicites ont priorité sur le fichier.
-# Les mots de passe ne sont jamais stockés dans le fichier de config.
+# Load config-precheck.psd1
+# Explicit CLI parameters always take priority over the file.
+# Passwords are never stored in the config file.
 # ============================================================
 
 $script:ConfigFilePath = Join-Path $PSScriptRoot "config-precheck.psd1"
 
 if (-not (Test-Path -LiteralPath $script:ConfigFilePath)) {
-    throw "Fichier de configuration introuvable : $script:ConfigFilePath"
+    throw "Configuration file not found: $script:ConfigFilePath"
 }
 
 $cfg = Import-PowerShellDataFile -LiteralPath $script:ConfigFilePath
 
+if (-not $PSBoundParameters.ContainsKey('VCenter'))             { $VCenter             = [string]$cfg.VCenter }
+if (-not $PSBoundParameters.ContainsKey('InputCsv'))            { $InputCsv            = [string]$cfg.InputCsv }
 if (-not $PSBoundParameters.ContainsKey('OutputFolder'))        { $OutputFolder        = [string]$cfg.OutputFolder }
 if (-not $PSBoundParameters.ContainsKey('TagCategoryName'))     { $TagCategoryName     = [string]$cfg.TagCategoryName }
 if (-not $PSBoundParameters.ContainsKey('CustomAttributeName')) { $CustomAttributeName = [string]$cfg.CustomAttributeName }
@@ -97,7 +100,10 @@ if (-not $PSBoundParameters.ContainsKey('LogFile'))             { $LogFile      
 if (-not $PSBoundParameters.ContainsKey('UptimeThresholdDays')) { $UptimeThresholdDays = [int]$cfg.UptimeThresholdDays }
 if (-not $PSBoundParameters.ContainsKey('CsvDelimiter'))        { $CsvDelimiter        = [string]$cfg.CsvDelimiter }
 
-# Credentials Windows — usernames et labels uniquement, mots de passe demandés à l'exécution.
+if ([string]::IsNullOrWhiteSpace($VCenter))  { throw "VCenter address is required (parameter -VCenter or config key 'VCenter')." }
+if ([string]::IsNullOrWhiteSpace($InputCsv)) { throw "Input CSV path is required (parameter -InputCsv or config key 'InputCsv')." }
+
+# Windows credentials — usernames and labels only; passwords are prompted at runtime.
 $WindowsCredentialDefinitions = @(
     foreach ($entry in $cfg.WindowsCredentials) {
         [PSCustomObject]@{
@@ -108,7 +114,7 @@ $WindowsCredentialDefinitions = @(
     }
 )
 
-# Credential Linux
+# Linux credential
 $LinuxCredentialDefinition = [PSCustomObject]@{
     Label    = [string]$cfg.LinuxCredential.Label
     UserName = [string]$cfg.LinuxCredential.UserName
@@ -116,7 +122,7 @@ $LinuxCredentialDefinition = [PSCustomObject]@{
 }
 
 # ============================================================
-# Fonctions
+# Functions
 # ============================================================
 
 function Write-ExecutionLog {
@@ -150,13 +156,13 @@ function Resolve-VMView {
     )
 
     if (-not $VmIndex.ContainsKey($VMName)) {
-        return [PSCustomObject]@{ View = $null; Error = "VM introuvable dans vCenter" }
+        return [PSCustomObject]@{ View = $null; Error = "VM not found in vCenter" }
     }
 
     $vmMatches = @($VmIndex[$VMName])
 
     if ($vmMatches.Count -gt 1) {
-        return [PSCustomObject]@{ View = $null; Error = "Nom de VM ambigu : plusieurs VM portent ce nom dans vCenter" }
+        return [PSCustomObject]@{ View = $null; Error = "Ambiguous VM name: multiple VMs share this name in vCenter" }
     }
 
     return [PSCustomObject]@{ View = $vmMatches[0]; Error = $null }
@@ -282,7 +288,7 @@ function Invoke-WindowsGuestScriptWithCredentialFallback {
         return [PSCustomObject]@{
             Success         = $false
             Output          = $null
-            Error           = "Aucun credential Windows candidat fourni."
+            Error           = "No Windows credential candidates provided."
             CredentialLabel = $null
             CredentialUser  = $null
         }
@@ -385,13 +391,13 @@ function Resolve-LotTag {
 }
 
 # ============================================================
-# Préparation
+# Preparation
 # ============================================================
 
 $script:LogPath = $LogFile
 
 if (-not (Test-Path $InputCsv)) {
-    throw "CSV introuvable : $InputCsv"
+    throw "Input CSV not found: $InputCsv"
 }
 
 if (-not (Test-Path $OutputFolder)) {
@@ -408,12 +414,12 @@ foreach ($file in @($detailCsv, $summaryCsv, $errorCsv)) {
     }
 }
 
-Write-ExecutionLog ("Lecture du CSV : {0}" -f $InputCsv)
+Write-ExecutionLog ("Reading CSV: {0}" -f $InputCsv)
 $rawRows = @(Import-Csv -Path $InputCsv -Delimiter $CsvDelimiter)
-Write-ExecutionLog ("{0} ligne(s) chargée(s)" -f $rawRows.Count)
+Write-ExecutionLog ("{0} row(s) loaded" -f $rawRows.Count)
 
 if (-not $rawRows -or $rawRows.Count -eq 0) {
-    throw "Le CSV est vide."
+    throw "The CSV is empty."
 }
 
 $columns = @($rawRows[0].PSObject.Properties.Name)
@@ -428,11 +434,11 @@ foreach ($column in $columns) {
 
 if (-not $normalizedColumnMap.ContainsKey("vmname") -or -not $normalizedColumnMap.ContainsKey("tag")) {
     $detectedColumns = ($columns -join ", ")
-    throw "Le CSV doit contenir les colonnes suivantes : vmname, tag. Colonnes détectées : $detectedColumns"
+    throw "CSV must contain columns: vmname, tag. Detected columns: $detectedColumns"
 }
 
 $vmNameColumn = $normalizedColumnMap["vmname"]
-$tagColumn = $normalizedColumnMap["tag"]
+$tagColumn    = $normalizedColumnMap["tag"]
 
 $inputRows = @(
     foreach ($row in $rawRows) {
@@ -451,7 +457,7 @@ $inputRows = @(
 $inputRows = @($inputRows | Sort-Object VMName, Lot -Unique)
 
 if (-not $inputRows -or $inputRows.Count -eq 0) {
-    throw "Aucune ligne exploitable dans le CSV."
+    throw "No usable rows found in the CSV."
 }
 
 $vmInMultipleLots = @(
@@ -464,28 +470,28 @@ $vmInMultipleLots = @(
 
 if ($vmInMultipleLots.Count -gt 0) {
     $badVMs = ($vmInMultipleLots | Select-Object -ExpandProperty Name) -join ", "
-    throw "Erreur de lotissement : certaines VM sont présentes dans plusieurs lots : $badVMs"
+    throw "Batching error: some VMs appear in multiple lots: $badVMs"
 }
 
 # ============================================================
-# Connexion vCenter
+# vCenter connection
 # ============================================================
 
-Write-ExecutionLog "AVERTISSEMENT : La validation des certificats SSL vCenter est désactivée pour cette session (InvalidCertificateAction = Ignore, Scope Session)." -Level WARN
+Write-ExecutionLog "WARNING: vCenter SSL certificate validation is disabled for this session (InvalidCertificateAction = Ignore, Scope Session)." -Level WARN
 Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Scope Session -Confirm:$false | Out-Null
 
-$vcenterCredential = Get-Credential -Message "Compte vCenter"
+$vcenterCredential = Get-Credential -Message "vCenter account"
 
 try {
     Connect-VIServer -Server $VCenter -Credential $vcenterCredential -ErrorAction Stop | Out-Null
 }
 catch {
-    throw "Impossible de se connecter à $VCenter : $_"
+    throw "Cannot connect to $VCenter : $_"
 }
 
 try {
     # ========================================================
-    # Catégorie de tag Single
+    # Single-cardinality tag category
     # ========================================================
 
     $tagCategory = Get-TagCategory -Name $TagCategoryName -ErrorAction SilentlyContinue |
@@ -500,21 +506,21 @@ try {
     }
     else {
         if ($tagCategory.Cardinality -ne "Single") {
-            throw "La catégorie '$TagCategoryName' existe déjà mais n'est pas en cardinalité Single."
+            throw "Tag category '$TagCategoryName' already exists but is not Single cardinality."
         }
 
         $entityTypes = @($tagCategory.EntityType | ForEach-Object { [string]$_ })
 
         if ($entityTypes.Count -gt 0 -and $entityTypes -notcontains "VirtualMachine") {
-            throw "La catégorie '$TagCategoryName' existe déjà mais n'est pas applicable aux VirtualMachine."
+            throw "Tag category '$TagCategoryName' already exists but does not apply to VirtualMachine."
         }
     }
 
     # ========================================================
-    # Attribut personnalisé NB_last_backup
+    # NB_last_backup custom attribute
     # ========================================================
 
-    $serviceInstance = Get-View ServiceInstance
+    $serviceInstance    = Get-View ServiceInstance
     $customFieldsManager = Get-View $serviceInstance.Content.CustomFieldsManager
 
     $backupField = $customFieldsManager.Field |
@@ -525,15 +531,15 @@ try {
         Select-Object -First 1
 
     if (-not $backupField) {
-        Write-ExecutionLog "Attribut personnalisé '$CustomAttributeName' introuvable. La colonne sera vide." -Level WARN
+        Write-ExecutionLog "Custom attribute '$CustomAttributeName' not found. Column will be empty." -Level WARN
     }
 
     # ========================================================
-    # Chargement des VM vCenter
+    # Load VM views from vCenter
     # ========================================================
 
-    # Filtre serveur par nom pour éviter de charger toutes les VM de vCenter.
-    # Get-View filtre en "contains", le $vmIndex garantit la résolution exacte.
+    # Server-side name filter to avoid loading all VMs from vCenter.
+    # Get-View filters by "contains"; $vmIndex enforces exact-name resolution.
     $namePattern = ($inputRows.VMName | ForEach-Object { [regex]::Escape($_) }) -join '|'
 
     $allVmViews = Get-View -ViewType VirtualMachine `
@@ -562,32 +568,32 @@ try {
     }
 
     # ========================================================
-    # Tagging en début de traitement
+    # Tag assignment
     # ========================================================
 
-    Write-ExecutionLog "Début du tagging"
+    Write-ExecutionLog "Starting VM tagging"
 
-    $script:tagCache = @{}
-    $tagStatusByVmLot = @{}
-    $vmObjectCache = @{}
-    $detailRows = New-Object System.Collections.Generic.List[object]
-    $errorRows  = New-Object System.Collections.Generic.List[object]
+    $script:tagCache   = @{}
+    $tagStatusByVmLot  = @{}
+    $vmObjectCache     = @{}
+    $detailRows        = New-Object System.Collections.Generic.List[object]
+    $errorRows         = New-Object System.Collections.Generic.List[object]
 
     $tagCounter = 0
-    $tagTotal = $inputRows.Count
+    $tagTotal   = $inputRows.Count
 
     foreach ($row in $inputRows) {
         $tagCounter++
-        $vmName = $row.VMName
+        $vmName  = $row.VMName
         $lotName = $row.Lot
-        $rowKey = "$vmName||$lotName"
+        $rowKey  = "$vmName||$lotName"
         $tagStatusByVmLot[$rowKey] = "NotProcessed"
 
-        Write-Progress -Activity "Tagging des VM" `
-            -Status ("VM {0}/{1} : {2} (lot {3})" -f $tagCounter, $tagTotal, $vmName, $lotName) `
+        Write-Progress -Activity "Tagging VMs" `
+            -Status ("VM {0}/{1}: {2} (batch {3})" -f $tagCounter, $tagTotal, $vmName, $lotName) `
             -PercentComplete (($tagCounter / $tagTotal) * 100)
 
-        Write-Verbose ("Tagging {0}/{1}: {2} (lot {3})" -f $tagCounter, $tagTotal, $vmName, $lotName)
+        Write-Verbose ("Tagging {0}/{1}: {2} (batch {3})" -f $tagCounter, $tagTotal, $vmName, $lotName)
 
         $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $vmName
 
@@ -601,13 +607,15 @@ try {
             $lotTag = Resolve-LotTag -LotName $lotName -Category $tagCategory
             $currentAssignments = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue)
             $assignmentsToRemove = @($currentAssignments | Where-Object { $_.Tag.Name -ne $lotName })
-            if ($assignmentsToRemove.Count -gt 0 -and $PSCmdlet.ShouldProcess($vmName, "Supprimer le tag existant '$($assignmentsToRemove[0].Tag.Name)'")) {
+
+            if ($assignmentsToRemove.Count -gt 0 -and $PSCmdlet.ShouldProcess($vmName, "Remove existing tag '$($assignmentsToRemove[0].Tag.Name)'")) {
                 $assignmentsToRemove | Remove-TagAssignment -Confirm:$false | Out-Null
             }
+
             $alreadyAssigned = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue | Where-Object { $_.Tag.Name -eq $lotName })
 
             if ($alreadyAssigned.Count -eq 0) {
-                if ($PSCmdlet.ShouldProcess($vmName, "Assigner le tag '$lotName'")) {
+                if ($PSCmdlet.ShouldProcess($vmName, "Assign tag '$lotName'")) {
                     New-TagAssignment -Tag $lotTag -Entity $vmObject -ErrorAction Stop | Out-Null
                     $tagStatusByVmLot[$rowKey] = "Assigned"
                 }
@@ -625,67 +633,51 @@ try {
         }
     }
 
-    Write-Progress -Activity "Tagging des VM" -Completed
-    Write-ExecutionLog "Fin du tagging"
+    Write-Progress -Activity "Tagging VMs" -Completed
+    Write-ExecutionLog "VM tagging complete"
 
     # ========================================================
-    # Détermination des credentials nécessaires
+    # Determine which guest credentials are needed
     # ========================================================
 
     $needWindowsCredentials = $false
-    $needLinuxCredential = $false
+    $needLinuxCredential    = $false
 
     if (-not $SkipGuestOperations) {
         foreach ($row in $inputRows) {
             $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $row.VMName
 
-            if ($resolved.Error) {
-                continue
-            }
+            if ($resolved.Error) { continue }
 
             $vmView = $resolved.View
 
-            if ($vmView.Runtime.PowerState -ne "poweredOn") {
-                continue
-            }
-
-            if (-not (Test-VMwareToolsRunning -VMView $vmView)) {
-                continue
-            }
+            if ($vmView.Runtime.PowerState -ne "poweredOn") { continue }
+            if (-not (Test-VMwareToolsRunning -VMView $vmView)) { continue }
 
             $guestFullName = $vmView.Guest.GuestFullName
-            if ([string]::IsNullOrWhiteSpace($guestFullName)) {
-                $guestFullName = $vmView.Config.GuestFullName
-            }
+            if ([string]::IsNullOrWhiteSpace($guestFullName)) { $guestFullName = $vmView.Config.GuestFullName }
 
             $guestId = $vmView.Guest.GuestId
-            if ([string]::IsNullOrWhiteSpace($guestId)) {
-                $guestId = $vmView.Config.GuestId
-            }
+            if ([string]::IsNullOrWhiteSpace($guestId)) { $guestId = $vmView.Config.GuestId }
 
             $guestFamily = Get-GuestFamily -GuestFullName $guestFullName -GuestId $guestId
 
-            if ($guestFamily -eq "Windows") {
-                $needWindowsCredentials = $true
-            }
-
-            if ($guestFamily -eq "Linux") {
-                $needLinuxCredential = $true
-            }
+            if ($guestFamily -eq "Windows") { $needWindowsCredentials = $true }
+            if ($guestFamily -eq "Linux")   { $needLinuxCredential    = $true }
         }
     }
 
-    $windowsGuestCredentials = [System.Collections.Generic.List[object]]::new()
-    $linuxGuestCredential = $null
-
+    $windowsGuestCredentials        = [System.Collections.Generic.List[object]]::new()
+    $linuxGuestCredential           = $null
     $preferredWindowsCredentialLabel = $null
 
-    Write-ExecutionLog "Début saisie des mots de passe"
+    Write-ExecutionLog "Starting credential prompts"
+
     if (-not $SkipGuestOperations -and $needWindowsCredentials) {
         foreach ($definition in ($WindowsCredentialDefinitions | Where-Object { $_.Enabled -eq $true })) {
             $credential = Get-Credential `
                 -UserName $definition.UserName `
-                -Message "Mot de passe du compte Windows [$($definition.Label)] - $($definition.UserName)"
+                -Message "Password for Windows account [$($definition.Label)] - $($definition.UserName)"
 
             $windowsGuestCredentials.Add([PSCustomObject]@{
                 Label      = $definition.Label
@@ -698,7 +690,7 @@ try {
     if (-not $SkipGuestOperations -and $needLinuxCredential -and $LinuxCredentialDefinition.Enabled -eq $true) {
         $credential = Get-Credential `
             -UserName $LinuxCredentialDefinition.UserName `
-            -Message "Mot de passe du compte Linux [$($LinuxCredentialDefinition.Label)] - $($LinuxCredentialDefinition.UserName)"
+            -Message "Password for Linux account [$($LinuxCredentialDefinition.Label)] - $($LinuxCredentialDefinition.UserName)"
 
         $linuxGuestCredential = [PSCustomObject]@{
             Label      = $LinuxCredentialDefinition.Label
@@ -707,34 +699,30 @@ try {
         }
     }
 
-    Write-ExecutionLog "Fin saisie des mots de passe"
+    Write-ExecutionLog "Credential prompts complete"
 
     # ========================================================
-    # Traitement
+    # Main processing loop
     # ========================================================
 
     $vmCounter = 0
-    $vmTotal = $inputRows.Count
+    $vmTotal   = $inputRows.Count
 
     foreach ($row in $inputRows) {
         $vmCounter++
-        $vmName = $row.VMName
+        $vmName  = $row.VMName
         $lotName = $row.Lot
 
-        Write-Progress -Activity "Traitement des VM" `
-            -Status ("VM {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName) `
+        Write-Progress -Activity "Processing VMs" `
+            -Status ("VM {0}/{1}: {2} (batch {3})" -f $vmCounter, $vmTotal, $vmName, $lotName) `
             -PercentComplete (($vmCounter / $vmTotal) * 100)
 
-        Write-ExecutionLog ("Traitement de la machine {0}/{1} : {2} (lot {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
+        Write-ExecutionLog ("Processing VM {0}/{1}: {2} (batch {3})" -f $vmCounter, $vmTotal, $vmName, $lotName)
 
         $resolved = Resolve-VMView -VmIndex $vmIndex -VMName $vmName
 
         if ($resolved.Error) {
-            $errorRows.Add([PSCustomObject]@{
-                VMName = $vmName
-                Lot    = $lotName
-                Error  = $resolved.Error
-            })
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = $resolved.Error })
             continue
         }
 
@@ -749,13 +737,13 @@ try {
                 $vmObjectCache[$vmName] = $vmObject
             }
             catch {
-                Write-ExecutionLog "Impossible de résoudre l'objet VIView pour $vmName : $_" -Level ERROR
+                Write-ExecutionLog "Cannot resolve VIView object for $vmName : $_" -Level ERROR
                 $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "VIView resolution failed: $_" })
                 continue
             }
         }
 
-        $rowKey = "$vmName||$lotName"
+        $rowKey   = "$vmName||$lotName"
         $tagStatus = if ($tagStatusByVmLot.ContainsKey($rowKey)) { $tagStatusByVmLot[$rowKey] } else { "NotProcessed" }
 
         # ----------------------------------------------------
@@ -769,16 +757,14 @@ try {
                 Where-Object { $_.Key -eq $backupField.Key } |
                 Select-Object -First 1
 
-            if ($customValue) {
-                $lastBackup = $customValue.Value
-            }
+            if ($customValue) { $lastBackup = $customValue.Value }
         }
 
         # ----------------------------------------------------
-        # Capacité configurée / consommée datastore
+        # Configured capacity / datastore committed storage
         # ----------------------------------------------------
 
-        $vCpuConfigured = [int]$vmView.Summary.Config.NumCpu
+        $vCpuConfigured  = [int]$vmView.Summary.Config.NumCpu
         $ramConfiguredGB = [math]::Round(($vmView.Summary.Config.MemorySizeMB / 1024), 2)
 
         $storageUsedGB = 0
@@ -787,18 +773,14 @@ try {
         }
 
         # ----------------------------------------------------
-        # Détection OS
+        # OS detection
         # ----------------------------------------------------
 
         $guestFullName = $vmView.Guest.GuestFullName
-        if ([string]::IsNullOrWhiteSpace($guestFullName)) {
-            $guestFullName = $vmView.Config.GuestFullName
-        }
+        if ([string]::IsNullOrWhiteSpace($guestFullName)) { $guestFullName = $vmView.Config.GuestFullName }
 
         $guestId = $vmView.Guest.GuestId
-        if ([string]::IsNullOrWhiteSpace($guestId)) {
-            $guestId = $vmView.Config.GuestId
-        }
+        if ([string]::IsNullOrWhiteSpace($guestId)) { $guestId = $vmView.Config.GuestId }
 
         $guestFamily = Get-GuestFamily -GuestFullName $guestFullName -GuestId $guestId
         $windowsYear = $null
@@ -810,24 +792,24 @@ try {
         $toolsRunning = Test-VMwareToolsRunning -VMView $vmView
 
         # ----------------------------------------------------
-        # Variables guest operations
+        # Guest operation variables
         # ----------------------------------------------------
 
-        $uptimeStatus = "Skipped"
-        $uptimeDays = $null
-        $uptimeOverThreshold = $false
-        $guestOperationError = $null
+        $uptimeStatus    = "Skipped"
+        $uptimeDays      = $null
+        $uptimeOverThreshold      = $false
+        $guestOperationError      = $null
 
-        $ipconfigStatus = "Skipped"
-        $ipconfigPath = $null
-        $ipconfigError = $null
+        $ipconfigStatus  = "Skipped"
+        $ipconfigPath    = $null
+        $ipconfigError   = $null
 
-        $windowsCredentialLabelUsed = $null
-        $windowsCredentialUserUsed = $null
+        $windowsCredentialLabelUsed     = $null
+        $windowsCredentialUserUsed      = $null
         $windowsCredentialAttemptErrors = $null
 
-        $linuxCredentialLabelUsed = $null
-        $linuxCredentialUserUsed = $null
+        $linuxCredentialLabelUsed  = $null
+        $linuxCredentialUserUsed   = $null
 
         # ----------------------------------------------------
         # VMware Tools guest operations
@@ -835,21 +817,21 @@ try {
 
         if (-not $SkipGuestOperations) {
             if ($vmView.Runtime.PowerState -ne "poweredOn") {
-                $uptimeStatus = "SkippedPoweredOff"
+                $uptimeStatus   = "SkippedPoweredOff"
                 $ipconfigStatus = "SkippedPoweredOff"
             }
             elseif (-not $toolsRunning) {
-                $uptimeStatus = "SkippedToolsNotRunning"
+                $uptimeStatus   = "SkippedToolsNotRunning"
                 $ipconfigStatus = "SkippedToolsNotRunning"
             }
             else {
                 # ------------------------------
-                # Linux : uptime en jours
+                # Linux: uptime in days
                 # ------------------------------
                 if ($guestFamily -eq "Linux") {
                     if ($null -eq $linuxGuestCredential) {
-                        $uptimeStatus = "Error"
-                        $guestOperationError = "Aucun credential Linux configuré ou saisi."
+                        $uptimeStatus        = "Error"
+                        $guestOperationError = "No Linux credential configured or provided."
                         $linuxCredentialLabelUsed = "NoCredentialConfigured"
                     }
                     else {
@@ -865,7 +847,7 @@ awk '{print $1}' /proc/uptime
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($uptimeResult.Success) {
-                            $rawSeconds = ($uptimeResult.Output -replace ",", ".").Trim()
+                            $rawSeconds    = ($uptimeResult.Output -replace ",", ".").Trim()
                             $parsedSeconds = 0.0
 
                             if ([double]::TryParse(
@@ -874,21 +856,21 @@ awk '{print $1}' /proc/uptime
                                 [System.Globalization.CultureInfo]::InvariantCulture,
                                 [ref]$parsedSeconds
                             )) {
-                                $uptimeDays = [math]::Round(($parsedSeconds / 86400), 2)
+                                $uptimeDays          = [math]::Round(($parsedSeconds / 86400), 2)
                                 $uptimeOverThreshold = [bool]($uptimeDays -gt $UptimeThresholdDays)
-                                $uptimeStatus = "OK"
+                                $uptimeStatus        = "OK"
 
                                 $linuxCredentialLabelUsed = $linuxGuestCredential.Label
-                                $linuxCredentialUserUsed = $linuxGuestCredential.UserName
+                                $linuxCredentialUserUsed  = $linuxGuestCredential.UserName
                             }
                             else {
-                                $uptimeStatus = "ParseError"
-                                $guestOperationError = "Impossible de parser l'uptime Linux : $($uptimeResult.Output)"
+                                $uptimeStatus        = "ParseError"
+                                $guestOperationError = "Failed to parse Linux uptime output: $($uptimeResult.Output)"
                             }
                         }
                         else {
-                            $uptimeStatus = "Error"
-                            $guestOperationError = $uptimeResult.Error
+                            $uptimeStatus             = "Error"
+                            $guestOperationError      = $uptimeResult.Error
                             $linuxCredentialLabelUsed = "CredentialError"
                         }
                     }
@@ -907,8 +889,8 @@ awk '{print $1}' /proc/uptime
                         $windowsCredentialLabelUsed = "NoCredentialConfigured"
                     }
 
-                    # Windows 2008 : uptime via wmic (CIM/PowerShell non disponibles)
-                    # Windows 2012+ : uptime via CIM PowerShell (wmic déprécié depuis 2012)
+                    # Windows 2008: uptime via wmic (CIM/PowerShell not available)
+                    # Windows 2012+: uptime via CIM PowerShell (wmic deprecated since 2012)
                     if ($null -ne $windowsYear -and $windowsYear -ge 2008) {
                         if ($windowsYear -ge 2012) {
                             $windowsUptimeScript = @'
@@ -933,26 +915,26 @@ wmic os get LastBootUpTime /value
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($uptimeResult.Success) {
-                            $windowsCredentialLabelUsed = $uptimeResult.CredentialLabel
-                            $windowsCredentialUserUsed  = $uptimeResult.CredentialUser
+                            $windowsCredentialLabelUsed      = $uptimeResult.CredentialLabel
+                            $windowsCredentialUserUsed       = $uptimeResult.CredentialUser
                             $preferredWindowsCredentialLabel = $uptimeResult.CredentialLabel
 
                             $uptimeDays = Get-UptimeDaysFromWmicOutput -WmicOutput $uptimeResult.Output
 
                             if ($null -ne $uptimeDays) {
-                                $uptimeDays = [math]::Round([double]$uptimeDays, 2)
+                                $uptimeDays          = [math]::Round([double]$uptimeDays, 2)
                                 $uptimeOverThreshold = [bool]($uptimeDays -gt $UptimeThresholdDays)
-                                $uptimeStatus = "OK"
+                                $uptimeStatus        = "OK"
                             }
                             else {
-                                $uptimeStatus = "ParseError"
-                                $guestOperationError = "Impossible de parser LastBootUpTime depuis la sortie guest."
+                                $uptimeStatus        = "ParseError"
+                                $guestOperationError = "Failed to parse LastBootUpTime from guest output."
                             }
                         }
                         else {
-                            $uptimeStatus = "Error"
-                            $guestOperationError = $uptimeResult.Error
-                            $windowsCredentialLabelUsed = "CredentialError"
+                            $uptimeStatus                   = "Error"
+                            $guestOperationError            = $uptimeResult.Error
+                            $windowsCredentialLabelUsed     = "CredentialError"
                             $windowsCredentialAttemptErrors = $uptimeResult.Error
                         }
                     }
@@ -963,10 +945,10 @@ wmic os get LastBootUpTime /value
                         $uptimeStatus = "SkippedWindowsBefore2008"
                     }
 
-                    # Windows 2003 / 2008 / 2008 R2 : ipconfig /all dans C:\temp
-                    # Versions plus récentes : ipconfig non applicable
+                    # Windows 2003 / 2008 / 2008 R2: run ipconfig /all and store output in C:\temp
+                    # Newer versions: not applicable
                     if ($isWindows2003 -or $isWindows2008) {
-                        $safeVmFileName = ($vmName -replace '[\\/:*?"<>| ]', '_')
+                        $safeVmFileName       = ($vmName -replace '[\\/:*?"<>| ]', '_')
                         $ipconfigPathCandidate = "C:\temp\ipconfig_all_$safeVmFileName.txt"
 
                         $ipconfigScript = @"
@@ -983,15 +965,15 @@ ipconfig /all > "$ipconfigPathCandidate"
                             -ToolsWaitSecs $ToolsWaitSecs
 
                         if ($ipconfigResult.Success) {
-                            $windowsCredentialLabelUsed = $ipconfigResult.CredentialLabel
-                            $windowsCredentialUserUsed  = $ipconfigResult.CredentialUser
+                            $windowsCredentialLabelUsed      = $ipconfigResult.CredentialLabel
+                            $windowsCredentialUserUsed       = $ipconfigResult.CredentialUser
                             $preferredWindowsCredentialLabel = $ipconfigResult.CredentialLabel
-                            $ipconfigPath = $ipconfigPathCandidate
-                            $ipconfigStatus = "OK"
+                            $ipconfigPath                    = $ipconfigPathCandidate
+                            $ipconfigStatus                  = "OK"
                         }
                         else {
-                            $ipconfigStatus = "Error"
-                            $ipconfigError = $ipconfigResult.Error
+                            $ipconfigStatus             = "Error"
+                            $ipconfigError              = $ipconfigResult.Error
                             $windowsCredentialLabelUsed = "CredentialError"
 
                             if ([string]::IsNullOrWhiteSpace($windowsCredentialAttemptErrors)) {
@@ -1010,47 +992,47 @@ ipconfig /all > "$ipconfigPathCandidate"
         }
 
         # ----------------------------------------------------
-        # Export détail VM
+        # VM detail row
         # ----------------------------------------------------
 
         $detailRows.Add([PSCustomObject]@{
-            Lot                           = $lotName
-            VMName                        = $vmName
-            PowerState                    = $vmView.Runtime.PowerState
+            Lot                            = $lotName
+            VMName                         = $vmName
+            PowerState                     = $vmView.Runtime.PowerState
 
-            GuestFamily                   = $guestFamily
-            WindowsYearDetected           = $windowsYear
-            VMwareToolsRunning            = $toolsRunning
+            GuestFamily                    = $guestFamily
+            WindowsYearDetected            = $windowsYear
+            VMwareToolsRunning             = $toolsRunning
 
-            vCPUConfigured                = $vCpuConfigured
-            RAMConfiguredGB               = $ramConfiguredGB
-            StorageUsedDatastoreGB        = $storageUsedGB
-            NB_last_backup                = $lastBackup
+            vCPUConfigured                 = $vCpuConfigured
+            RAMConfiguredGB                = $ramConfiguredGB
+            StorageUsedDatastoreGB         = $storageUsedGB
+            NB_last_backup                 = $lastBackup
 
-            UptimeStatus                  = $uptimeStatus
-            UptimeDays                    = if ($null -ne $uptimeDays) { [math]::Round([double]$uptimeDays, 2) } else { $null }
-            UptimeOverThreshold              = $uptimeOverThreshold
+            UptimeStatus                   = $uptimeStatus
+            UptimeDays                     = if ($null -ne $uptimeDays) { [math]::Round([double]$uptimeDays, 2) } else { $null }
+            UptimeOverThreshold            = $uptimeOverThreshold
 
-            IpconfigStatus                = $ipconfigStatus
-            IpconfigPath                  = $ipconfigPath
-            IpconfigError                 = $ipconfigError
+            IpconfigStatus                 = $ipconfigStatus
+            IpconfigPath                   = $ipconfigPath
+            IpconfigError                  = $ipconfigError
 
-            WindowsCredentialLabelUsed    = $windowsCredentialLabelUsed
-            WindowsCredentialUserUsed     = $windowsCredentialUserUsed
+            WindowsCredentialLabelUsed     = $windowsCredentialLabelUsed
+            WindowsCredentialUserUsed      = $windowsCredentialUserUsed
             WindowsCredentialAttemptErrors = $windowsCredentialAttemptErrors
 
-            LinuxCredentialLabelUsed      = $linuxCredentialLabelUsed
-            LinuxCredentialUserUsed       = $linuxCredentialUserUsed
+            LinuxCredentialLabelUsed       = $linuxCredentialLabelUsed
+            LinuxCredentialUserUsed        = $linuxCredentialUserUsed
 
-            GuestOperationError           = $guestOperationError
-            TagStatus                     = $tagStatus
+            GuestOperationError            = $guestOperationError
+            TagStatus                      = $tagStatus
         })
     }
 
-    Write-Progress -Activity "Traitement des VM" -Completed
+    Write-Progress -Activity "Processing VMs" -Completed
 
     # ========================================================
-    # Synthèse par lot
+    # Per-batch summary
     # ========================================================
 
     $summaryRows = $detailRows |
@@ -1059,27 +1041,27 @@ ipconfig /all > "$ipconfigPathCandidate"
             $group = $_.Group
 
             [PSCustomObject]@{
-                Lot                         = $_.Name
-                VMCount                     = $group.Count
-                PoweredOnVM                 = @($group | Where-Object { $_.PowerState -eq "poweredOn" }).Count
-                PoweredOffVM                = @($group | Where-Object { $_.PowerState -eq "poweredOff" }).Count
-                vCPUConfiguredTotal         = [int](($group | Measure-Object -Property vCPUConfigured -Sum).Sum)
-                RAMConfiguredTotalGB        = [math]::Round((($group | Measure-Object -Property RAMConfiguredGB -Sum).Sum), 2)
-                StorageUsedTotalGB          = [math]::Round((($group | Measure-Object -Property StorageUsedDatastoreGB -Sum).Sum), 2)
-                VMWithoutLastBackup         = @($group | Where-Object { [string]::IsNullOrWhiteSpace($_.NB_last_backup) }).Count
-                VMWithUptimeOK              = @($group | Where-Object { $_.UptimeStatus -eq "OK" }).Count
-                VMWithUptimeError           = @($group | Where-Object { $_.UptimeStatus -in @("Error", "ParseError") }).Count
-                VMWithUptimeSkipped         = @($group | Where-Object { $_.UptimeStatus -like "Skipped*" -or $_.UptimeStatus -eq "NotApplicable" }).Count
-                VMWithUptimeOverThreshold   = @($group | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
-                VMWithIpconfigOK            = @($group | Where-Object { $_.IpconfigStatus -eq "OK" }).Count
-                VMWithIpconfigError         = @($group | Where-Object { $_.IpconfigStatus -eq "Error" }).Count
-                VMWithTagError              = @($group | Where-Object { $_.TagStatus -eq "TagError" }).Count
+                Lot                        = $_.Name
+                VMCount                    = $group.Count
+                PoweredOnVM                = @($group | Where-Object { $_.PowerState -eq "poweredOn" }).Count
+                PoweredOffVM               = @($group | Where-Object { $_.PowerState -eq "poweredOff" }).Count
+                vCPUConfiguredTotal        = [int](($group | Measure-Object -Property vCPUConfigured -Sum).Sum)
+                RAMConfiguredTotalGB       = [math]::Round((($group | Measure-Object -Property RAMConfiguredGB -Sum).Sum), 2)
+                StorageUsedTotalGB         = [math]::Round((($group | Measure-Object -Property StorageUsedDatastoreGB -Sum).Sum), 2)
+                VMWithoutLastBackup        = @($group | Where-Object { [string]::IsNullOrWhiteSpace($_.NB_last_backup) }).Count
+                VMWithUptimeOK             = @($group | Where-Object { $_.UptimeStatus -eq "OK" }).Count
+                VMWithUptimeError          = @($group | Where-Object { $_.UptimeStatus -in @("Error", "ParseError") }).Count
+                VMWithUptimeSkipped        = @($group | Where-Object { $_.UptimeStatus -like "Skipped*" -or $_.UptimeStatus -eq "NotApplicable" }).Count
+                VMWithUptimeOverThreshold  = @($group | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
+                VMWithIpconfigOK           = @($group | Where-Object { $_.IpconfigStatus -eq "OK" }).Count
+                VMWithIpconfigError        = @($group | Where-Object { $_.IpconfigStatus -eq "Error" }).Count
+                VMWithTagError             = @($group | Where-Object { $_.TagStatus -eq "TagError" }).Count
             }
         } |
         Sort-Object Lot
 
     # ========================================================
-    # Exports CSV
+    # CSV exports
     # ========================================================
 
     $detailRows |
@@ -1089,22 +1071,22 @@ ipconfig /all > "$ipconfigPathCandidate"
     $summaryRows |
         Export-Csv -Path $summaryCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
-    # Toujours exporter le fichier d'erreurs (au minimum avec l'en-tête)
+    # Always export the error file (at minimum with the header row)
     $errorRows |
         Export-Csv -Path $errorCsv -NoTypeInformation -Encoding UTF8 -Delimiter $CsvDelimiter
 
     Write-Information "" -InformationAction Continue
-    Write-ExecutionLog ("Export détail des VM    : {0}" -f $detailCsv)
-    Write-ExecutionLog ("Export synthèse par lot : {0}" -f $summaryCsv)
-    Write-ExecutionLog ("Export erreurs          : {0}" -f $errorCsv)
+    Write-ExecutionLog ("VM detail export   : {0}" -f $detailCsv)
+    Write-ExecutionLog ("Batch summary export: {0}" -f $summaryCsv)
+    Write-ExecutionLog ("Error export       : {0}" -f $errorCsv)
 
     $overThreshold = @($detailRows | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
     Write-Information "" -InformationAction Continue
-    Write-ExecutionLog "--- Résumé d'exécution ---"
-    Write-ExecutionLog ("VMs traitées : {0} | Erreurs structurelles : {1} | Uptime > {2} jours : {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $overThreshold)
+    Write-ExecutionLog "--- Execution summary ---"
+    Write-ExecutionLog ("VMs processed: {0} | Structural errors: {1} | Uptime > {2} days: {3}" -f $detailRows.Count, $errorRows.Count, $UptimeThresholdDays, $overThreshold)
 
     if ($errorRows.Count -gt 0) {
-        Write-ExecutionLog ("ATTENTION : {0} erreur(s) structurelle(s) détectée(s) — consulter {1}" -f $errorRows.Count, $errorCsv) -Level WARN
+        Write-ExecutionLog ("WARNING: {0} structural error(s) detected — see {1}" -f $errorRows.Count, $errorCsv) -Level WARN
     }
 
     Write-Information "" -InformationAction Continue
