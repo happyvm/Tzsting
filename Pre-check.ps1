@@ -481,6 +481,7 @@ Write-ExecutionLog "WARNING: vCenter SSL certificate validation is disabled for 
 Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Scope Session -Confirm:$false | Out-Null
 
 $vcenterCredential = Get-Credential -Message "vCenter account"
+if ($null -eq $vcenterCredential) { throw "vCenter credential prompt was cancelled." }
 
 try {
     Connect-VIServer -Server $VCenter -Credential $vcenterCredential -ErrorAction Stop | Out-Null
@@ -679,6 +680,8 @@ try {
                 -UserName $definition.UserName `
                 -Message "Password for Windows account [$($definition.Label)] - $($definition.UserName)"
 
+            if ($null -eq $credential) { throw "Windows credential prompt cancelled ([$($definition.Label)])." }
+
             $windowsGuestCredentials.Add([PSCustomObject]@{
                 Label      = $definition.Label
                 UserName   = $credential.UserName
@@ -691,6 +694,8 @@ try {
         $credential = Get-Credential `
             -UserName $LinuxCredentialDefinition.UserName `
             -Message "Password for Linux account [$($LinuxCredentialDefinition.Label)] - $($LinuxCredentialDefinition.UserName)"
+
+        if ($null -eq $credential) { throw "Linux credential prompt cancelled ([$($LinuxCredentialDefinition.Label)])." }
 
         $linuxGuestCredential = [PSCustomObject]@{
             Label      = $LinuxCredentialDefinition.Label
@@ -959,7 +964,7 @@ wmic os get LastBootUpTime /value
                     #   - Buffer not fully flushed before the guest process exits.
                     #     Fix: trailing ping adds ~1 s delay before cmd exits.
                     if ($isWindows2003 -or $isWindows2008) {
-                        $safeVmFileName        = ($vmName -replace '[\\/:*?"<>| ]', '_')
+                        $safeVmFileName        = ($vmName -replace '[\\/:*?"<>|&^%!()\s]', '_')
                         $ipconfigPathCandidate = "C:\temp\ipconfig_all_$safeVmFileName.txt"
 
                         # No quotes around the path: avoids silent redirect failure on old CMD.
