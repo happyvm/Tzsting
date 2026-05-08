@@ -624,7 +624,7 @@ try {
                 $assignmentsToRemove | Remove-TagAssignment -Confirm:$false | Out-Null
             }
 
-            $alreadyAssigned = @(Get-TagAssignment -Entity $vmObject -Category $tagCategory -ErrorAction SilentlyContinue | Where-Object { $_.Tag.Name -eq $lotName })
+            $alreadyAssigned = @($currentAssignments | Where-Object { $_.Tag.Name -eq $lotName })
 
             if ($alreadyAssigned.Count -eq 0) {
                 if ($PSCmdlet.ShouldProcess($vmName, "Assign tag '$lotName'")) {
@@ -938,7 +938,6 @@ wmic os get LastBootUpTime /value
                             $uptimeDays = Get-UptimeDaysFromWmicOutput -WmicOutput $uptimeResult.Output
 
                             if ($null -ne $uptimeDays) {
-                                $uptimeDays          = [math]::Round([double]$uptimeDays, 2)
                                 $uptimeOverThreshold = [bool]($uptimeDays -gt $UptimeThresholdDays)
                                 $uptimeStatus        = "OK"
                             }
@@ -1025,12 +1024,8 @@ ping -n 2 127.0.0.1 > nul
                             $ipconfigError              = $ipconfigResult.Error
                             $windowsCredentialLabelUsed = "CredentialError"
 
-                            if ([string]::IsNullOrWhiteSpace($windowsCredentialAttemptErrors)) {
-                                $windowsCredentialAttemptErrors = $ipconfigResult.Error
-                            }
-                            else {
-                                $windowsCredentialAttemptErrors = $windowsCredentialAttemptErrors + " || " + $ipconfigResult.Error
-                            }
+                            $windowsCredentialAttemptErrors = (@($windowsCredentialAttemptErrors, $ipconfigResult.Error) |
+                                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " || "
                         }
                     }
                     else {
@@ -1059,7 +1054,7 @@ ping -n 2 127.0.0.1 > nul
             NB_last_backup                 = $lastBackup
 
             UptimeStatus                   = $uptimeStatus
-            UptimeDays                     = if ($null -ne $uptimeDays) { [math]::Round([double]$uptimeDays, 2) } else { $null }
+            UptimeDays                     = $uptimeDays
             UptimeOverThreshold            = $uptimeOverThreshold
 
             IpconfigStatus                 = $ipconfigStatus
