@@ -224,7 +224,7 @@ Describe 'Resolve-VMView' {
         $index = @{ 'SRV-DUP' = @($view1, $view2) }
         $result = Resolve-VMView -VmIndex $index -VMName 'SRV-DUP'
         $result.View  | Should -BeNullOrEmpty
-        $result.Error | Should -BeLike '*ambigu*'
+        $result.Error | Should -BeLike '*Ambiguous*'
     }
 }
 

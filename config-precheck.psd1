@@ -1,40 +1,54 @@
 @{
     # ----------------------------------------------------------
-    # Sorties
+    # vCenter connection
     # ----------------------------------------------------------
 
-    # Dossier de destination des CSV produits par le script.
+    # vCenter server hostname or IP address.
+    VCenter             = "vcenter.company.local"
+
+    # ----------------------------------------------------------
+    # Input
+    # ----------------------------------------------------------
+
+    # Path to the input CSV file (vmname;tag columns required).
+    InputCsv            = ".\migration_input.csv"
+
+    # ----------------------------------------------------------
+    # Output
+    # ----------------------------------------------------------
+
+    # Destination folder for the CSV files produced by the script.
     OutputFolder        = "."
 
-    # Chemin d'un fichier de log. Laisser vide pour la console uniquement.
+    # Path to a log file. Leave empty to write to the console only.
     LogFile             = ""
 
-    # Délimiteur CSV (lecture de l'entrée et écriture des sorties).
+    # CSV delimiter used for reading the input file and writing output files.
     CsvDelimiter        = ";"
 
     # ----------------------------------------------------------
     # vSphere
     # ----------------------------------------------------------
 
-    # Nom de la catégorie de tag vSphere (cardinalité Single, type VirtualMachine).
+    # Name of the vSphere tag category (Single cardinality, VirtualMachine entity type).
     TagCategoryName     = "MigrationLot"
 
-    # Nom de l'attribut personnalisé vCenter à lire sur chaque VM.
+    # Name of the vCenter custom attribute to read on each VM.
     CustomAttributeName = "NB_last_backup"
 
-    # Délai (secondes) accordé à VMware Tools pour répondre lors des guest operations.
+    # Timeout in seconds granted to VMware Tools to respond during guest operations.
     ToolsWaitSecs       = 20
 
     # ----------------------------------------------------------
-    # Comportement
+    # Behaviour
     # ----------------------------------------------------------
 
-    # Seuil en jours : si l'uptime dépasse cette valeur, UptimeOverThreshold = $true.
+    # Uptime threshold in days: if uptime exceeds this value, UptimeOverThreshold = $true.
     UptimeThresholdDays = 45
 
     # ----------------------------------------------------------
-    # Credentials Windows (essayés dans l'ordre ; Enabled = $false pour désactiver)
-    # Les mots de passe ne sont jamais stockés ici : ils sont demandés à l'exécution.
+    # Windows credentials (tried in order; set Enabled = $false to skip an entry)
+    # Passwords are never stored here: they are prompted at runtime.
     # ----------------------------------------------------------
 
     WindowsCredentials  = @(
@@ -46,7 +60,7 @@
     )
 
     # ----------------------------------------------------------
-    # Credential Linux
+    # Linux credential
     # ----------------------------------------------------------
 
     LinuxCredential     = @{ Label = "LINUX-ADMIN-01"; UserName = "root"; Enabled = $true }
