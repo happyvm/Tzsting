@@ -479,9 +479,11 @@ if ($vmInMultipleLots.Count -gt 0) {
 
 $script:ConnectedByScript = $false
 
-$existingSession = @($global:DefaultVIServers | Where-Object {
-    $_.Name -eq $VCenter -and $_.IsConnected
-})
+$existingSession = @(
+    (Get-Variable -Name 'DefaultVIServers' -Scope Global -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue) |
+    Where-Object { $_.Name -eq $VCenter -and $_.IsConnected }
+)
 
 if ($existingSession.Count -gt 0) {
     Write-ExecutionLog "Reusing existing vCenter session for $VCenter"
