@@ -266,51 +266,36 @@ foreach ($array in $Arrays) {
 
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
 
-        # Get-Pfa2Array retourne parfois un nom de famille générique (ex: M_SERIES, X_SERIES)
-        # plutôt que le modèle complet. Get-Pfa2Hardware (composant chassis) retourne le modèle
-        # précis (ex: FA-M70R3). On déclenche ce fallback si le modèle ne contient pas de
-        # révision matérielle (Rn), ce qui exclut les noms de famille mais pas les vrais modèles.
+        # Get-Pfa2Array retourne un nom de famille générique (ex: M_SERIES).
+        # Le modèle complet (ex: FA-X70R3) est sur le composant controller (CT0/CT1)
+        # dans Get-Pfa2Hardware. On déclenche ce fallback si le modèle ne contient pas Rn.
         $hasFullModel = $model -match '(?i)R\d+'
         if (-not $hasFullModel -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
             $hwAll = @(Get-Pfa2Hardware -Array $flashArray)
 
-            Write-Host '--- Diagnostic hardware (temporaire) ---' -ForegroundColor Magenta
-            $hwAll | ForEach-Object {
-                $n = [string](Get-ObjValue -Object $_ -Names @('name','Name') -Default '?')
-                $t = [string](Get-ObjValue -Object $_ -Names @('type','Type') -Default '?')
-                $m = [string](Get-ObjValue -Object $_ -Names @('model','Model') -Default '')
-                Write-Host ("  name={0,-30} type={1,-25} model={2}" -f $n, $t, $m) -ForegroundColor Magenta
-            }
-            Write-Host '--- Fin diagnostic ---' -ForegroundColor Magenta
-
-            # Essai 1: type chassis
+            # Priorité: controller (CT0/CT1) avec model non vide
             $best = $hwAll | Where-Object {
-                [string](Get-ObjValue -Object $_ -Names @('type','Type') -Default '') -match '(?i)chassis'
+                [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)^controller$' -and
+                [string](Get-ObjValue -Object $_ -Names @('model', 'Model') -Default '') -ne ''
             } | Select-Object -First 1
 
-            # Essai 2: composant nommé CH0 / CH1 (convention FlashArray)
+            # Fallback: chassis avec model non vide
             if (-not $best) {
                 $best = $hwAll | Where-Object {
-                    [string](Get-ObjValue -Object $_ -Names @('name','Name') -Default '') -match '(?i)^CH\d*$'
+                    [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)chassis' -and
+                    [string](Get-ObjValue -Object $_ -Names @('model', 'Model') -Default '') -ne ''
                 } | Select-Object -First 1
             }
 
-            # Essai 3: controller CT0 (certaines versions portent le modèle ici)
+            # Fallback: n'importe quel composant avec un model non vide
             if (-not $best) {
                 $best = $hwAll | Where-Object {
-                    [string](Get-ObjValue -Object $_ -Names @('name','Name') -Default '') -match '(?i)^CT0$'
-                } | Select-Object -First 1
-            }
-
-            # Essai 4: premier composant qui a un modèle avec révision Rn
-            if (-not $best) {
-                $best = $hwAll | Where-Object {
-                    [string](Get-ObjValue -Object $_ -Names @('model','Model') -Default '') -match '(?i)R\d+'
+                    [string](Get-ObjValue -Object $_ -Names @('model', 'Model') -Default '') -ne ''
                 } | Select-Object -First 1
             }
 
             if ($best) {
-                $hwModel = [string](Get-ObjValue -Object $best -Names @('model','Model') -Default '')
+                $hwModel = [string](Get-ObjValue -Object $best -Names @('model', 'Model') -Default '')
                 if ($hwModel) { $model = $hwModel }
             }
         }
