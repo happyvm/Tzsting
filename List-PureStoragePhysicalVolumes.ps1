@@ -45,7 +45,7 @@ param(
     [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure.psd1'),
 
     [Parameter()]
-    [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+)([-_.]|$)',
+    [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+|nbu-mediaserver)([-_.]|$)',
 
     [Parameter()]
     [string]$OutputCsv = '.\pure-physical-volumes.csv',
@@ -133,33 +133,34 @@ function Get-ObjValue {
 }
 
 function Get-ReplicationType {
-    param([Parameter(Mandatory = $true)][object]$Volume)
+    param(
+        [Parameter(Mandatory = $true)][object]$Volume,
+        [Parameter()][hashtable]$PodSyncMap = @{}
+    )
 
-    $syncIndicators = @(
+    # Méthode principale: le pod indique le type de réplication.
+    # ActiveCluster (sync) = pod avec mediator configuré.
+    # ActiveDR (async) = pod sans mediator.
+    $podName = [string](Get-ObjValue -Object $Volume -Names @('pod.name', 'Pod.Name') -Default '')
+    if ($podName) {
+        if ($PodSyncMap.ContainsKey($podName)) {
+            return if ($PodSyncMap[$podName]) { 'actif/actif' } else { 'asynchrone' }
+        }
+        # Pod présent mais Get-Pfa2Pod indisponible: on ne peut pas trancher
+        return 'asynchrone'
+    }
+
+    # Fallback: flags directs sur le volume (peut exister dans certaines versions d'API)
+    foreach ($v in @(
         (Get-ObjValue -Object $Volume -Names @('sync_replication', 'SyncReplication', 'is_sync_replicated', 'IsSyncReplicated') -Default $false),
         (Get-ObjValue -Object $Volume -Names @('active_cluster', 'ActiveCluster') -Default $false)
-    )
+    )) { if (($v -is [bool] -and $v) -or ($v -and "$v" -ne '')) { return 'actif/actif' } }
 
-    $asyncIndicators = @(
+    foreach ($v in @(
         (Get-ObjValue -Object $Volume -Names @('async_replication', 'AsyncReplication', 'is_async_replicated', 'IsAsyncReplicated') -Default $false),
-        (Get-ObjValue -Object $Volume -Names @('protection_group', 'ProtectionGroup') -Default $null),
-        (Get-ObjValue -Object $Volume -Names @('pod', 'Pod') -Default $null)
-    )
+        (Get-ObjValue -Object $Volume -Names @('protection_group', 'ProtectionGroup') -Default $null)
+    )) { if (($v -is [bool] -and $v) -or ($v -and "$v" -ne '')) { return 'asynchrone' } }
 
-    $isSync = $false
-    foreach ($i in $syncIndicators) {
-        if ($i -is [bool] -and $i) { $isSync = $true; break }
-        if ($i -and "$i" -ne '') { $isSync = $true; break }
-    }
-
-    $isAsync = $false
-    foreach ($i in $asyncIndicators) {
-        if ($i -is [bool] -and $i) { $isAsync = $true; break }
-        if ($i -and "$i" -ne '') { $isAsync = $true; break }
-    }
-
-    if ($isSync) { return 'actif/actif' }
-    if ($isAsync) { return 'asynchrone' }
     return 'non répliqué'
 }
 
@@ -257,7 +258,13 @@ foreach ($array in $Arrays) {
         } else { $arrayInfo }
 
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
-        Write-Verbose "ArrayInfo props: $($arrayInfo.PSObject.Properties.Name -join ', ')"
+        if ($model -eq 'N/A') {
+            if ($null -eq $arrayInfo) {
+                Write-Warning "[$array] Get-Pfa2Array n'a retourné aucun objet."
+            } else {
+                Write-Warning "[$array] Modèle introuvable. Propriétés Get-Pfa2Array disponibles: $($arrayInfo.PSObject.Properties.Name -join ', ')"
+            }
+        }
 
         $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @(
             'data_reduction', 'DataReduction',
@@ -275,6 +282,19 @@ foreach ($array in $Arrays) {
 
         $volumes = @(Get-Pfa2Volume -Array $flashArray -Limit 10000)
         $connections = @(Get-Pfa2Connection -Array $flashArray -Limit 10000)
+
+        # Map podName → $true (ActiveCluster/sync) | $false (ActiveDR/async)
+        # Un pod ActiveCluster a un mediator configuré; un pod ActiveDR n'en a pas.
+        $podSyncMap = @{}
+        if (Get-Command 'Get-Pfa2Pod' -ErrorAction SilentlyContinue) {
+            foreach ($pod in @(Get-Pfa2Pod -Array $flashArray -Limit 1000)) {
+                $mediator = [string](Get-ObjValue -Object $pod -Names @('mediator', 'Mediator') -Default '')
+                $podSyncMap[[string]$pod.Name] = (-not [string]::IsNullOrWhiteSpace($mediator))
+            }
+            Write-Verbose "Pods: $($podSyncMap.Count) | ActiveCluster: $(($podSyncMap.Values | Where-Object {$_}).Count) | ActiveDR: $(($podSyncMap.Values | Where-Object {-not $_}).Count)"
+        } else {
+            Write-Warning "Get-Pfa2Pod indisponible: type de réplication pod déterminé par défaut (asynchrone)."
+        }
 
         if ($volumes.Count -eq 0) {
             Write-Host "Aucun volume trouvé." -ForegroundColor Yellow
@@ -296,6 +316,7 @@ foreach ($array in $Arrays) {
 
             $vol = $volumesByName[$volName]
             $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('provisioned', 'space.total', 'size') -Default 0) / 1GB), 2)
+            $volReduction = [Math]::Round([double](Get-ObjValue -Object $vol -Names @('space.data_reduction', 'Space.DataReduction', 'data_reduction', 'DataReduction', 'space.total_reduction', 'Space.TotalReduction') -Default 0), 2)
 
             $allRows.Add([PSCustomObject]@{
                 Array              = $array
@@ -304,12 +325,13 @@ foreach ($array in $Arrays) {
                 ArrayRawTiB        = $rawTiB
                 Volume             = [string]$vol.Name
                 VolumeGiB          = $sizeGiB
+                VolumeReduction    = $volReduction
                 Serial             = [string]$vol.Serial
                 Host               = [string](Get-ObjValue -Object $conn -Names @('host.name') -Default '')
                 HostGroup          = [string](Get-ObjValue -Object $conn -Names @('HostGroup.Name', 'host_group.name') -Default '')
                 Protocol           = [string](Get-ObjValue -Object $conn -Names @('ProtocolEndpointType', 'protocol_endpoint_type') -Default '')
                 Lun                = [string](Get-ObjValue -Object $conn -Names @('lun') -Default '')
-                ReplicationType    = Get-ReplicationType -Volume $vol
+                ReplicationType    = Get-ReplicationType -Volume $vol -PodSyncMap $podSyncMap
             })
         }
 
@@ -320,7 +342,9 @@ foreach ($array in $Arrays) {
         else {
             $currentArrayRows |
                 Sort-Object Host, Volume |
-                Format-Table Array, Host, HostGroup, Volume, VolumeGiB, ReplicationType, Lun -AutoSize
+                Format-Table Array, Host, HostGroup, Volume, VolumeGiB,
+                    @{L='Réduction';E={if($_.VolumeReduction -gt 0){"$($_.VolumeReduction)x"}else{'N/A'}}},
+                    ReplicationType, Lun -AutoSize
         }
     }
     catch {
@@ -328,6 +352,48 @@ foreach ($array in $Arrays) {
     }
     finally {
         if ($session) { Close-PureApiSession -Array $array -Session $session }
+    }
+}
+
+# Appairage des volumes répliqués par numéro de série
+$serialMap = @{}
+foreach ($row in $allRows) {
+    if ([string]::IsNullOrWhiteSpace($row.Serial)) { continue }
+    if (-not $serialMap.ContainsKey($row.Serial)) {
+        $serialMap[$row.Serial] = [System.Collections.Generic.List[object]]::new()
+    }
+    $serialMap[$row.Serial].Add($row)
+}
+
+foreach ($row in $allRows) {
+    $partners = @()
+    if (-not [string]::IsNullOrWhiteSpace($row.Serial) -and $serialMap.ContainsKey($row.Serial)) {
+        $partners = @(
+            $serialMap[$row.Serial] |
+            Where-Object { $_.Array -ne $row.Array } |
+            ForEach-Object { "$($_.Array)/$($_.Volume)" } |
+            Select-Object -Unique
+        )
+    }
+    $row | Add-Member -NotePropertyName 'PairedWith' -NotePropertyValue ($partners -join '; ') -Force
+}
+
+$pairedSerials = @($serialMap.Keys | Where-Object {
+    ($serialMap[$_] | Select-Object -ExpandProperty Array | Select-Object -Unique).Count -gt 1
+})
+
+if ($pairedSerials.Count -gt 0) {
+    Write-Host ("`n=== Volumes répliqués détectés — {0} groupe(s) ===" -f $pairedSerials.Count) -ForegroundColor Cyan
+    foreach ($serial in ($pairedSerials | Sort-Object)) {
+        $rows = $serialMap[$serial]
+        $volName = ($rows | Select-Object -ExpandProperty Volume -First 1)
+        Write-Host ("`nVolume : {0}  |  Série : {1}" -f $volName, $serial) -ForegroundColor Yellow
+        $rows | Sort-Object Array |
+            Format-Table @{L='Baie';E={$_.Array}},
+                         @{L='Hôte';E={$_.Host}},
+                         @{L='HostGroup';E={$_.HostGroup}},
+                         @{L='Taille (GiB)';E={$_.VolumeGiB}},
+                         @{L='Réplication';E={$_.ReplicationType}} -AutoSize
     }
 }
 

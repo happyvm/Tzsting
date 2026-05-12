@@ -9,8 +9,9 @@
     # Ignore les erreurs de certificat TLS (certificats auto-signés, expirés, etc.).
     IgnoreCertificateErrors = $true
 
-    # Regex des hôtes à exclure (hyperviseurs).
-    ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+)([-_.]|$)'
+    # Regex appliquée au nom d'hôte ET au nom de hostgroup pour exclure les non-physiques.
+    # Couvre: hyperviseurs ESX/VMware/Hyper-V, serveurs de backup NBU media server.
+    ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+|nbu-mediaserver)([-_.]|$)'
 
     # Fichier CSV de sortie.
     OutputCsv = '.\pure-physical-volumes.csv'
