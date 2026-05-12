@@ -1,4 +1,4 @@
-<#!
+﻿<#!
 .SYNOPSIS
     Liste les volumes Pure Storage présentés à des serveurs physiques (en excluant ESX/Hyper-V).
 
@@ -20,9 +20,6 @@
 .PARAMETER Credential
     Identifiant Pure Storage avec droits de lecture API.
 
-.PARAMETER ApiVersion
-    Version d'API REST Pure (par défaut: 2.38).
-
 .PARAMETER ExcludeHostRegex
     Expression régulière utilisée pour exclure les hyperviseurs.
 
@@ -33,6 +30,9 @@
     $arrays = @('fa-prod-01.company.local','fa-prod-02.company.local')
     .\List-PureStoragePhysicalVolumes.ps1 -Arrays $arrays -OutputCsv .\pure-physical-volumes.csv
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification='Script interactif: Write-Host intentionnel pour affichage couleur en console')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '', Justification='Mot de passe en clair supporté dans config locale uniquement')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='Fonctions internes non exportées')]
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -43,9 +43,6 @@ param(
 
     [Parameter()]
     [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure.psd1'),
-
-    [Parameter()]
-    [string]$ApiVersion = '2.38',
 
     [Parameter()]
     [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+)([-_.]|$)',
@@ -64,7 +61,6 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path -LiteralPath $ConfigFile) {
     $cfg = Import-PowerShellDataFile -LiteralPath $ConfigFile
 
-    if (-not $PSBoundParameters.ContainsKey('ApiVersion') -and $cfg.ContainsKey('ApiVersion')) { $ApiVersion = [string]$cfg.ApiVersion }
     if (-not $PSBoundParameters.ContainsKey('Arrays') -and $cfg.ContainsKey('Arrays')) { $Arrays = @($cfg.Arrays | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
     if (-not $PSBoundParameters.ContainsKey('ExcludeHostRegex') -and $cfg.ContainsKey('ExcludeHostRegex')) { $ExcludeHostRegex = [string]$cfg.ExcludeHostRegex }
     if (-not $PSBoundParameters.ContainsKey('OutputCsv') -and $cfg.ContainsKey('OutputCsv')) { $OutputCsv = [string]$cfg.OutputCsv }
