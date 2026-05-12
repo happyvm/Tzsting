@@ -102,7 +102,6 @@ Import-Module PureStoragePowerShellSDK2 -ErrorAction Stop
 $script:PureModuleSessionCmdlets = @{
     Connect    = 'Connect-Pfa2Array'
     Disconnect = 'Disconnect-Pfa2Array'
-    Invoke     = 'Invoke-Pfa2RestMethod'
 }
 Write-Host "Module PureStoragePowerShellSDK2 chargé." -ForegroundColor Green
 
@@ -120,8 +119,10 @@ function Get-ObjValue {
         $current = $Object
         $found = $true
         foreach ($part in $parts) {
-            if ($null -eq $current -or -not $current.PSObject.Properties[$part]) { $found = $false; break }
-            $current = $current.$part
+            if ($null -eq $current) { $found = $false; break }
+            $prop = $current.PSObject.Properties.Match($part) | Select-Object -First 1
+            if (-not $prop) { $found = $false; break }
+            $current = $prop.Value
         }
         if ($found -and $null -ne $current -and "$current" -ne '') {
             return $current
@@ -135,14 +136,14 @@ function Get-ReplicationType {
     param([Parameter(Mandatory = $true)][object]$Volume)
 
     $syncIndicators = @(
-        (Get-ObjValue -Object $Volume -Names @('sync_replication', 'is_sync_replicated') -Default $false),
+        (Get-ObjValue -Object $Volume -Names @('sync_replication', 'SyncReplication', 'is_sync_replicated', 'IsSyncReplicated') -Default $false),
         (Get-ObjValue -Object $Volume -Names @('pod') -Default $null),
-        (Get-ObjValue -Object $Volume -Names @('active_cluster') -Default $false)
+        (Get-ObjValue -Object $Volume -Names @('active_cluster', 'ActiveCluster') -Default $false)
     )
 
     $asyncIndicators = @(
-        (Get-ObjValue -Object $Volume -Names @('async_replication', 'is_async_replicated') -Default $false),
-        (Get-ObjValue -Object $Volume -Names @('protection_group') -Default $null)
+        (Get-ObjValue -Object $Volume -Names @('async_replication', 'AsyncReplication', 'is_async_replicated', 'IsAsyncReplicated') -Default $false),
+        (Get-ObjValue -Object $Volume -Names @('protection_group', 'ProtectionGroup') -Default $null)
     )
 
     $isSync = $false
@@ -207,18 +208,6 @@ function New-PureApiSession {
     return @{ Session = $session }
 }
 
-function Invoke-PureApiWithSession {
-    param(
-        [Parameter(Mandatory = $true)][hashtable]$Session,
-        [Parameter(Mandatory = $true)][string]$Method,
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter()][object]$Body
-    )
-
-    $invokeParams = @{ Array = $Session.Session; Method = $Method; Path = $Path }
-    if ($Body) { $invokeParams.Body = $Body }
-    return (& $script:PureModuleSessionCmdlets.Invoke @invokeParams)
-}
 
 function Close-PureApiSession {
     param([string]$Array,[hashtable]$Session)
@@ -261,23 +250,21 @@ foreach ($array in $Arrays) {
         $arrayCredential = Get-ArrayCredential -Array $array -DefaultCredential $Credential
         $session = New-PureApiSession -Array $array -Credential $arrayCredential
 
-        $arrayInfoResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'arrays' -Session $session
-        $arraySpaceResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'arrays/space' -Session $session
-        $volumesResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'volumes?limit=10000' -Session $session
-        $connectionsResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'connections?limit=10000' -Session $session
-
-        $arrayInfo = @($arrayInfoResponse.items)[0]
-        $arraySpace = @($arraySpaceResponse.items)[0]
+        $flashArray = $session.Session
+        $arrayInfo = @(Get-Pfa2Array -Array $flashArray)[0]
+        $arraySpace = if (Get-Command 'Get-Pfa2ArraySpace' -ErrorAction SilentlyContinue) {
+            @(Get-Pfa2ArraySpace -Array $flashArray)[0]
+        } else { $arrayInfo }
 
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model') -Default 'N/A')
-        $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @('data_reduction', 'total_reduction') -Default 0)
-        $rawBytes = [double](Get-ObjValue -Object $arraySpace -Names @('capacity', 'total_capacity', 'space.total_physical') -Default 0)
+        $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @('data_reduction', 'DataReduction', 'total_reduction', 'TotalReduction') -Default 0)
+        $rawBytes = [double](Get-ObjValue -Object $arraySpace -Names @('capacity', 'total_capacity', 'TotalCapacity', 'space.total_physical', 'Space.TotalPhysical') -Default 0)
         $rawTiB = [Math]::Round(($rawBytes / 1TB), 2)
 
         Write-Host ("Modèle: {0} | Ratio dédup+compression: {1}x | Capacité raw: {2} TiB" -f $model, ([Math]::Round($dataReduction, 2)), $rawTiB) -ForegroundColor Gray
 
-        $volumes = @($volumesResponse.items)
-        $connections = @($connectionsResponse.items)
+        $volumes = @(Get-Pfa2Volume -Array $flashArray -Limit 10000)
+        $connections = @(Get-Pfa2Connection -Array $flashArray -Limit 10000)
 
         if ($volumes.Count -eq 0) {
             Write-Host "Aucun volume trouvé." -ForegroundColor Yellow
@@ -285,16 +272,16 @@ foreach ($array in $Arrays) {
         }
 
         $volumesByName = @{}
-        foreach ($vol in $volumes) { $volumesByName[$vol.name] = $vol }
+        foreach ($vol in $volumes) { $volumesByName[[string]$vol.Name] = $vol }
 
         $physicalConnections = $connections | Where-Object {
-            $connHostName = [string]$_.host.name
-            $connHostGroup = [string]$_.host_group.name
+            $connHostName = [string](Get-ObjValue -Object $_ -Names @('host.name') -Default '')
+            $connHostGroup = [string](Get-ObjValue -Object $_ -Names @('HostGroup.Name', 'host_group.name') -Default '')
             -not ($connHostName -match $ExcludeHostRegex) -and -not ($connHostGroup -match $ExcludeHostRegex)
         }
 
         foreach ($conn in $physicalConnections) {
-            $volName = [string]$conn.volume.name
+            $volName = [string](Get-ObjValue -Object $conn -Names @('volume.name') -Default '')
             if (-not $volumesByName.ContainsKey($volName)) { continue }
 
             $vol = $volumesByName[$volName]
@@ -305,13 +292,13 @@ foreach ($array in $Arrays) {
                 ArrayModel         = $model
                 ArrayReduction     = [Math]::Round($dataReduction, 2)
                 ArrayRawTiB        = $rawTiB
-                Volume             = $vol.name
+                Volume             = [string]$vol.Name
                 VolumeGiB          = $sizeGiB
-                Serial             = $vol.serial
-                Host               = [string]$conn.host.name
-                HostGroup          = [string]$conn.host_group.name
-                Protocol           = [string]$conn.protocol_endpoint_type
-                Lun                = [string]$conn.lun
+                Serial             = [string]$vol.Serial
+                Host               = [string](Get-ObjValue -Object $conn -Names @('host.name') -Default '')
+                HostGroup          = [string](Get-ObjValue -Object $conn -Names @('HostGroup.Name', 'host_group.name') -Default '')
+                Protocol           = [string](Get-ObjValue -Object $conn -Names @('ProtocolEndpointType', 'protocol_endpoint_type') -Default '')
+                Lun                = [string](Get-ObjValue -Object $conn -Names @('lun') -Default '')
                 ReplicationType    = Get-ReplicationType -Volume $vol
             })
         }
