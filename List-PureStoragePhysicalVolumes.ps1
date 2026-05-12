@@ -283,12 +283,18 @@ foreach ($array in $Arrays) {
         ) -Default 0)
         $rawBytes = [double](Get-ObjValue -Object $arraySpace -Names @(
             'capacity', 'total_capacity', 'TotalCapacity',
-            'space.capacity', 'Space.Capacity',
-            'space.total_physical', 'Space.TotalPhysical'
+            'space.capacity', 'Space.Capacity'
         ) -Default 0)
         $rawTiB = [Math]::Round(($rawBytes / 1TB), 2)
 
-        Write-Host ("Modèle: {0} | Ratio dédup+compression: {1}x | Capacité raw: {2} TiB" -f $model, ([Math]::Round($dataReduction, 2)), $rawTiB) -ForegroundColor Gray
+        $usedBytes = [double](Get-ObjValue -Object $arraySpace -Names @(
+            'space.total_physical', 'Space.TotalPhysical',
+            'total_physical', 'TotalPhysical',
+            'space.used', 'Space.Used'
+        ) -Default 0)
+        $arrayUsedTiB = [Math]::Round(($usedBytes / 1TB), 2)
+
+        Write-Host ("Modèle: {0} | Ratio dédup+compression: {1}x | Capacité raw: {2} TiB | Utilisé: {3} TiB" -f $model, ([Math]::Round($dataReduction, 2)), $rawTiB, $arrayUsedTiB) -ForegroundColor Gray
 
         $volumes = @(Get-Pfa2Volume -Array $flashArray -Limit 10000)
         $connections = @(Get-Pfa2Connection -Array $flashArray -Limit 10000)
@@ -327,14 +333,17 @@ foreach ($array in $Arrays) {
             $vol = $volumesByName[$volName]
             $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('provisioned', 'space.total', 'size') -Default 0) / 1GB), 2)
             $volReduction = [Math]::Round([double](Get-ObjValue -Object $vol -Names @('space.data_reduction', 'Space.DataReduction', 'data_reduction', 'DataReduction', 'space.total_reduction', 'Space.TotalReduction') -Default 0), 2)
+            $usedGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('space.virtual', 'Space.Virtual', 'virtual') -Default 0) / 1GB), 2)
 
             $allRows.Add([PSCustomObject]@{
                 Array              = $array
                 ArrayModel         = $model
                 ArrayReduction     = [Math]::Round($dataReduction, 2)
                 ArrayRawTiB        = $rawTiB
+                ArrayUsedTiB       = $arrayUsedTiB
                 Volume             = [string]$vol.Name
                 VolumeGiB          = $sizeGiB
+                VolumeUsedGiB      = $usedGiB
                 VolumeReduction    = $volReduction
                 Serial             = [string]$vol.Serial
                 Host               = [string](Get-ObjValue -Object $conn -Names @('host.name') -Default '')
@@ -352,7 +361,7 @@ foreach ($array in $Arrays) {
         else {
             $currentArrayRows |
                 Sort-Object Host, Volume |
-                Format-Table Array, Host, HostGroup, Volume, VolumeGiB,
+                Format-Table Array, Host, HostGroup, Volume, VolumeGiB, VolumeUsedGiB,
                     @{L='Réduction';E={if($_.VolumeReduction -gt 0){"$($_.VolumeReduction)x"}else{'N/A'}}},
                     ReplicationType, Lun -AutoSize
         }
@@ -393,7 +402,7 @@ $pairedSerials = @($serialMap.Keys | Where-Object {
 })
 
 if ($pairedSerials.Count -gt 0) {
-    Write-Host ("`n=== Volumes répliqués détectés — {0} groupe(s) ===" -f $pairedSerials.Count) -ForegroundColor Cyan
+    Write-Host ("`n=== Volumes répliqués détectés - {0} groupe(s) ===" -f $pairedSerials.Count) -ForegroundColor Cyan
     foreach ($serial in ($pairedSerials | Sort-Object)) {
         $rows = $serialMap[$serial]
         $volName = ($rows | Select-Object -ExpandProperty Volume -First 1)
