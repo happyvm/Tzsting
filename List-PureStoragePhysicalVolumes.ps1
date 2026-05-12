@@ -38,8 +38,8 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string[]]$Arrays,
+    [Parameter()]
+    [string[]]$Arrays = @(),
 
     [Parameter()]
     [PSCredential]$Credential,
@@ -71,6 +71,7 @@ if (Test-Path -LiteralPath $ConfigFile) {
     $cfg = Import-PowerShellDataFile -LiteralPath $ConfigFile
 
     if (-not $PSBoundParameters.ContainsKey('ApiVersion') -and $cfg.ContainsKey('ApiVersion')) { $ApiVersion = [string]$cfg.ApiVersion }
+    if (-not $PSBoundParameters.ContainsKey('Arrays') -and $cfg.ContainsKey('Arrays')) { $Arrays = @($cfg.Arrays | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
     if (-not $PSBoundParameters.ContainsKey('ExcludeHostRegex') -and $cfg.ContainsKey('ExcludeHostRegex')) { $ExcludeHostRegex = [string]$cfg.ExcludeHostRegex }
     if (-not $PSBoundParameters.ContainsKey('OutputCsv') -and $cfg.ContainsKey('OutputCsv')) { $OutputCsv = [string]$cfg.OutputCsv }
     if (-not $PSBoundParameters.ContainsKey('UsePureStorageModule') -and $cfg.ContainsKey('UsePureStorageModule')) {
@@ -95,6 +96,10 @@ if (Test-Path -LiteralPath $ConfigFile) {
 }
 else {
     $arrayCredentialMap = @{}
+}
+
+if (-not $Arrays -or $Arrays.Count -eq 0) {
+    throw "Aucune baie fournie. Définissez -Arrays ou ajoutez la clé 'Arrays' dans le fichier de configuration ($ConfigFile)."
 }
 
 if (-not $Credential -and $arrayCredentialMap.Count -eq 0) {
