@@ -137,13 +137,13 @@ function Get-ReplicationType {
 
     $syncIndicators = @(
         (Get-ObjValue -Object $Volume -Names @('sync_replication', 'SyncReplication', 'is_sync_replicated', 'IsSyncReplicated') -Default $false),
-        (Get-ObjValue -Object $Volume -Names @('pod') -Default $null),
         (Get-ObjValue -Object $Volume -Names @('active_cluster', 'ActiveCluster') -Default $false)
     )
 
     $asyncIndicators = @(
         (Get-ObjValue -Object $Volume -Names @('async_replication', 'AsyncReplication', 'is_async_replicated', 'IsAsyncReplicated') -Default $false),
-        (Get-ObjValue -Object $Volume -Names @('protection_group', 'ProtectionGroup') -Default $null)
+        (Get-ObjValue -Object $Volume -Names @('protection_group', 'ProtectionGroup') -Default $null),
+        (Get-ObjValue -Object $Volume -Names @('pod', 'Pod') -Default $null)
     )
 
     $isSync = $false
@@ -256,9 +256,19 @@ foreach ($array in $Arrays) {
             @(Get-Pfa2ArraySpace -Array $flashArray)[0]
         } else { $arrayInfo }
 
-        $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model') -Default 'N/A')
-        $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @('data_reduction', 'DataReduction', 'total_reduction', 'TotalReduction') -Default 0)
-        $rawBytes = [double](Get-ObjValue -Object $arraySpace -Names @('capacity', 'total_capacity', 'TotalCapacity', 'space.total_physical', 'Space.TotalPhysical') -Default 0)
+        $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
+        Write-Verbose "ArrayInfo props: $($arrayInfo.PSObject.Properties.Name -join ', ')"
+
+        $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @(
+            'data_reduction', 'DataReduction',
+            'total_reduction', 'TotalReduction',
+            'space.data_reduction', 'Space.DataReduction'
+        ) -Default 0)
+        $rawBytes = [double](Get-ObjValue -Object $arraySpace -Names @(
+            'capacity', 'total_capacity', 'TotalCapacity',
+            'space.capacity', 'Space.Capacity',
+            'space.total_physical', 'Space.TotalPhysical'
+        ) -Default 0)
         $rawTiB = [Math]::Round(($rawBytes / 1TB), 2)
 
         Write-Host ("Modèle: {0} | Ratio dédup+compression: {1}x | Capacité raw: {2} TiB" -f $model, ([Math]::Round($dataReduction, 2)), $rawTiB) -ForegroundColor Gray
