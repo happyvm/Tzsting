@@ -144,22 +144,28 @@ function Get-ReplicationType {
     $podName = [string](Get-ObjValue -Object $Volume -Names @('pod.name', 'Pod.Name') -Default '')
     if ($podName) {
         if ($PodSyncMap.ContainsKey($podName)) {
-            return if ($PodSyncMap[$podName]) { 'actif/actif' } else { 'asynchrone' }
+            if ($PodSyncMap[$podName]) { return 'actif/actif' }
+            return 'asynchrone'
         }
-        # Pod présent mais Get-Pfa2Pod indisponible: on ne peut pas trancher
         return 'asynchrone'
     }
 
     # Fallback: flags directs sur le volume (peut exister dans certaines versions d'API)
-    foreach ($v in @(
+    $syncValues = @(
         (Get-ObjValue -Object $Volume -Names @('sync_replication', 'SyncReplication', 'is_sync_replicated', 'IsSyncReplicated') -Default $false),
         (Get-ObjValue -Object $Volume -Names @('active_cluster', 'ActiveCluster') -Default $false)
-    )) { if (($v -is [bool] -and $v) -or ($v -and "$v" -ne '')) { return 'actif/actif' } }
+    )
+    foreach ($v in $syncValues) {
+        if (($v -is [bool] -and $v) -or ($v -and "$v" -ne '')) { return 'actif/actif' }
+    }
 
-    foreach ($v in @(
+    $asyncValues = @(
         (Get-ObjValue -Object $Volume -Names @('async_replication', 'AsyncReplication', 'is_async_replicated', 'IsAsyncReplicated') -Default $false),
         (Get-ObjValue -Object $Volume -Names @('protection_group', 'ProtectionGroup') -Default $null)
-    )) { if (($v -is [bool] -and $v) -or ($v -and "$v" -ne '')) { return 'asynchrone' } }
+    )
+    foreach ($v in $asyncValues) {
+        if (($v -is [bool] -and $v) -or ($v -and "$v" -ne '')) { return 'asynchrone' }
+    }
 
     return 'non répliqué'
 }
@@ -291,7 +297,7 @@ foreach ($array in $Arrays) {
         # Un pod ActiveCluster a un mediator configuré; un pod ActiveDR n'en a pas.
         $podSyncMap = @{}
         if (Get-Command 'Get-Pfa2Pod' -ErrorAction SilentlyContinue) {
-            foreach ($pod in @(Get-Pfa2Pod -Array $flashArray -Limit 1000)) {
+            foreach ($pod in @(Get-Pfa2Pod -Array $flashArray)) {
                 $mediator = [string](Get-ObjValue -Object $pod -Names @('mediator', 'Mediator') -Default '')
                 $podSyncMap[[string]$pod.Name] = (-not [string]::IsNullOrWhiteSpace($mediator))
             }
