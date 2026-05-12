@@ -260,14 +260,18 @@ foreach ($array in $Arrays) {
 
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
 
-        # Get-Pfa2Array ne retourne pas le modèle matériel dans certaines versions du SDK.
-        # Fallback: Get-Pfa2Hardware, le composant chassis porte le modèle (ex: FA-X70R3).
-        if ($model -eq 'N/A' -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
+        # Get-Pfa2Array retourne parfois un nom de famille générique (ex: M_SERIES, X_SERIES)
+        # plutôt que le modèle complet. Get-Pfa2Hardware (composant chassis) retourne le modèle
+        # précis (ex: FA-M70R3). On déclenche ce fallback si le modèle ne contient pas de
+        # révision matérielle (Rn), ce qui exclut les noms de famille mais pas les vrais modèles.
+        $hasFullModel = $model -match '(?i)R\d+'
+        if (-not $hasFullModel -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
             $chassis = @(Get-Pfa2Hardware -Array $flashArray) |
                 Where-Object { [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)chassis' } |
                 Select-Object -First 1
             if ($chassis) {
-                $model = [string](Get-ObjValue -Object $chassis -Names @('model', 'Model') -Default 'N/A')
+                $hwModel = [string](Get-ObjValue -Object $chassis -Names @('model', 'Model') -Default '')
+                if ($hwModel) { $model = $hwModel }
             }
         }
 
