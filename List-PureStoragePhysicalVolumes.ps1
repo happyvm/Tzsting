@@ -45,7 +45,7 @@ param(
     [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure.psd1'),
 
     [Parameter()]
-    [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+)([-_.]|$)',
+    [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+|nbu-mediaserver)([-_.]|$)',
 
     [Parameter()]
     [string]$OutputCsv = '.\pure-physical-volumes.csv',
