@@ -277,12 +277,18 @@ foreach ($array in $Arrays) {
         ) -Default 0)
         $rawBytes = [double](Get-ObjValue -Object $arraySpace -Names @(
             'capacity', 'total_capacity', 'TotalCapacity',
-            'space.capacity', 'Space.Capacity',
-            'space.total_physical', 'Space.TotalPhysical'
+            'space.capacity', 'Space.Capacity'
         ) -Default 0)
         $rawTiB = [Math]::Round(($rawBytes / 1TB), 2)
 
-        Write-Host ("Modèle: {0} | Ratio dédup+compression: {1}x | Capacité raw: {2} TiB" -f $model, ([Math]::Round($dataReduction, 2)), $rawTiB) -ForegroundColor Gray
+        $usedBytes = [double](Get-ObjValue -Object $arraySpace -Names @(
+            'space.total_physical', 'Space.TotalPhysical',
+            'total_physical', 'TotalPhysical',
+            'space.used', 'Space.Used'
+        ) -Default 0)
+        $arrayUsedTiB = [Math]::Round(($usedBytes / 1TB), 2)
+
+        Write-Host ("Modèle: {0} | Ratio dédup+compression: {1}x | Capacité raw: {2} TiB | Utilisé: {3} TiB" -f $model, ([Math]::Round($dataReduction, 2)), $rawTiB, $arrayUsedTiB) -ForegroundColor Gray
 
         $volumes = @(Get-Pfa2Volume -Array $flashArray -Limit 10000)
         $connections = @(Get-Pfa2Connection -Array $flashArray -Limit 10000)
@@ -328,6 +334,7 @@ foreach ($array in $Arrays) {
                 ArrayModel         = $model
                 ArrayReduction     = [Math]::Round($dataReduction, 2)
                 ArrayRawTiB        = $rawTiB
+                ArrayUsedTiB       = $arrayUsedTiB
                 Volume             = [string]$vol.Name
                 VolumeGiB          = $sizeGiB
                 VolumeUsedGiB      = $usedGiB
