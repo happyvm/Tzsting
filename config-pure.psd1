@@ -1,5 +1,6 @@
 @{
     # Liste des baies Pure Storage à interroger par défaut.
+    # Optionnel si ArrayCredentials est renseigné: la liste des baies sera déduite automatiquement.
     Arrays = @(
         'fa-prod-01.company.local'
         'fa-prod-02.company.local'

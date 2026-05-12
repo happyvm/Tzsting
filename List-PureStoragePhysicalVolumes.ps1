@@ -93,6 +93,11 @@ if (Test-Path -LiteralPath $ConfigFile) {
             }
         }
     }
+
+    if ((-not $PSBoundParameters.ContainsKey('Arrays')) -and (($null -eq $Arrays) -or $Arrays.Count -eq 0) -and $arrayCredentialMap.Count -gt 0) {
+        $Arrays = @($arrayCredentialMap.Keys | Sort-Object)
+        Write-Verbose "Aucune clé 'Arrays' configurée: utilisation des baies définies dans 'ArrayCredentials'."
+    }
 }
 else {
     $arrayCredentialMap = @{}
