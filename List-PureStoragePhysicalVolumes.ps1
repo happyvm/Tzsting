@@ -45,6 +45,9 @@ param(
     [PSCredential]$Credential,
 
     [Parameter()]
+    [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure.psd1'),
+
+    [Parameter()]
     [string]$ApiVersion = '2.38',
 
     [Parameter()]
@@ -54,13 +57,47 @@ param(
     [string]$OutputCsv = '.\pure-physical-volumes.csv',
 
     [Parameter()]
-    [switch]$UsePureStorageModule = $true
+    [switch]$UsePureStorageModule = $true,
+
+    [Parameter()]
+    [switch]$IgnoreCertificateErrors
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not $Credential) {
+
+if (Test-Path -LiteralPath $ConfigFile) {
+    $cfg = Import-PowerShellDataFile -LiteralPath $ConfigFile
+
+    if (-not $PSBoundParameters.ContainsKey('ApiVersion') -and $cfg.ContainsKey('ApiVersion')) { $ApiVersion = [string]$cfg.ApiVersion }
+    if (-not $PSBoundParameters.ContainsKey('ExcludeHostRegex') -and $cfg.ContainsKey('ExcludeHostRegex')) { $ExcludeHostRegex = [string]$cfg.ExcludeHostRegex }
+    if (-not $PSBoundParameters.ContainsKey('OutputCsv') -and $cfg.ContainsKey('OutputCsv')) { $OutputCsv = [string]$cfg.OutputCsv }
+    if (-not $PSBoundParameters.ContainsKey('UsePureStorageModule') -and $cfg.ContainsKey('UsePureStorageModule')) {
+        if ([bool]$cfg.UsePureStorageModule) { $UsePureStorageModule = $true } else { $UsePureStorageModule = $false }
+    }
+    if (-not $PSBoundParameters.ContainsKey('IgnoreCertificateErrors') -and $cfg.ContainsKey('IgnoreCertificateErrors')) {
+        if ([bool]$cfg.IgnoreCertificateErrors) { $IgnoreCertificateErrors = $true }
+    }
+
+    $arrayCredentialMap = @{}
+    if ($cfg.ContainsKey('ArrayCredentials')) {
+        foreach ($entry in $cfg.ArrayCredentials) {
+            if ([string]::IsNullOrWhiteSpace([string]$entry.Array) -or [string]::IsNullOrWhiteSpace([string]$entry.UserName)) { continue }
+            $plain = [string]$entry.Password
+            $secure = if ([string]::IsNullOrWhiteSpace($plain)) { $null } else { ConvertTo-SecureString $plain -AsPlainText -Force }
+            $arrayCredentialMap[[string]$entry.Array] = [PSCustomObject]@{
+                UserName = [string]$entry.UserName
+                Password = $secure
+            }
+        }
+    }
+}
+else {
+    $arrayCredentialMap = @{}
+}
+
+if (-not $Credential -and $arrayCredentialMap.Count -eq 0) {
     $Credential = Get-Credential -Message 'Compte API Pure Storage (lecture)'
 }
 
@@ -168,6 +205,7 @@ function Invoke-PureApi {
     $uri = "https://$Array/api/$ApiVersion/$Path"
     $params = @{ Uri = $uri; Method = $Method; Headers = $Headers; ContentType = 'application/json' }
     if ($Body) { $params['Body'] = ($Body | ConvertTo-Json -Depth 6) }
+    if ($IgnoreCertificateErrors) { $params['SkipCertificateCheck'] = $true }
     Invoke-RestMethod @params
 }
 
@@ -175,7 +213,9 @@ function New-PureApiSession {
     param([string]$Array,[PSCredential]$Credential)
 
     if ($script:PureModuleAvailable) {
-        $session = & $script:PureModuleSessionCmdlets.Connect -EndPoint $Array -Credential $Credential -IgnoreCertificateError
+        $connectParams = @{ EndPoint = $Array; Credential = $Credential }
+        if ($IgnoreCertificateErrors) { $connectParams.IgnoreCertificateError = $true }
+        $session = & $script:PureModuleSessionCmdlets.Connect @connectParams
         if (-not $session) { throw "Connexion SDK impossible sur la baie '$Array'." }
         return @{ Mode = 'Module'; Session = $session }
     }
@@ -217,6 +257,28 @@ function Close-PureApiSession {
     catch { Write-Warning "Déconnexion API échouée pour '$Array': $($_.Exception.Message)" }
 }
 
+
+function Get-ArrayCredential {
+    param([string]$Array,[PSCredential]$DefaultCredential)
+
+    if ($arrayCredentialMap.ContainsKey($Array)) {
+        $entry = $arrayCredentialMap[$Array]
+        if ($entry.Password) {
+            return [PSCredential]::new($entry.UserName, $entry.Password)
+        }
+
+        $prompt = "Mot de passe pour l'utilisateur '$($entry.UserName)' sur la baie '$Array'"
+        $secure = Read-Host -AsSecureString -Prompt $prompt
+        return [PSCredential]::new($entry.UserName, $secure)
+    }
+
+    if ($null -eq $DefaultCredential) {
+        throw "Aucun identifiant disponible pour la baie '$Array' (ni Credential global, ni entrée ArrayCredentials)."
+    }
+
+    return $DefaultCredential
+}
+
 $allRows = New-Object System.Collections.Generic.List[object]
 
 foreach ($array in $Arrays) {
@@ -224,7 +286,8 @@ foreach ($array in $Arrays) {
     $session = $null
 
     try {
-        $session = New-PureApiSession -Array $array -Credential $Credential
+        $arrayCredential = Get-ArrayCredential -Array $array -DefaultCredential $Credential
+        $session = New-PureApiSession -Array $array -Credential $arrayCredential
 
         $arrayInfoResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays' -Session $session
         $arraySpaceResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays/space' -Session $session
