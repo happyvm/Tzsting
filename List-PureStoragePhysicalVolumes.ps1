@@ -398,7 +398,7 @@ foreach ($row in $allRows) {
 }
 
 $pairedSerials = @($serialMap.Keys | Where-Object {
-    ($serialMap[$_] | Select-Object -ExpandProperty Array | Select-Object -Unique).Count -gt 1
+    @($serialMap[$_] | Select-Object -ExpandProperty Array | Select-Object -Unique).Count -gt 1
 })
 
 if ($pairedSerials.Count -gt 0) {
