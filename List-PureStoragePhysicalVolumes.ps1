@@ -115,14 +115,14 @@ $script:PureModuleAvailable = $false
 $script:PureModuleSessionCmdlets = @{}
 
 if ($UsePureStorageModule) {
-    $module = Get-Module -ListAvailable -Name 'PureStoragePowerShellSDK2','PureStoragePowerShellSDK'
+    $module = Get-Module -ListAvailable -Name 'PureStoragePowerShellSDK2'
     if ($module) {
         Import-Module $module[0].Name -ErrorAction Stop
         $script:PureModuleAvailable = $true
 
-        $connectCmd = Get-Command -Name 'Connect-Pfa2Array','Connect-PfaArray' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $disconnectCmd = Get-Command -Name 'Disconnect-Pfa2Array','Disconnect-PfaArray' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $invokeCmd = Get-Command -Name 'Invoke-Pfa2RestMethod','Invoke-PfaRestMethod' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $connectCmd = Get-Command -Name 'Connect-Pfa2Array' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $disconnectCmd = Get-Command -Name 'Disconnect-Pfa2Array' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $invokeCmd = Get-Command -Name 'Invoke-Pfa2RestMethod' -ErrorAction SilentlyContinue | Select-Object -First 1
 
         if ($connectCmd -and $disconnectCmd -and $invokeCmd) {
             $script:PureModuleSessionCmdlets = @{
@@ -133,12 +133,12 @@ if ($UsePureStorageModule) {
             Write-Host "Module Pure Storage détecté: $($module[0].Name). Utilisation du SDK fabricant." -ForegroundColor Green
         }
         else {
-            Write-Warning "Le module Pure Storage est présent mais certains cmdlets sont introuvables. Repli sur API REST native."
+            throw "Le module Pure Storage SDK2 est présent, mais les cmdlets requis (Connect/Disconnect/Invoke-Pfa2RestMethod) sont introuvables."
             $script:PureModuleAvailable = $false
         }
     }
     else {
-        Write-Warning "Module Pure Storage non trouvé (PureStoragePowerShellSDK2/PureStoragePowerShellSDK). Repli sur API REST native."
+        throw "Module Pure Storage SDK2 requis mais introuvable (PureStoragePowerShellSDK2)."
     }
 }
 
@@ -194,45 +194,30 @@ function Get-ReplicationType {
     return 'non répliqué'
 }
 
-function Invoke-PureApi {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Array,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Method,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Path,
-
-        [Parameter()]
-        [hashtable]$Headers,
-
-        [Parameter()]
-        [object]$Body
-    )
-
-    $uri = "https://$Array/api/$ApiVersion/$Path"
-    $params = @{ Uri = $uri; Method = $Method; Headers = $Headers; ContentType = 'application/json' }
-    if ($Body) { $params['Body'] = ($Body | ConvertTo-Json -Depth 6) }
-    if ($IgnoreCertificateErrors) { $params['SkipCertificateCheck'] = $true }
-    Invoke-RestMethod @params
-}
-
 function New-PureApiSession {
     param([string]$Array,[PSCredential]$Credential)
 
-    if ($script:PureModuleAvailable) {
-        $connectParams = @{ EndPoint = $Array; Credential = $Credential }
-        if ($IgnoreCertificateErrors) { $connectParams.IgnoreCertificateError = $true }
-        $session = & $script:PureModuleSessionCmdlets.Connect @connectParams
-        if (-not $session) { throw "Connexion SDK impossible sur la baie '$Array'." }
-        return @{ Mode = 'Module'; Session = $session }
+    if (-not $script:PureModuleAvailable) {
+        throw "Le module Pure Storage SDK2 est requis pour se connecter à la baie '$Array'."
     }
 
-    $tokenResponse = Invoke-PureApi -Array $Array -Method 'POST' -Path 'login' -Body @{ username = $Credential.UserName; password = $Credential.GetNetworkCredential().Password }
-    if (-not $tokenResponse.token) { throw "Impossible de récupérer le token API sur la baie '$Array'." }
-    return @{ Mode = 'Rest'; Headers = @{ Authorization = "Bearer $($tokenResponse.token)" } }
+    $connectParams = @{ EndPoint = $Array; Credential = $Credential }
+    if ($IgnoreCertificateErrors) {
+        $connectCommand = Get-Command -Name $script:PureModuleSessionCmdlets.Connect -ErrorAction Stop
+        if ($connectCommand.Parameters.ContainsKey('IgnoreCertificateError')) {
+            $connectParams['IgnoreCertificateError'] = $true
+        }
+        elseif ($connectCommand.Parameters.ContainsKey('IgnoreCertificateErrors')) {
+            $connectParams['IgnoreCertificateErrors'] = $true
+        }
+        else {
+            Write-Warning "Le cmdlet $($script:PureModuleSessionCmdlets.Connect) ne supporte pas IgnoreCertificateError(s)."
+        }
+    }
+
+    $session = & $script:PureModuleSessionCmdlets.Connect @connectParams
+    if (-not $session) { throw "Connexion SDK impossible sur la baie '$Array'." }
+    return @{ Mode = 'Module'; Session = $session }
 }
 
 function Invoke-PureApiWithSession {
@@ -244,25 +229,16 @@ function Invoke-PureApiWithSession {
         [Parameter()][object]$Body
     )
 
-    if ($Session.Mode -eq 'Module') {
-        $invokeParams = @{ Array = $Session.Session; Method = $Method; Path = $Path }
-        if ($Body) { $invokeParams.Body = $Body }
-        return (& $script:PureModuleSessionCmdlets.Invoke @invokeParams)
-    }
-
-    return Invoke-PureApi -Array $Array -Method $Method -Path $Path -Headers $Session.Headers -Body $Body
+    $invokeParams = @{ Array = $Session.Session; Method = $Method; Path = $Path }
+    if ($Body) { $invokeParams.Body = $Body }
+    return (& $script:PureModuleSessionCmdlets.Invoke @invokeParams)
 }
 
 function Close-PureApiSession {
     param([string]$Array,[hashtable]$Session)
 
     try {
-        if ($Session.Mode -eq 'Module') {
-            & $script:PureModuleSessionCmdlets.Disconnect -Array $Session.Session | Out-Null
-        }
-        else {
-            Invoke-PureApi -Array $Array -Method 'DELETE' -Path 'logout' -Headers $Session.Headers | Out-Null
-        }
+        & $script:PureModuleSessionCmdlets.Disconnect -Array $Session.Session | Out-Null
     }
     catch { Write-Warning "Déconnexion API échouée pour '$Array': $($_.Exception.Message)" }
 }
