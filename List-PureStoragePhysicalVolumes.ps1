@@ -258,11 +258,15 @@ foreach ($array in $Arrays) {
         } else { $arrayInfo }
 
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
-        if ($model -eq 'N/A') {
-            if ($null -eq $arrayInfo) {
-                Write-Warning "[$array] Get-Pfa2Array n'a retourné aucun objet."
-            } else {
-                Write-Warning "[$array] Modèle introuvable. Propriétés Get-Pfa2Array disponibles: $($arrayInfo.PSObject.Properties.Name -join ', ')"
+
+        # Get-Pfa2Array ne retourne pas le modèle matériel dans certaines versions du SDK.
+        # Fallback: Get-Pfa2Hardware, le composant chassis porte le modèle (ex: FA-X70R3).
+        if ($model -eq 'N/A' -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
+            $chassis = @(Get-Pfa2Hardware -Array $flashArray) |
+                Where-Object { [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)chassis' } |
+                Select-Object -First 1
+            if ($chassis) {
+                $model = [string](Get-ObjValue -Object $chassis -Names @('model', 'Model') -Default 'N/A')
             }
         }
 
@@ -291,7 +295,7 @@ foreach ($array in $Arrays) {
                 $mediator = [string](Get-ObjValue -Object $pod -Names @('mediator', 'Mediator') -Default '')
                 $podSyncMap[[string]$pod.Name] = (-not [string]::IsNullOrWhiteSpace($mediator))
             }
-            Write-Verbose "Pods: $($podSyncMap.Count) | ActiveCluster: $(($podSyncMap.Values | Where-Object {$_}).Count) | ActiveDR: $(($podSyncMap.Values | Where-Object {-not $_}).Count)"
+            Write-Verbose "Pods: $($podSyncMap.Count) | ActiveCluster: $(@($podSyncMap.Values | Where-Object {$_}).Count) | ActiveDR: $(@($podSyncMap.Values | Where-Object {-not $_}).Count)"
         } else {
             Write-Warning "Get-Pfa2Pod indisponible: type de réplication pod déterminé par défaut (asynchrone)."
         }
@@ -335,7 +339,7 @@ foreach ($array in $Arrays) {
             })
         }
 
-        $currentArrayRows = $allRows | Where-Object { $_.Array -eq $array }
+        $currentArrayRows = @($allRows | Where-Object { $_.Array -eq $array })
         if ($currentArrayRows.Count -eq 0) {
             Write-Host "Aucun volume mappé à un serveur physique après filtrage ESX/Hyper-V." -ForegroundColor Yellow
         }
