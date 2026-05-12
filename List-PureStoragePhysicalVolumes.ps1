@@ -208,12 +208,11 @@ function New-PureApiSession {
 
     $session = & $script:PureModuleSessionCmdlets.Connect @connectParams
     if (-not $session) { throw "Connexion SDK impossible sur la baie '$Array'." }
-    return @{ Mode = 'Module'; Session = $session }
+    return @{ Session = $session }
 }
 
 function Invoke-PureApiWithSession {
     param(
-        [Parameter(Mandatory = $true)][string]$Array,
         [Parameter(Mandatory = $true)][hashtable]$Session,
         [Parameter(Mandatory = $true)][string]$Method,
         [Parameter(Mandatory = $true)][string]$Path,
@@ -266,10 +265,10 @@ foreach ($array in $Arrays) {
         $arrayCredential = Get-ArrayCredential -Array $array -DefaultCredential $Credential
         $session = New-PureApiSession -Array $array -Credential $arrayCredential
 
-        $arrayInfoResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays' -Session $session
-        $arraySpaceResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays/space' -Session $session
-        $volumesResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'volumes?limit=10000' -Session $session
-        $connectionsResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'connections?limit=10000' -Session $session
+        $arrayInfoResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'arrays' -Session $session
+        $arraySpaceResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'arrays/space' -Session $session
+        $volumesResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'volumes?limit=10000' -Session $session
+        $connectionsResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'connections?limit=10000' -Session $session
 
         $arrayInfo = @($arrayInfoResponse.items)[0]
         $arraySpace = @($arraySpaceResponse.items)[0]

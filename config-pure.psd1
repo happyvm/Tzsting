@@ -18,9 +18,6 @@
     # Fichier CSV de sortie.
     OutputCsv = '.\pure-physical-volumes.csv'
 
-    # Utilise uniquement le module Pure Storage SDK2 quand disponible.
-    UsePureStorageModule = $true
-
     # Comptes par baie (login propre à chaque baie).
     # Password est optionnel: si vide, un prompt est affiché pour la baie.
     ArrayCredentials = @(
