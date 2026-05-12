@@ -1,4 +1,4 @@
-<#!
+﻿<#!
 .SYNOPSIS
     Liste les volumes Pure Storage présentés à des serveurs physiques (en excluant ESX/Hyper-V).
 
@@ -20,22 +20,19 @@
 .PARAMETER Credential
     Identifiant Pure Storage avec droits de lecture API.
 
-.PARAMETER ApiVersion
-    Version d'API REST Pure (par défaut: 2.38).
-
 .PARAMETER ExcludeHostRegex
     Expression régulière utilisée pour exclure les hyperviseurs.
 
 .PARAMETER OutputCsv
     Chemin de sortie CSV.
 
-.PARAMETER UsePureStorageModule
-    Utilise le module PowerShell Pure Storage par défaut (repli REST auto si indisponible).
-
 .EXAMPLE
     $arrays = @('fa-prod-01.company.local','fa-prod-02.company.local')
     .\List-PureStoragePhysicalVolumes.ps1 -Arrays $arrays -OutputCsv .\pure-physical-volumes.csv
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification='Script interactif: Write-Host intentionnel pour affichage couleur en console')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '', Justification='Mot de passe en clair supporté dans config locale uniquement')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='Fonctions internes non exportées')]
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -48,16 +45,10 @@ param(
     [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure.psd1'),
 
     [Parameter()]
-    [string]$ApiVersion = '2.38',
-
-    [Parameter()]
     [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+)([-_.]|$)',
 
     [Parameter()]
     [string]$OutputCsv = '.\pure-physical-volumes.csv',
-
-    [Parameter()]
-    [switch]$UsePureStorageModule = $true,
 
     [Parameter()]
     [switch]$IgnoreCertificateErrors
@@ -70,13 +61,9 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path -LiteralPath $ConfigFile) {
     $cfg = Import-PowerShellDataFile -LiteralPath $ConfigFile
 
-    if (-not $PSBoundParameters.ContainsKey('ApiVersion') -and $cfg.ContainsKey('ApiVersion')) { $ApiVersion = [string]$cfg.ApiVersion }
     if (-not $PSBoundParameters.ContainsKey('Arrays') -and $cfg.ContainsKey('Arrays')) { $Arrays = @($cfg.Arrays | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
     if (-not $PSBoundParameters.ContainsKey('ExcludeHostRegex') -and $cfg.ContainsKey('ExcludeHostRegex')) { $ExcludeHostRegex = [string]$cfg.ExcludeHostRegex }
     if (-not $PSBoundParameters.ContainsKey('OutputCsv') -and $cfg.ContainsKey('OutputCsv')) { $OutputCsv = [string]$cfg.OutputCsv }
-    if (-not $PSBoundParameters.ContainsKey('UsePureStorageModule') -and $cfg.ContainsKey('UsePureStorageModule')) {
-        if ([bool]$cfg.UsePureStorageModule) { $UsePureStorageModule = $true } else { $UsePureStorageModule = $false }
-    }
     if (-not $PSBoundParameters.ContainsKey('IgnoreCertificateErrors') -and $cfg.ContainsKey('IgnoreCertificateErrors')) {
         if ([bool]$cfg.IgnoreCertificateErrors) { $IgnoreCertificateErrors = $true }
     }
@@ -111,36 +98,13 @@ if (-not $Credential -and $arrayCredentialMap.Count -eq 0) {
     $Credential = Get-Credential -Message 'Compte API Pure Storage (lecture)'
 }
 
-$script:PureModuleAvailable = $false
-$script:PureModuleSessionCmdlets = @{}
-
-if ($UsePureStorageModule) {
-    $module = Get-Module -ListAvailable -Name 'PureStoragePowerShellSDK2'
-    if ($module) {
-        Import-Module $module[0].Name -ErrorAction Stop
-        $script:PureModuleAvailable = $true
-
-        $connectCmd = Get-Command -Name 'Connect-Pfa2Array' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $disconnectCmd = Get-Command -Name 'Disconnect-Pfa2Array' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $invokeCmd = Get-Command -Name 'Invoke-Pfa2RestMethod' -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        if ($connectCmd -and $disconnectCmd -and $invokeCmd) {
-            $script:PureModuleSessionCmdlets = @{
-                Connect    = $connectCmd.Name
-                Disconnect = $disconnectCmd.Name
-                Invoke     = $invokeCmd.Name
-            }
-            Write-Host "Module Pure Storage détecté: $($module[0].Name). Utilisation du SDK fabricant." -ForegroundColor Green
-        }
-        else {
-            throw "Le module Pure Storage SDK2 est présent, mais les cmdlets requis (Connect/Disconnect/Invoke-Pfa2RestMethod) sont introuvables."
-            $script:PureModuleAvailable = $false
-        }
-    }
-    else {
-        throw "Module Pure Storage SDK2 requis mais introuvable (PureStoragePowerShellSDK2)."
-    }
+Import-Module PureStoragePowerShellSDK2 -ErrorAction Stop
+$script:PureModuleSessionCmdlets = @{
+    Connect    = 'Connect-Pfa2Array'
+    Disconnect = 'Disconnect-Pfa2Array'
+    Invoke     = 'Invoke-Pfa2RestMethod'
 }
+Write-Host "Module PureStoragePowerShellSDK2 chargé." -ForegroundColor Green
 
 function Get-ObjValue {
     param(
@@ -152,11 +116,15 @@ function Get-ObjValue {
     )
 
     foreach ($name in $Names) {
-        if ($Object.PSObject.Properties[$name]) {
-            $value = $Object.$name
-            if ($null -ne $value -and "$value" -ne '') {
-                return $value
-            }
+        $parts = $name -split '\.'
+        $current = $Object
+        $found = $true
+        foreach ($part in $parts) {
+            if ($null -eq $current -or -not $current.PSObject.Properties[$part]) { $found = $false; break }
+            $current = $current.$part
+        }
+        if ($found -and $null -ne $current -and "$current" -ne '') {
+            return $current
         }
     }
 
@@ -197,10 +165,6 @@ function Get-ReplicationType {
 function New-PureApiSession {
     param([string]$Array,[PSCredential]$Credential)
 
-    if (-not $script:PureModuleAvailable) {
-        throw "Le module Pure Storage SDK2 est requis pour se connecter à la baie '$Array'."
-    }
-
     $connectCommand = Get-Command -Name $script:PureModuleSessionCmdlets.Connect -ErrorAction Stop
     $connectParams = @{ Credential = $Credential }
 
@@ -240,12 +204,11 @@ function New-PureApiSession {
 
     $session = & $script:PureModuleSessionCmdlets.Connect @connectParams
     if (-not $session) { throw "Connexion SDK impossible sur la baie '$Array'." }
-    return @{ Mode = 'Module'; Session = $session }
+    return @{ Session = $session }
 }
 
 function Invoke-PureApiWithSession {
     param(
-        [Parameter(Mandatory = $true)][string]$Array,
         [Parameter(Mandatory = $true)][hashtable]$Session,
         [Parameter(Mandatory = $true)][string]$Method,
         [Parameter(Mandatory = $true)][string]$Path,
@@ -291,17 +254,17 @@ function Get-ArrayCredential {
 $allRows = New-Object System.Collections.Generic.List[object]
 
 foreach ($array in $Arrays) {
-    Write-Host "\n=== Baie: $array ===" -ForegroundColor Cyan
+    Write-Host "`n=== Baie: $array ===" -ForegroundColor Cyan
     $session = $null
 
     try {
         $arrayCredential = Get-ArrayCredential -Array $array -DefaultCredential $Credential
         $session = New-PureApiSession -Array $array -Credential $arrayCredential
 
-        $arrayInfoResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays' -Session $session
-        $arraySpaceResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays/space' -Session $session
-        $volumesResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'volumes?limit=10000' -Session $session
-        $connectionsResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'connections?limit=10000' -Session $session
+        $arrayInfoResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'arrays' -Session $session
+        $arraySpaceResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'arrays/space' -Session $session
+        $volumesResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'volumes?limit=10000' -Session $session
+        $connectionsResponse = Invoke-PureApiWithSession -Method 'GET' -Path 'connections?limit=10000' -Session $session
 
         $arrayInfo = @($arrayInfoResponse.items)[0]
         $arraySpace = @($arraySpaceResponse.items)[0]
@@ -325,9 +288,9 @@ foreach ($array in $Arrays) {
         foreach ($vol in $volumes) { $volumesByName[$vol.name] = $vol }
 
         $physicalConnections = $connections | Where-Object {
-            $host = [string]$_.host.name
-            $hostGroup = [string]$_.host_group.name
-            -not ($host -match $ExcludeHostRegex) -and -not ($hostGroup -match $ExcludeHostRegex)
+            $connHostName = [string]$_.host.name
+            $connHostGroup = [string]$_.host_group.name
+            -not ($connHostName -match $ExcludeHostRegex) -and -not ($connHostGroup -match $ExcludeHostRegex)
         }
 
         foreach ($conn in $physicalConnections) {
@@ -335,10 +298,7 @@ foreach ($array in $Arrays) {
             if (-not $volumesByName.ContainsKey($volName)) { continue }
 
             $vol = $volumesByName[$volName]
-            $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('space.total') -Default 0) / 1GB), 2)
-            if ($sizeGiB -eq 0 -and $vol.PSObject.Properties['space'] -and $vol.space.total) {
-                $sizeGiB = [Math]::Round(([double]$vol.space.total / 1GB), 2)
-            }
+            $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('provisioned', 'space.total', 'size') -Default 0) / 1GB), 2)
 
             $allRows.Add([PSCustomObject]@{
                 Array              = $array
@@ -376,7 +336,7 @@ foreach ($array in $Arrays) {
 
 if ($allRows.Count -gt 0) {
     $allRows | Sort-Object Array, Host, Volume | Export-Csv -Path $OutputCsv -Delimiter ';' -NoTypeInformation -Encoding UTF8
-    Write-Host "\nExport terminé: $OutputCsv" -ForegroundColor Green
+    Write-Host "`nExport terminé: $OutputCsv" -ForegroundColor Green
     Write-Host "Entrées exportées: $($allRows.Count)" -ForegroundColor Green
 }
 else {
