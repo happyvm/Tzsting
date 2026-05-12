@@ -1,4 +1,10 @@
 @{
+    # Liste des baies Pure Storage à interroger par défaut.
+    Arrays = @(
+        'fa-prod-01.company.local'
+        'fa-prod-02.company.local'
+    )
+
     # Version de l'API REST Pure Storage.
     ApiVersion = '2.38'
 
