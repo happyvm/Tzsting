@@ -272,11 +272,45 @@ foreach ($array in $Arrays) {
         # révision matérielle (Rn), ce qui exclut les noms de famille mais pas les vrais modèles.
         $hasFullModel = $model -match '(?i)R\d+'
         if (-not $hasFullModel -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
-            $chassis = @(Get-Pfa2Hardware -Array $flashArray) |
-                Where-Object { [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)chassis' } |
-                Select-Object -First 1
-            if ($chassis) {
-                $hwModel = [string](Get-ObjValue -Object $chassis -Names @('model', 'Model') -Default '')
+            $hwAll = @(Get-Pfa2Hardware -Array $flashArray)
+
+            Write-Host '--- Diagnostic hardware (temporaire) ---' -ForegroundColor Magenta
+            $hwAll | ForEach-Object {
+                $n = [string](Get-ObjValue -Object $_ -Names @('name','Name') -Default '?')
+                $t = [string](Get-ObjValue -Object $_ -Names @('type','Type') -Default '?')
+                $m = [string](Get-ObjValue -Object $_ -Names @('model','Model') -Default '')
+                Write-Host ("  name={0,-30} type={1,-25} model={2}" -f $n, $t, $m) -ForegroundColor Magenta
+            }
+            Write-Host '--- Fin diagnostic ---' -ForegroundColor Magenta
+
+            # Essai 1: type chassis
+            $best = $hwAll | Where-Object {
+                [string](Get-ObjValue -Object $_ -Names @('type','Type') -Default '') -match '(?i)chassis'
+            } | Select-Object -First 1
+
+            # Essai 2: composant nommé CH0 / CH1 (convention FlashArray)
+            if (-not $best) {
+                $best = $hwAll | Where-Object {
+                    [string](Get-ObjValue -Object $_ -Names @('name','Name') -Default '') -match '(?i)^CH\d*$'
+                } | Select-Object -First 1
+            }
+
+            # Essai 3: controller CT0 (certaines versions portent le modèle ici)
+            if (-not $best) {
+                $best = $hwAll | Where-Object {
+                    [string](Get-ObjValue -Object $_ -Names @('name','Name') -Default '') -match '(?i)^CT0$'
+                } | Select-Object -First 1
+            }
+
+            # Essai 4: premier composant qui a un modèle avec révision Rn
+            if (-not $best) {
+                $best = $hwAll | Where-Object {
+                    [string](Get-ObjValue -Object $_ -Names @('model','Model') -Default '') -match '(?i)R\d+'
+                } | Select-Object -First 1
+            }
+
+            if ($best) {
+                $hwModel = [string](Get-ObjValue -Object $best -Names @('model','Model') -Default '')
                 if ($hwModel) { $model = $hwModel }
             }
         }
