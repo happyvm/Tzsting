@@ -134,7 +134,6 @@ if ($UsePureStorageModule) {
         }
         else {
             throw "Le module Pure Storage SDK2 est présent, mais les cmdlets requis (Connect/Disconnect/Invoke-Pfa2RestMethod) sont introuvables."
-            $script:PureModuleAvailable = $false
         }
     }
     else {
@@ -152,11 +151,15 @@ function Get-ObjValue {
     )
 
     foreach ($name in $Names) {
-        if ($Object.PSObject.Properties[$name]) {
-            $value = $Object.$name
-            if ($null -ne $value -and "$value" -ne '') {
-                return $value
-            }
+        $parts = $name -split '\.'
+        $current = $Object
+        $found = $true
+        foreach ($part in $parts) {
+            if ($null -eq $current -or -not $current.PSObject.Properties[$part]) { $found = $false; break }
+            $current = $current.$part
+        }
+        if ($found -and $null -ne $current -and "$current" -ne '') {
+            return $current
         }
     }
 
@@ -291,7 +294,7 @@ function Get-ArrayCredential {
 $allRows = New-Object System.Collections.Generic.List[object]
 
 foreach ($array in $Arrays) {
-    Write-Host "\n=== Baie: $array ===" -ForegroundColor Cyan
+    Write-Host "`n=== Baie: $array ===" -ForegroundColor Cyan
     $session = $null
 
     try {
@@ -325,9 +328,9 @@ foreach ($array in $Arrays) {
         foreach ($vol in $volumes) { $volumesByName[$vol.name] = $vol }
 
         $physicalConnections = $connections | Where-Object {
-            $host = [string]$_.host.name
-            $hostGroup = [string]$_.host_group.name
-            -not ($host -match $ExcludeHostRegex) -and -not ($hostGroup -match $ExcludeHostRegex)
+            $connHostName = [string]$_.host.name
+            $connHostGroup = [string]$_.host_group.name
+            -not ($connHostName -match $ExcludeHostRegex) -and -not ($connHostGroup -match $ExcludeHostRegex)
         }
 
         foreach ($conn in $physicalConnections) {
@@ -335,10 +338,7 @@ foreach ($array in $Arrays) {
             if (-not $volumesByName.ContainsKey($volName)) { continue }
 
             $vol = $volumesByName[$volName]
-            $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('space.total') -Default 0) / 1GB), 2)
-            if ($sizeGiB -eq 0 -and $vol.PSObject.Properties['space'] -and $vol.space.total) {
-                $sizeGiB = [Math]::Round(([double]$vol.space.total / 1GB), 2)
-            }
+            $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('provisioned', 'space.total', 'size') -Default 0) / 1GB), 2)
 
             $allRows.Add([PSCustomObject]@{
                 Array              = $array
@@ -376,7 +376,7 @@ foreach ($array in $Arrays) {
 
 if ($allRows.Count -gt 0) {
     $allRows | Sort-Object Array, Host, Volume | Export-Csv -Path $OutputCsv -Delimiter ';' -NoTypeInformation -Encoding UTF8
-    Write-Host "\nExport terminé: $OutputCsv" -ForegroundColor Green
+    Write-Host "`nExport terminé: $OutputCsv" -ForegroundColor Green
     Write-Host "Entrées exportées: $($allRows.Count)" -ForegroundColor Green
 }
 else {
