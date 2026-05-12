@@ -201,17 +201,40 @@ function New-PureApiSession {
         throw "Le module Pure Storage SDK2 est requis pour se connecter à la baie '$Array'."
     }
 
-    $connectParams = @{ EndPoint = $Array; Credential = $Credential }
+    $connectCommand = Get-Command -Name $script:PureModuleSessionCmdlets.Connect -ErrorAction Stop
+    $connectParams = @{ Credential = $Credential }
+
+    if ($connectCommand.Parameters.ContainsKey('EndPoint')) {
+        $connectParams['EndPoint'] = $Array
+    }
+    elseif ($connectCommand.Parameters.ContainsKey('Array')) {
+        $connectParams['Array'] = $Array
+    }
+    elseif ($connectCommand.Parameters.ContainsKey('Fqdn')) {
+        $connectParams['Fqdn'] = $Array
+    }
+    elseif ($connectCommand.Parameters.ContainsKey('ComputerName')) {
+        $connectParams['ComputerName'] = $Array
+    }
+    else {
+        throw "Impossible de déterminer le paramètre d'adresse pour $($script:PureModuleSessionCmdlets.Connect). Paramètres détectés: $($connectCommand.Parameters.Keys -join ', ')."
+    }
+
     if ($IgnoreCertificateErrors) {
-        $connectCommand = Get-Command -Name $script:PureModuleSessionCmdlets.Connect -ErrorAction Stop
         if ($connectCommand.Parameters.ContainsKey('IgnoreCertificateError')) {
             $connectParams['IgnoreCertificateError'] = $true
         }
         elseif ($connectCommand.Parameters.ContainsKey('IgnoreCertificateErrors')) {
             $connectParams['IgnoreCertificateErrors'] = $true
         }
+        elseif ($connectCommand.Parameters.ContainsKey('SkipCertificateCheck')) {
+            $connectParams['SkipCertificateCheck'] = $true
+        }
+        elseif ($connectCommand.Parameters.ContainsKey('SkipCertificateValidation')) {
+            $connectParams['SkipCertificateValidation'] = $true
+        }
         else {
-            Write-Warning "Le cmdlet $($script:PureModuleSessionCmdlets.Connect) ne supporte pas IgnoreCertificateError(s)."
+            Write-Warning "Le cmdlet $($script:PureModuleSessionCmdlets.Connect) ne supporte pas les options d'ignore certificat connues."
         }
     }
 
