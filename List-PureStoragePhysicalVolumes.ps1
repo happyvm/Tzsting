@@ -321,6 +321,7 @@ foreach ($array in $Arrays) {
             $vol = $volumesByName[$volName]
             $sizeGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('provisioned', 'space.total', 'size') -Default 0) / 1GB), 2)
             $volReduction = [Math]::Round([double](Get-ObjValue -Object $vol -Names @('space.data_reduction', 'Space.DataReduction', 'data_reduction', 'DataReduction', 'space.total_reduction', 'Space.TotalReduction') -Default 0), 2)
+            $usedGiB = [Math]::Round(([double](Get-ObjValue -Object $vol -Names @('space.virtual', 'Space.Virtual', 'virtual') -Default 0) / 1GB), 2)
 
             $allRows.Add([PSCustomObject]@{
                 Array              = $array
@@ -329,6 +330,7 @@ foreach ($array in $Arrays) {
                 ArrayRawTiB        = $rawTiB
                 Volume             = [string]$vol.Name
                 VolumeGiB          = $sizeGiB
+                VolumeUsedGiB      = $usedGiB
                 VolumeReduction    = $volReduction
                 Serial             = [string]$vol.Serial
                 Host               = [string](Get-ObjValue -Object $conn -Names @('host.name') -Default '')
@@ -346,7 +348,7 @@ foreach ($array in $Arrays) {
         else {
             $currentArrayRows |
                 Sort-Object Host, Volume |
-                Format-Table Array, Host, HostGroup, Volume, VolumeGiB,
+                Format-Table Array, Host, HostGroup, Volume, VolumeGiB, VolumeUsedGiB,
                     @{L='Réduction';E={if($_.VolumeReduction -gt 0){"$($_.VolumeReduction)x"}else{'N/A'}}},
                     ReplicationType, Lun -AutoSize
         }
