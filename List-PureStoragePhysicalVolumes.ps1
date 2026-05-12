@@ -135,18 +135,19 @@ function Get-ObjValue {
 function Get-ReplicationType {
     param(
         [Parameter(Mandatory = $true)][object]$Volume,
-        [Parameter()][hashtable]$PodSyncMap = @{}
+        [Parameter()][hashtable]$PodTypeMap = @{}
     )
 
     # Méthode principale: le pod indique le type de réplication.
-    # ActiveCluster (sync) = pod avec mediator configuré.
-    # ActiveDR (async) = pod sans mediator.
+    # ActiveCluster (actif/actif) = pod étendu sur 2+ baies (arrays.Count > 1).
+    # ActiveDR (asynchrone)       = pod local avec un pod-replica-link.
+    # Pod local sans lien         = non répliqué.
     $podName = [string](Get-ObjValue -Object $Volume -Names @('pod.name', 'Pod.Name') -Default '')
     if ($podName) {
-        if ($PodSyncMap.ContainsKey($podName)) {
-            return if ($PodSyncMap[$podName]) { 'actif/actif' } else { 'asynchrone' }
+        if ($PodTypeMap.ContainsKey($podName)) {
+            return $PodTypeMap[$podName]
         }
-        # Pod présent mais Get-Pfa2Pod indisponible: on ne peut pas trancher
+        # Pod présent mais Get-Pfa2Pod indisponible
         return 'asynchrone'
     }
 
@@ -293,17 +294,30 @@ foreach ($array in $Arrays) {
         $volumes = @(Get-Pfa2Volume -Array $flashArray -Limit 10000)
         $connections = @(Get-Pfa2Connection -Array $flashArray -Limit 10000)
 
-        # Map podName → $true (ActiveCluster/sync) | $false (ActiveDR/async)
-        # Un pod ActiveCluster a un mediator configuré; un pod ActiveDR n'en a pas.
-        $podSyncMap = @{}
+        # Map podName → type de réplication ('actif/actif' | 'asynchrone' | 'non répliqué')
+        # ActiveCluster : pod étendu sur 2+ baies (arrays.Count > 1)
+        # ActiveDR      : pod local avec un pod-replica-link
+        $podTypeMap = @{}
         if (Get-Command 'Get-Pfa2Pod' -ErrorAction SilentlyContinue) {
             foreach ($pod in @(Get-Pfa2Pod -Array $flashArray -Limit 1000)) {
-                $mediator = [string](Get-ObjValue -Object $pod -Names @('mediator', 'Mediator') -Default '')
-                $podSyncMap[[string]$pod.Name] = (-not [string]::IsNullOrWhiteSpace($mediator))
+                $podName = [string]$pod.Name
+                $arrProp = $pod.PSObject.Properties.Match('arrays') | Select-Object -First 1
+                $arrCount = if ($arrProp -and $null -ne $arrProp.Value) { @($arrProp.Value).Count } else { 1 }
+                $podTypeMap[$podName] = if ($arrCount -gt 1) { 'actif/actif' } else { 'non répliqué' }
             }
-            Write-Verbose "Pods: $($podSyncMap.Count) | ActiveCluster: $(@($podSyncMap.Values | Where-Object {$_}).Count) | ActiveDR: $(@($podSyncMap.Values | Where-Object {-not $_}).Count)"
+            Write-Verbose "Pods: $($podTypeMap.Count) | ActiveCluster: $(@($podTypeMap.Values | Where-Object {$_ -eq 'actif/actif'}).Count)"
         } else {
-            Write-Warning "Get-Pfa2Pod indisponible: type de réplication pod déterminé par défaut (asynchrone)."
+            Write-Warning "Get-Pfa2Pod indisponible: type de réplication pod indéterminable."
+        }
+
+        if (Get-Command 'Get-Pfa2PodReplicaLink' -ErrorAction SilentlyContinue) {
+            foreach ($link in @(Get-Pfa2PodReplicaLink -Array $flashArray -Limit 1000)) {
+                $linkPod = [string](Get-ObjValue -Object $link -Names @('local_pod.name', 'LocalPod.Name') -Default '')
+                if ($linkPod -and $podTypeMap.ContainsKey($linkPod) -and $podTypeMap[$linkPod] -ne 'actif/actif') {
+                    $podTypeMap[$linkPod] = 'asynchrone'
+                }
+            }
+            Write-Verbose "Pods ActiveDR (replica-link): $(@($podTypeMap.Values | Where-Object {$_ -eq 'asynchrone'}).Count)"
         }
 
         if ($volumes.Count -eq 0) {
@@ -344,7 +358,7 @@ foreach ($array in $Arrays) {
                 HostGroup          = [string](Get-ObjValue -Object $conn -Names @('HostGroup.Name', 'host_group.name') -Default '')
                 Protocol           = [string](Get-ObjValue -Object $conn -Names @('ProtocolEndpointType', 'protocol_endpoint_type') -Default '')
                 Lun                = [string](Get-ObjValue -Object $conn -Names @('lun') -Default '')
-                ReplicationType    = Get-ReplicationType -Volume $vol -PodSyncMap $podSyncMap
+                ReplicationType    = Get-ReplicationType -Volume $vol -PodTypeMap $podTypeMap
             })
         }
 
