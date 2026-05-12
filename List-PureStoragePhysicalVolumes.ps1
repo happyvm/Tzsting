@@ -271,33 +271,17 @@ foreach ($array in $Arrays) {
         # type=controller) dans Get-Pfa2Hardware. Fallback: premier composant avec model non vide.
         $hasFullModel = $model -match '(?i)R\d+'
         if (-not $hasFullModel -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
-            $hwAll = @(Get-Pfa2Hardware -Array $flashArray)
-
             $hwModel = ''
-            foreach ($hw in $hwAll) {
+            foreach ($hw in @(Get-Pfa2Hardware -Array $flashArray)) {
                 $typeProp  = $hw.PSObject.Properties['Type']
                 $modelProp = $hw.PSObject.Properties['Model']
-                if (-not $modelProp) { $modelProp = $hw.PSObject.Properties['model'] }
                 if (-not $typeProp)  { $typeProp  = $hw.PSObject.Properties['type']  }
-                $hwType  = if ($typeProp)  { [string]$typeProp.Value  } else { '' }
-                $hwModel = if ($modelProp) { [string]$modelProp.Value } else { '' }
-                if ($hwType -match '(?i)^controller$' -and $hwModel -ne '') { break }
-                $hwModel = ''
+                if (-not $modelProp) { $modelProp = $hw.PSObject.Properties['model'] }
+                $hwType = if ($typeProp)  { [string]$typeProp.Value  } else { '' }
+                $hwVal  = if ($modelProp) { [string]$modelProp.Value } else { '' }
+                if ($hwType -match '(?i)^controller$' -and $hwVal -ne '') { $hwModel = $hwVal; break }
             }
-
-            # Fallback: premier composant quelconque avec model non vide
-            if (-not $hwModel) {
-                foreach ($hw in $hwAll) {
-                    $modelProp = $hw.PSObject.Properties['Model']
-                    if (-not $modelProp) { $modelProp = $hw.PSObject.Properties['model'] }
-                    if ($modelProp -and [string]$modelProp.Value -ne '') {
-                        $hwModel = [string]$modelProp.Value
-                        break
-                    }
-                }
-            }
-
-            if ($hwModel) { $model = $hwModel }
+            $model = if ($hwModel) { $hwModel } else { 'N/A' }
         }
 
         $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @(
