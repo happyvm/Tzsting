@@ -29,9 +29,6 @@
 .PARAMETER OutputCsv
     Chemin de sortie CSV.
 
-.PARAMETER UsePureStorageModule
-    Utilise le module PowerShell Pure Storage par défaut (repli REST auto si indisponible).
-
 .EXAMPLE
     $arrays = @('fa-prod-01.company.local','fa-prod-02.company.local')
     .\List-PureStoragePhysicalVolumes.ps1 -Arrays $arrays -OutputCsv .\pure-physical-volumes.csv
@@ -57,9 +54,6 @@ param(
     [string]$OutputCsv = '.\pure-physical-volumes.csv',
 
     [Parameter()]
-    [switch]$UsePureStorageModule = $true,
-
-    [Parameter()]
     [switch]$IgnoreCertificateErrors
 )
 
@@ -74,9 +68,6 @@ if (Test-Path -LiteralPath $ConfigFile) {
     if (-not $PSBoundParameters.ContainsKey('Arrays') -and $cfg.ContainsKey('Arrays')) { $Arrays = @($cfg.Arrays | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
     if (-not $PSBoundParameters.ContainsKey('ExcludeHostRegex') -and $cfg.ContainsKey('ExcludeHostRegex')) { $ExcludeHostRegex = [string]$cfg.ExcludeHostRegex }
     if (-not $PSBoundParameters.ContainsKey('OutputCsv') -and $cfg.ContainsKey('OutputCsv')) { $OutputCsv = [string]$cfg.OutputCsv }
-    if (-not $PSBoundParameters.ContainsKey('UsePureStorageModule') -and $cfg.ContainsKey('UsePureStorageModule')) {
-        if ([bool]$cfg.UsePureStorageModule) { $UsePureStorageModule = $true } else { $UsePureStorageModule = $false }
-    }
     if (-not $PSBoundParameters.ContainsKey('IgnoreCertificateErrors') -and $cfg.ContainsKey('IgnoreCertificateErrors')) {
         if ([bool]$cfg.IgnoreCertificateErrors) { $IgnoreCertificateErrors = $true }
     }
@@ -111,35 +102,13 @@ if (-not $Credential -and $arrayCredentialMap.Count -eq 0) {
     $Credential = Get-Credential -Message 'Compte API Pure Storage (lecture)'
 }
 
-$script:PureModuleAvailable = $false
-$script:PureModuleSessionCmdlets = @{}
-
-if ($UsePureStorageModule) {
-    $module = Get-Module -ListAvailable -Name 'PureStoragePowerShellSDK2'
-    if ($module) {
-        Import-Module $module[0].Name -ErrorAction Stop
-        $script:PureModuleAvailable = $true
-
-        $connectCmd = Get-Command -Name 'Connect-Pfa2Array' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $disconnectCmd = Get-Command -Name 'Disconnect-Pfa2Array' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $invokeCmd = Get-Command -Name 'Invoke-Pfa2RestMethod' -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        if ($connectCmd -and $disconnectCmd -and $invokeCmd) {
-            $script:PureModuleSessionCmdlets = @{
-                Connect    = $connectCmd.Name
-                Disconnect = $disconnectCmd.Name
-                Invoke     = $invokeCmd.Name
-            }
-            Write-Host "Module Pure Storage détecté: $($module[0].Name). Utilisation du SDK fabricant." -ForegroundColor Green
-        }
-        else {
-            throw "Le module Pure Storage SDK2 est présent, mais les cmdlets requis (Connect/Disconnect/Invoke-Pfa2RestMethod) sont introuvables."
-        }
-    }
-    else {
-        throw "Module Pure Storage SDK2 requis mais introuvable (PureStoragePowerShellSDK2)."
-    }
+Import-Module PureStoragePowerShellSDK2 -ErrorAction Stop
+$script:PureModuleSessionCmdlets = @{
+    Connect    = 'Connect-Pfa2Array'
+    Disconnect = 'Disconnect-Pfa2Array'
+    Invoke     = 'Invoke-Pfa2RestMethod'
 }
+Write-Host "Module PureStoragePowerShellSDK2 chargé." -ForegroundColor Green
 
 function Get-ObjValue {
     param(
@@ -199,10 +168,6 @@ function Get-ReplicationType {
 
 function New-PureApiSession {
     param([string]$Array,[PSCredential]$Credential)
-
-    if (-not $script:PureModuleAvailable) {
-        throw "Le module Pure Storage SDK2 est requis pour se connecter à la baie '$Array'."
-    }
 
     $connectCommand = Get-Command -Name $script:PureModuleSessionCmdlets.Connect -ErrorAction Stop
     $connectParams = @{ Credential = $Credential }
