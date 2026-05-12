@@ -267,37 +267,37 @@ foreach ($array in $Arrays) {
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
 
         # Get-Pfa2Array retourne un nom de famille générique (ex: M_SERIES).
-        # Le modèle complet (ex: FA-X70R3) est sur le composant controller (CT0/CT1)
-        # dans Get-Pfa2Hardware. On déclenche ce fallback si le modèle ne contient pas Rn.
+        # Le modèle complet (ex: FA-X70R3) est porté par les contrôleurs (CT0/CT1,
+        # type=controller) dans Get-Pfa2Hardware. Fallback: premier composant avec model non vide.
         $hasFullModel = $model -match '(?i)R\d+'
         if (-not $hasFullModel -and (Get-Command 'Get-Pfa2Hardware' -ErrorAction SilentlyContinue)) {
             $hwAll = @(Get-Pfa2Hardware -Array $flashArray)
 
-            # Priorité: controller (CT0/CT1) avec model non vide
-            $best = $hwAll | Where-Object {
-                [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)^controller$' -and
-                [string](Get-ObjValue -Object $_ -Names @('model', 'Model') -Default '') -ne ''
-            } | Select-Object -First 1
-
-            # Fallback: chassis avec model non vide
-            if (-not $best) {
-                $best = $hwAll | Where-Object {
-                    [string](Get-ObjValue -Object $_ -Names @('type', 'Type') -Default '') -match '(?i)chassis' -and
-                    [string](Get-ObjValue -Object $_ -Names @('model', 'Model') -Default '') -ne ''
-                } | Select-Object -First 1
+            $hwModel = ''
+            foreach ($hw in $hwAll) {
+                $typeProp  = $hw.PSObject.Properties['Type']
+                $modelProp = $hw.PSObject.Properties['Model']
+                if (-not $modelProp) { $modelProp = $hw.PSObject.Properties['model'] }
+                if (-not $typeProp)  { $typeProp  = $hw.PSObject.Properties['type']  }
+                $hwType  = if ($typeProp)  { [string]$typeProp.Value  } else { '' }
+                $hwModel = if ($modelProp) { [string]$modelProp.Value } else { '' }
+                if ($hwType -match '(?i)^controller$' -and $hwModel -ne '') { break }
+                $hwModel = ''
             }
 
-            # Fallback: n'importe quel composant avec un model non vide
-            if (-not $best) {
-                $best = $hwAll | Where-Object {
-                    [string](Get-ObjValue -Object $_ -Names @('model', 'Model') -Default '') -ne ''
-                } | Select-Object -First 1
+            # Fallback: premier composant quelconque avec model non vide
+            if (-not $hwModel) {
+                foreach ($hw in $hwAll) {
+                    $modelProp = $hw.PSObject.Properties['Model']
+                    if (-not $modelProp) { $modelProp = $hw.PSObject.Properties['model'] }
+                    if ($modelProp -and [string]$modelProp.Value -ne '') {
+                        $hwModel = [string]$modelProp.Value
+                        break
+                    }
+                }
             }
 
-            if ($best) {
-                $hwModel = [string](Get-ObjValue -Object $best -Names @('model', 'Model') -Default '')
-                if ($hwModel) { $model = $hwModel }
-            }
+            if ($hwModel) { $model = $hwModel }
         }
 
         $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @(
