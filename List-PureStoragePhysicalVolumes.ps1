@@ -331,6 +331,48 @@ foreach ($array in $Arrays) {
     }
 }
 
+# Appairage des volumes répliqués par numéro de série
+$serialMap = @{}
+foreach ($row in $allRows) {
+    if ([string]::IsNullOrWhiteSpace($row.Serial)) { continue }
+    if (-not $serialMap.ContainsKey($row.Serial)) {
+        $serialMap[$row.Serial] = [System.Collections.Generic.List[object]]::new()
+    }
+    $serialMap[$row.Serial].Add($row)
+}
+
+foreach ($row in $allRows) {
+    $partners = @()
+    if (-not [string]::IsNullOrWhiteSpace($row.Serial) -and $serialMap.ContainsKey($row.Serial)) {
+        $partners = @(
+            $serialMap[$row.Serial] |
+            Where-Object { $_.Array -ne $row.Array } |
+            ForEach-Object { "$($_.Array)/$($_.Volume)" } |
+            Select-Object -Unique
+        )
+    }
+    $row | Add-Member -NotePropertyName 'PairedWith' -NotePropertyValue ($partners -join '; ') -Force
+}
+
+$pairedSerials = @($serialMap.Keys | Where-Object {
+    ($serialMap[$_] | Select-Object -ExpandProperty Array | Select-Object -Unique).Count -gt 1
+})
+
+if ($pairedSerials.Count -gt 0) {
+    Write-Host ("`n=== Volumes répliqués détectés — {0} groupe(s) ===" -f $pairedSerials.Count) -ForegroundColor Cyan
+    foreach ($serial in ($pairedSerials | Sort-Object)) {
+        $rows = $serialMap[$serial]
+        $volName = ($rows | Select-Object -ExpandProperty Volume -First 1)
+        Write-Host ("`nVolume : {0}  |  Série : {1}" -f $volName, $serial) -ForegroundColor Yellow
+        $rows | Sort-Object Array |
+            Format-Table @{L='Baie';E={$_.Array}},
+                         @{L='Hôte';E={$_.Host}},
+                         @{L='HostGroup';E={$_.HostGroup}},
+                         @{L='Taille (GiB)';E={$_.VolumeGiB}},
+                         @{L='Réplication';E={$_.ReplicationType}} -AutoSize
+    }
+}
+
 if ($allRows.Count -gt 0) {
     $allRows | Sort-Object Array, Host, Volume | Export-Csv -Path $OutputCsv -Delimiter ';' -NoTypeInformation -Encoding UTF8
     Write-Host "`nExport terminé: $OutputCsv" -ForegroundColor Green
