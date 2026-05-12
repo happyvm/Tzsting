@@ -389,7 +389,7 @@ $pairedSerials = @($serialMap.Keys | Where-Object {
 })
 
 if ($pairedSerials.Count -gt 0) {
-    Write-Host ("`n=== Volumes répliqués détectés — {0} groupe(s) ===" -f $pairedSerials.Count) -ForegroundColor Cyan
+    Write-Host ("`n=== Volumes répliqués détectés - {0} groupe(s) ===" -f $pairedSerials.Count) -ForegroundColor Cyan
     foreach ($serial in ($pairedSerials | Sort-Object)) {
         $rows = $serialMap[$serial]
         $volName = ($rows | Select-Object -ExpandProperty Volume -First 1)
