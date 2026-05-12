@@ -29,6 +29,9 @@
 .PARAMETER OutputCsv
     Chemin de sortie CSV.
 
+.PARAMETER UsePureStorageModule
+    Utilise le module PowerShell Pure Storage par défaut (repli REST auto si indisponible).
+
 .EXAMPLE
     $arrays = @('fa-prod-01.company.local','fa-prod-02.company.local')
     .\List-PureStoragePhysicalVolumes.ps1 -Arrays $arrays -OutputCsv .\pure-physical-volumes.csv
@@ -48,7 +51,10 @@ param(
     [string]$ExcludeHostRegex = '(?i)(^|[-_.])(esx\d*|esxi\d*|vmware|hyper-?v|hv\d+)([-_.]|$)',
 
     [Parameter()]
-    [string]$OutputCsv = '.\pure-physical-volumes.csv'
+    [string]$OutputCsv = '.\pure-physical-volumes.csv',
+
+    [Parameter()]
+    [switch]$UsePureStorageModule = $true
 )
 
 Set-StrictMode -Version Latest
@@ -56,6 +62,37 @@ $ErrorActionPreference = 'Stop'
 
 if (-not $Credential) {
     $Credential = Get-Credential -Message 'Compte API Pure Storage (lecture)'
+}
+
+$script:PureModuleAvailable = $false
+$script:PureModuleSessionCmdlets = @{}
+
+if ($UsePureStorageModule) {
+    $module = Get-Module -ListAvailable -Name 'PureStoragePowerShellSDK2','PureStoragePowerShellSDK'
+    if ($module) {
+        Import-Module $module[0].Name -ErrorAction Stop
+        $script:PureModuleAvailable = $true
+
+        $connectCmd = Get-Command -Name 'Connect-Pfa2Array','Connect-PfaArray' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $disconnectCmd = Get-Command -Name 'Disconnect-Pfa2Array','Disconnect-PfaArray' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $invokeCmd = Get-Command -Name 'Invoke-Pfa2RestMethod','Invoke-PfaRestMethod' -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if ($connectCmd -and $disconnectCmd -and $invokeCmd) {
+            $script:PureModuleSessionCmdlets = @{
+                Connect    = $connectCmd.Name
+                Disconnect = $disconnectCmd.Name
+                Invoke     = $invokeCmd.Name
+            }
+            Write-Host "Module Pure Storage détecté: $($module[0].Name). Utilisation du SDK fabricant." -ForegroundColor Green
+        }
+        else {
+            Write-Warning "Le module Pure Storage est présent mais certains cmdlets sont introuvables. Repli sur API REST native."
+            $script:PureModuleAvailable = $false
+        }
+    }
+    else {
+        Write-Warning "Module Pure Storage non trouvé (PureStoragePowerShellSDK2/PureStoragePowerShellSDK). Repli sur API REST native."
+    }
 }
 
 function Get-ObjValue {
@@ -136,14 +173,47 @@ function Invoke-PureApi {
 
 function New-PureApiSession {
     param([string]$Array,[PSCredential]$Credential)
+
+    if ($script:PureModuleAvailable) {
+        $session = & $script:PureModuleSessionCmdlets.Connect -EndPoint $Array -Credential $Credential -IgnoreCertificateError
+        if (-not $session) { throw "Connexion SDK impossible sur la baie '$Array'." }
+        return @{ Mode = 'Module'; Session = $session }
+    }
+
     $tokenResponse = Invoke-PureApi -Array $Array -Method 'POST' -Path 'login' -Body @{ username = $Credential.UserName; password = $Credential.GetNetworkCredential().Password }
     if (-not $tokenResponse.token) { throw "Impossible de récupérer le token API sur la baie '$Array'." }
-    return @{ Authorization = "Bearer $($tokenResponse.token)" }
+    return @{ Mode = 'Rest'; Headers = @{ Authorization = "Bearer $($tokenResponse.token)" } }
+}
+
+function Invoke-PureApiWithSession {
+    param(
+        [Parameter(Mandatory = $true)][string]$Array,
+        [Parameter(Mandatory = $true)][hashtable]$Session,
+        [Parameter(Mandatory = $true)][string]$Method,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter()][object]$Body
+    )
+
+    if ($Session.Mode -eq 'Module') {
+        $invokeParams = @{ Array = $Session.Session; Method = $Method; Path = $Path }
+        if ($Body) { $invokeParams.Body = $Body }
+        return (& $script:PureModuleSessionCmdlets.Invoke @invokeParams)
+    }
+
+    return Invoke-PureApi -Array $Array -Method $Method -Path $Path -Headers $Session.Headers -Body $Body
 }
 
 function Close-PureApiSession {
-    param([string]$Array,[hashtable]$Headers)
-    try { Invoke-PureApi -Array $Array -Method 'DELETE' -Path 'logout' -Headers $Headers | Out-Null }
+    param([string]$Array,[hashtable]$Session)
+
+    try {
+        if ($Session.Mode -eq 'Module') {
+            & $script:PureModuleSessionCmdlets.Disconnect -Array $Session.Session | Out-Null
+        }
+        else {
+            Invoke-PureApi -Array $Array -Method 'DELETE' -Path 'logout' -Headers $Session.Headers | Out-Null
+        }
+    }
     catch { Write-Warning "Déconnexion API échouée pour '$Array': $($_.Exception.Message)" }
 }
 
@@ -151,15 +221,15 @@ $allRows = New-Object System.Collections.Generic.List[object]
 
 foreach ($array in $Arrays) {
     Write-Host "\n=== Baie: $array ===" -ForegroundColor Cyan
-    $headers = $null
+    $session = $null
 
     try {
-        $headers = New-PureApiSession -Array $array -Credential $Credential
+        $session = New-PureApiSession -Array $array -Credential $Credential
 
-        $arrayInfoResponse = Invoke-PureApi -Array $array -Method 'GET' -Path 'arrays' -Headers $headers
-        $arraySpaceResponse = Invoke-PureApi -Array $array -Method 'GET' -Path 'arrays/space' -Headers $headers
-        $volumesResponse = Invoke-PureApi -Array $array -Method 'GET' -Path 'volumes?limit=10000' -Headers $headers
-        $connectionsResponse = Invoke-PureApi -Array $array -Method 'GET' -Path 'connections?limit=10000' -Headers $headers
+        $arrayInfoResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays' -Session $session
+        $arraySpaceResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'arrays/space' -Session $session
+        $volumesResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'volumes?limit=10000' -Session $session
+        $connectionsResponse = Invoke-PureApiWithSession -Array $array -Method 'GET' -Path 'connections?limit=10000' -Session $session
 
         $arrayInfo = @($arrayInfoResponse.items)[0]
         $arraySpace = @($arraySpaceResponse.items)[0]
@@ -228,7 +298,7 @@ foreach ($array in $Arrays) {
         Write-Error "Erreur sur la baie '$array': $($_.Exception.Message)"
     }
     finally {
-        if ($headers) { Close-PureApiSession -Array $array -Headers $headers }
+        if ($session) { Close-PureApiSession -Array $array -Session $session }
     }
 }
 
