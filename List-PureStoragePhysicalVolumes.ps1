@@ -258,7 +258,13 @@ foreach ($array in $Arrays) {
         } else { $arrayInfo }
 
         $model = [string](Get-ObjValue -Object $arrayInfo -Names @('model', 'product_model', 'ProductModel') -Default 'N/A')
-        Write-Verbose "ArrayInfo props: $($arrayInfo.PSObject.Properties.Name -join ', ')"
+        if ($model -eq 'N/A') {
+            if ($null -eq $arrayInfo) {
+                Write-Warning "[$array] Get-Pfa2Array n'a retourné aucun objet."
+            } else {
+                Write-Warning "[$array] Modèle introuvable. Propriétés Get-Pfa2Array disponibles: $($arrayInfo.PSObject.Properties.Name -join ', ')"
+            }
+        }
 
         $dataReduction = [double](Get-ObjValue -Object $arraySpace -Names @(
             'data_reduction', 'DataReduction',
