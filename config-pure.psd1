@@ -24,8 +24,7 @@
     )
     # Paramètres optionnels pour Extract-PureStoragePerformance.ps1
     PerformanceResolutionMs = 30000
-    PerformanceWindowMinutes = 60
-    PerformanceAggregation = 'average' # average | max | min
+    PerformanceWindowMinutes = 1440
     PerformanceOutputCsv = '.\pure-performance.csv'
 
 }
