@@ -174,41 +174,47 @@ foreach ($array in $Arrays) {
         $arrayCredential = Get-ArrayCredential -Array $array -DefaultCredential $Credential
         $session = New-PureApiSession -Array $array -Credential $arrayCredential
 
-        $perf = Get-Pfa2ArrayPerformance -Array $session.Session -StartTime $startTime -EndTime $endTime -Resolution $ResolutionMs -Type $Aggregation
-        if (-not $perf) {
+        $perfData = Get-Pfa2ArrayPerformance -Array $session.Session -StartTime $startTime -EndTime $endTime -Resolution $ResolutionMs
+        $points = @($perfData)
+        if ($points.Count -eq 0) {
             Write-Warning "Aucune donnée performance pour '$array'."
             continue
         }
 
-        foreach ($point in @($perf)) {
-            $readIops = [double]$point.ReadsPerSec
-            $writeIops = [double]$point.WritesPerSec
-            $readBps = [double]$point.InputPerSec
-            $writeBps = [double]$point.OutputPerSec
-            $readLatUs = [double]$point.UsecPerReadOp
-            $writeLatUs = [double]$point.UsecPerWriteOp
-
-            $row = [PSCustomObject]@{
-                Array                  = $array
-                Timestamp               = $point.Time
-                Aggregation             = $Aggregation
-                WindowMinutes           = $WindowMinutes
-                ResolutionMs            = $ResolutionMs
-                ReadIOPS                = [Math]::Round($readIops, 2)
-                WriteIOPS               = [Math]::Round($writeIops, 2)
-                TotalIOPS               = [Math]::Round(($readIops + $writeIops), 2)
-                ReadBandwidthBps        = [Math]::Round($readBps, 2)
-                WriteBandwidthBps       = [Math]::Round($writeBps, 2)
-                TotalBandwidthBps       = [Math]::Round(($readBps + $writeBps), 2)
-                ReadBandwidthMiBps      = Convert-BytesToMiB -BytesPerSec $readBps
-                WriteBandwidthMiBps     = Convert-BytesToMiB -BytesPerSec $writeBps
-                TotalBandwidthMiBps     = Convert-BytesToMiB -BytesPerSec ($readBps + $writeBps)
-                ReadLatencyMs           = [Math]::Round(($readLatUs / 1000), 3)
-                WriteLatencyMs          = [Math]::Round(($writeLatUs / 1000), 3)
-                TotalLatencyMs          = [Math]::Round(((($readLatUs + $writeLatUs) / 2) / 1000), 3)
-            }
-            $allRows.Add($row) | Out-Null
+        $agg = switch ($Aggregation) {
+            'average' { { param($v) ($v | Measure-Object -Average).Average } }
+            'max'     { { param($v) ($v | Measure-Object -Maximum).Maximum } }
+            'min'     { { param($v) ($v | Measure-Object -Minimum).Minimum } }
         }
+
+        $readIops   = & $agg @($points | ForEach-Object { [double]$_.ReadsPerSec })
+        $writeIops  = & $agg @($points | ForEach-Object { [double]$_.WritesPerSec })
+        # Pure Storage: OutputPerSec = host reads (data out of array), InputPerSec = host writes (data into array)
+        $readBps    = & $agg @($points | ForEach-Object { [double]$_.OutputPerSec })
+        $writeBps   = & $agg @($points | ForEach-Object { [double]$_.InputPerSec })
+        $readLatUs  = & $agg @($points | ForEach-Object { [double]$_.UsecPerReadOp })
+        $writeLatUs = & $agg @($points | ForEach-Object { [double]$_.UsecPerWriteOp })
+
+        $row = [PSCustomObject]@{
+            Array               = $array
+            Aggregation         = $Aggregation
+            WindowMinutes       = $WindowMinutes
+            ResolutionMs        = $ResolutionMs
+            SampleCount         = $points.Count
+            ReadIOPS            = [Math]::Round($readIops, 2)
+            WriteIOPS           = [Math]::Round($writeIops, 2)
+            TotalIOPS           = [Math]::Round(($readIops + $writeIops), 2)
+            ReadBandwidthBps    = [Math]::Round($readBps, 2)
+            WriteBandwidthBps   = [Math]::Round($writeBps, 2)
+            TotalBandwidthBps   = [Math]::Round(($readBps + $writeBps), 2)
+            ReadBandwidthMiBps  = Convert-BytesToMiB -BytesPerSec $readBps
+            WriteBandwidthMiBps = Convert-BytesToMiB -BytesPerSec $writeBps
+            TotalBandwidthMiBps = Convert-BytesToMiB -BytesPerSec ($readBps + $writeBps)
+            ReadLatencyMs       = [Math]::Round(($readLatUs / 1000), 3)
+            WriteLatencyMs      = [Math]::Round(($writeLatUs / 1000), 3)
+            TotalLatencyMs      = [Math]::Round(((($readLatUs + $writeLatUs) / 2) / 1000), 3)
+        }
+        $allRows.Add($row) | Out-Null
     }
     catch {
         Write-Error "Erreur sur '$array': $($_.Exception.Message)"
@@ -222,5 +228,5 @@ if ($allRows.Count -eq 0) {
     throw 'Aucune ligne à exporter.'
 }
 
-$allRows | Sort-Object Array, Timestamp | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
+$allRows | Sort-Object Array | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
 Write-Host "CSV exporté: $OutputCsv ($($allRows.Count) lignes)" -ForegroundColor Green
