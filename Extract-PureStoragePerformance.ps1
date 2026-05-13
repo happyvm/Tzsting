@@ -182,14 +182,14 @@ foreach ($array in $Arrays) {
 
         Write-Verbose "Propriétés SDK disponibles: $($points[0].PSObject.Properties.Name -join ', ')"
 
-        # Noms alternatifs selon la version du SDK (PascalCase ou snake_case)
-        # OutputPerSec/output_per_sec = lecture hôte; InputPerSec/input_per_sec = écriture hôte
-        $riVals  = @($points | ForEach-Object { Get-PerfProp $_ 'ReadsPerSec','reads_per_sec','ReadIops','read_iops' })
-        $wiVals  = @($points | ForEach-Object { Get-PerfProp $_ 'WritesPerSec','writes_per_sec','WriteIops','write_iops' })
-        $rbVals  = @($points | ForEach-Object { Get-PerfProp $_ 'OutputPerSec','output_per_sec','ReadBytesPerSec','read_bytes_per_sec' })
-        $wbVals  = @($points | ForEach-Object { Get-PerfProp $_ 'InputPerSec','input_per_sec','WriteBytesPerSec','write_bytes_per_sec' })
-        $rlVals  = @($points | ForEach-Object { Get-PerfProp $_ 'UsecPerReadOp','usec_per_read_op','ReadLatencyUsec','read_latency_usec' })
-        $wlVals  = @($points | ForEach-Object { Get-PerfProp $_ 'UsecPerWriteOp','usec_per_write_op','WriteLatencyUsec','write_latency_usec' })
+        # ReadBytesPerSec/WriteBytesPerSec sont les noms SDK2 confirmés;
+        # les variantes restantes assurent la compatibilité avec d'autres versions
+        $riVals  = @($points | ForEach-Object { Get-PerfProp $_ 'ReadsPerSec','reads_per_sec','ReadIops' })
+        $wiVals  = @($points | ForEach-Object { Get-PerfProp $_ 'WritesPerSec','writes_per_sec','WriteIops' })
+        $rbVals  = @($points | ForEach-Object { Get-PerfProp $_ 'ReadBytesPerSec','read_bytes_per_sec','OutputPerSec','output_per_sec' })
+        $wbVals  = @($points | ForEach-Object { Get-PerfProp $_ 'WriteBytesPerSec','write_bytes_per_sec','InputPerSec','input_per_sec' })
+        $rlVals  = @($points | ForEach-Object { Get-PerfProp $_ 'UsecPerReadOp','usec_per_read_op','ReadLatencyUsec' })
+        $wlVals  = @($points | ForEach-Object { Get-PerfProp $_ 'UsecPerWriteOp','usec_per_write_op','WriteLatencyUsec' })
 
         $c = @{}
         foreach ($type in @('min', 'average', 'max')) {
