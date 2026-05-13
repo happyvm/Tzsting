@@ -44,7 +44,7 @@ param(
     [PSCredential]$Credential,
 
     [Parameter()]
-    [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure-performance.psd1'),
+    [string]$ConfigFile = (Join-Path $PSScriptRoot 'config-pure.psd1'),
 
     [Parameter()]
     [int]$ResolutionMs = 30000,
@@ -70,10 +70,21 @@ if (Test-Path -LiteralPath $ConfigFile) {
     $cfg = Import-PowerShellDataFile -LiteralPath $ConfigFile
 
     if (-not $PSBoundParameters.ContainsKey('Arrays') -and $cfg.ContainsKey('Arrays')) { $Arrays = @($cfg.Arrays | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
-    if (-not $PSBoundParameters.ContainsKey('ResolutionMs') -and $cfg.ContainsKey('ResolutionMs')) { $ResolutionMs = [int]$cfg.ResolutionMs }
-    if (-not $PSBoundParameters.ContainsKey('WindowMinutes') -and $cfg.ContainsKey('WindowMinutes')) { $WindowMinutes = [int]$cfg.WindowMinutes }
-    if (-not $PSBoundParameters.ContainsKey('Aggregation') -and $cfg.ContainsKey('Aggregation')) { $Aggregation = [string]$cfg.Aggregation }
-    if (-not $PSBoundParameters.ContainsKey('OutputCsv') -and $cfg.ContainsKey('OutputCsv')) { $OutputCsv = [string]$cfg.OutputCsv }
+    if (-not $PSBoundParameters.ContainsKey('ResolutionMs')) {
+        if ($cfg.ContainsKey('PerformanceResolutionMs')) { $ResolutionMs = [int]$cfg.PerformanceResolutionMs }
+        elseif ($cfg.ContainsKey('ResolutionMs')) { $ResolutionMs = [int]$cfg.ResolutionMs }
+    }
+    if (-not $PSBoundParameters.ContainsKey('WindowMinutes')) {
+        if ($cfg.ContainsKey('PerformanceWindowMinutes')) { $WindowMinutes = [int]$cfg.PerformanceWindowMinutes }
+        elseif ($cfg.ContainsKey('WindowMinutes')) { $WindowMinutes = [int]$cfg.WindowMinutes }
+    }
+    if (-not $PSBoundParameters.ContainsKey('Aggregation')) {
+        if ($cfg.ContainsKey('PerformanceAggregation')) { $Aggregation = [string]$cfg.PerformanceAggregation }
+        elseif ($cfg.ContainsKey('Aggregation')) { $Aggregation = [string]$cfg.Aggregation }
+    }
+    if (-not $PSBoundParameters.ContainsKey('OutputCsv')) {
+        if ($cfg.ContainsKey('PerformanceOutputCsv')) { $OutputCsv = [string]$cfg.PerformanceOutputCsv }
+    }
     if (-not $PSBoundParameters.ContainsKey('IgnoreCertificateErrors') -and $cfg.ContainsKey('IgnoreCertificateErrors')) {
         if ([bool]$cfg.IgnoreCertificateErrors) { $IgnoreCertificateErrors = $true }
     }
