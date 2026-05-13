@@ -244,6 +244,15 @@ foreach ($array in $Arrays) {
             TotalLatencyMs_Min          = $c['min'].TotalLatencyMs
             TotalLatencyMs_Avg          = $c['average'].TotalLatencyMs
             TotalLatencyMs_Max          = $c['max'].TotalLatencyMs
+            DeltaIOPS_Min               = [Math]::Round($c['min'].ReadIOPS - $c['min'].WriteIOPS, 2)
+            DeltaIOPS_Avg               = [Math]::Round($c['average'].ReadIOPS - $c['average'].WriteIOPS, 2)
+            DeltaIOPS_Max               = [Math]::Round($c['max'].ReadIOPS - $c['max'].WriteIOPS, 2)
+            DeltaBandwidthMiBps_Min     = [Math]::Round($c['min'].ReadBandwidthMiBps - $c['min'].WriteBandwidthMiBps, 2)
+            DeltaBandwidthMiBps_Avg     = [Math]::Round($c['average'].ReadBandwidthMiBps - $c['average'].WriteBandwidthMiBps, 2)
+            DeltaBandwidthMiBps_Max     = [Math]::Round($c['max'].ReadBandwidthMiBps - $c['max'].WriteBandwidthMiBps, 2)
+            DeltaLatencyMs_Min          = [Math]::Round($c['min'].ReadLatencyMs - $c['min'].WriteLatencyMs, 3)
+            DeltaLatencyMs_Avg          = [Math]::Round($c['average'].ReadLatencyMs - $c['average'].WriteLatencyMs, 3)
+            DeltaLatencyMs_Max          = [Math]::Round($c['max'].ReadLatencyMs - $c['max'].WriteLatencyMs, 3)
         }
         $allRows.Add($row) | Out-Null
     }
