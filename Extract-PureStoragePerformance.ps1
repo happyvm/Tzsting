@@ -32,7 +32,8 @@
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification='Script interactif: affichage console intentionnel')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '', Justification='Mot de passe en clair supporté dans config locale uniquement')]
-[CmdletBinding(SupportsShouldProcess = $true)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='Script de collecte ponctuel: ShouldProcess non pertinent')]
+[CmdletBinding()]
 param(
     [Parameter()]
     [string[]]$Arrays = @(),
@@ -246,7 +247,5 @@ if ($allRows.Count -eq 0) {
     throw 'Aucune ligne à exporter.'
 }
 
-if ($PSCmdlet.ShouldProcess($OutputCsv, 'Export-Csv')) {
-    $allRows | Sort-Object Array | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
-    Write-Host "CSV exporté: $OutputCsv ($($allRows.Count) lignes)" -ForegroundColor Green
-}
+$allRows | Sort-Object Array | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
+Write-Host "CSV exporté: $OutputCsv ($($allRows.Count) lignes)" -ForegroundColor Green
