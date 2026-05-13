@@ -22,4 +22,10 @@
         @{ Array = 'fa-prod-01.company.local'; UserName = 'pureuser1'; Password = '' }
         @{ Array = 'fa-prod-02.company.local'; UserName = 'pureuser2'; Password = '' }
     )
+    # Paramètres optionnels pour Extract-PureStoragePerformance.ps1
+    PerformanceResolutionMs = 30000
+    PerformanceWindowMinutes = 60
+    PerformanceAggregation = 'average' # average | max | min
+    PerformanceOutputCsv = '.\pure-performance.csv'
+
 }
