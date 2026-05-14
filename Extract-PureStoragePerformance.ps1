@@ -7,7 +7,7 @@
     un CSV consolidé par baie avec:
       - IOPS read/write/total
       - Bande passante read/write/total (B/s + MiB/s)
-      - Latence read/write/total (ms)
+      - Latence read/write (ms)
 
     Les valeurs sont collectées sur une fenêtre temporelle configurable et exportées
     avec les trois agrégations (min, average, max) en colonnes distinctes par baie.
@@ -104,6 +104,9 @@ if (-not $Arrays -or $Arrays.Count -eq 0) {
     throw "Aucune baie fournie. Définissez -Arrays ou ajoutez la clé 'Arrays' dans le fichier de configuration ($ConfigFile)."
 }
 
+if ($ResolutionMs -le 0) { throw "ResolutionMs doit être un entier positif (valeur reçue: $ResolutionMs)." }
+if ($WindowMinutes -le 0) { throw "WindowMinutes doit être un entier positif (valeur reçue: $WindowMinutes)." }
+
 if (-not $Credential -and $arrayCredentialMap.Count -eq 0) {
     $Credential = Get-Credential -Message 'Compte API Pure Storage (lecture)'
 }
@@ -153,13 +156,13 @@ function Close-PureApiSession {
 
 function Convert-BytesToMiB { param([double]$BytesPerSec) [Math]::Round(($BytesPerSec / 1MB), 2) }
 
-function Get-PerfProp {
-    param([object]$Obj, [string[]]$Candidates)
+function Resolve-PropName {
+    param([object]$Sample, [string[]]$Candidates)
     foreach ($name in $Candidates) {
-        $p = $Obj.PSObject.Properties.Match($name)
-        if ($p.Count -gt 0 -and $null -ne $p[0].Value) { return [double]$p[0].Value }
+        $p = $Sample.PSObject.Properties.Match($name)
+        if ($p.Count -gt 0 -and $null -ne $p[0].Value) { return $name }
     }
-    return 0.0
+    return $null
 }
 
 $allRows = New-Object System.Collections.Generic.List[object]
@@ -182,82 +185,80 @@ foreach ($array in $Arrays) {
 
         Write-Verbose "Propriétés SDK disponibles: $($points[0].PSObject.Properties.Name -join ', ')"
 
-        # ReadBytesPerSec/WriteBytesPerSec sont les noms SDK2 confirmés;
-        # les variantes restantes assurent la compatibilité avec d'autres versions
-        $riVals  = @($points | ForEach-Object { Get-PerfProp $_ 'ReadsPerSec','reads_per_sec','ReadIops' })
-        $wiVals  = @($points | ForEach-Object { Get-PerfProp $_ 'WritesPerSec','writes_per_sec','WriteIops' })
-        $rbVals  = @($points | ForEach-Object { Get-PerfProp $_ 'ReadBytesPerSec','read_bytes_per_sec','OutputPerSec','output_per_sec' })
-        $wbVals  = @($points | ForEach-Object { Get-PerfProp $_ 'WriteBytesPerSec','write_bytes_per_sec','InputPerSec','input_per_sec' })
-        $rlVals  = @($points | ForEach-Object { Get-PerfProp $_ 'UsecPerReadOp','usec_per_read_op','ReadLatencyUsec' })
-        $wlVals  = @($points | ForEach-Object { Get-PerfProp $_ 'UsecPerWriteOp','usec_per_write_op','WriteLatencyUsec' })
+        $propRI = Resolve-PropName $points[0] 'ReadsPerSec','reads_per_sec','ReadIops'
+        $propWI = Resolve-PropName $points[0] 'WritesPerSec','writes_per_sec','WriteIops'
+        $propRB = Resolve-PropName $points[0] 'ReadBytesPerSec','read_bytes_per_sec','OutputPerSec','output_per_sec'
+        $propWB = Resolve-PropName $points[0] 'WriteBytesPerSec','write_bytes_per_sec','InputPerSec','input_per_sec'
+        $propRL = Resolve-PropName $points[0] 'UsecPerReadOp','usec_per_read_op','ReadLatencyUsec'
+        $propWL = Resolve-PropName $points[0] 'UsecPerWriteOp','usec_per_write_op','WriteLatencyUsec'
 
-        $c = @{}
-        foreach ($type in @('min', 'average', 'max')) {
-            $ri = switch ($type) { 'average' { ($riVals | Measure-Object -Average).Average } 'max' { ($riVals | Measure-Object -Maximum).Maximum } 'min' { ($riVals | Measure-Object -Minimum).Minimum } }
-            $wi = switch ($type) { 'average' { ($wiVals | Measure-Object -Average).Average } 'max' { ($wiVals | Measure-Object -Maximum).Maximum } 'min' { ($wiVals | Measure-Object -Minimum).Minimum } }
-            $rb = switch ($type) { 'average' { ($rbVals | Measure-Object -Average).Average } 'max' { ($rbVals | Measure-Object -Maximum).Maximum } 'min' { ($rbVals | Measure-Object -Minimum).Minimum } }
-            $wb = switch ($type) { 'average' { ($wbVals | Measure-Object -Average).Average } 'max' { ($wbVals | Measure-Object -Maximum).Maximum } 'min' { ($wbVals | Measure-Object -Minimum).Minimum } }
-            $rl = switch ($type) { 'average' { ($rlVals | Measure-Object -Average).Average } 'max' { ($rlVals | Measure-Object -Maximum).Maximum } 'min' { ($rlVals | Measure-Object -Minimum).Minimum } }
-            $wl = switch ($type) { 'average' { ($wlVals | Measure-Object -Average).Average } 'max' { ($wlVals | Measure-Object -Maximum).Maximum } 'min' { ($wlVals | Measure-Object -Minimum).Minimum } }
-            $c[$type] = @{
-                ReadIOPS            = [Math]::Round($ri, 2)
-                WriteIOPS           = [Math]::Round($wi, 2)
-                TotalIOPS           = [Math]::Round($ri + $wi, 2)
-                ReadBandwidthMiBps  = Convert-BytesToMiB -BytesPerSec $rb
-                WriteBandwidthMiBps = Convert-BytesToMiB -BytesPerSec $wb
-                TotalBandwidthMiBps = Convert-BytesToMiB -BytesPerSec ($rb + $wb)
-                ReadLatencyMs       = [Math]::Round($rl / 1000, 3)
-                WriteLatencyMs      = [Math]::Round($wl / 1000, 3)
-                TotalLatencyMs      = [Math]::Round(($rl + $wl) / 2 / 1000, 3)
-            }
+        $n    = $points.Count
+        $INF  = [double]::MaxValue
+        $sums = @{ ri=0.0; wi=0.0; rb=0.0; wb=0.0; rl=0.0; wl=0.0; ti=0.0; tb=0.0 }
+        $mins = @{ ri=$INF; wi=$INF; rb=$INF; wb=$INF; rl=$INF; wl=$INF; ti=$INF; tb=$INF }
+        $maxs = @{ ri=0.0; wi=0.0; rb=0.0; wb=0.0; rl=0.0; wl=0.0; ti=0.0; tb=0.0 }
+
+        foreach ($pt in $points) {
+            $ri = if ($null -ne $propRI) { [double]$pt.$propRI } else { 0.0 }
+            $wi = if ($null -ne $propWI) { [double]$pt.$propWI } else { 0.0 }
+            $rb = if ($null -ne $propRB) { [double]$pt.$propRB } else { 0.0 }
+            $wb = if ($null -ne $propWB) { [double]$pt.$propWB } else { 0.0 }
+            $rl = if ($null -ne $propRL) { [double]$pt.$propRL } else { 0.0 }
+            $wl = if ($null -ne $propWL) { [double]$pt.$propWL } else { 0.0 }
+            $ti = $ri + $wi
+            $tb = $rb + $wb
+            $sums.ri += $ri; $sums.wi += $wi; $sums.rb += $rb; $sums.wb += $wb
+            $sums.rl += $rl; $sums.wl += $wl; $sums.ti += $ti; $sums.tb += $tb
+            if ($ri -lt $mins.ri) { $mins.ri = $ri }; if ($ri -gt $maxs.ri) { $maxs.ri = $ri }
+            if ($wi -lt $mins.wi) { $mins.wi = $wi }; if ($wi -gt $maxs.wi) { $maxs.wi = $wi }
+            if ($rb -lt $mins.rb) { $mins.rb = $rb }; if ($rb -gt $maxs.rb) { $maxs.rb = $rb }
+            if ($wb -lt $mins.wb) { $mins.wb = $wb }; if ($wb -gt $maxs.wb) { $maxs.wb = $wb }
+            if ($rl -lt $mins.rl) { $mins.rl = $rl }; if ($rl -gt $maxs.rl) { $maxs.rl = $rl }
+            if ($wl -lt $mins.wl) { $mins.wl = $wl }; if ($wl -gt $maxs.wl) { $maxs.wl = $wl }
+            if ($ti -lt $mins.ti) { $mins.ti = $ti }; if ($ti -gt $maxs.ti) { $maxs.ti = $ti }
+            if ($tb -lt $mins.tb) { $mins.tb = $tb }; if ($tb -gt $maxs.tb) { $maxs.tb = $tb }
         }
+
+        $avg = @{}
+        foreach ($k in $sums.Keys) { $avg[$k] = $sums[$k] / $n }
 
         $row = [PSCustomObject]@{
-            Array                       = $array
-            WindowMinutes               = $WindowMinutes
-            ResolutionMs                = $ResolutionMs
-            SampleCount                 = $points.Count
-            ReadIOPS_Min                = $c['min'].ReadIOPS
-            ReadIOPS_Avg                = $c['average'].ReadIOPS
-            ReadIOPS_Max                = $c['max'].ReadIOPS
-            WriteIOPS_Min               = $c['min'].WriteIOPS
-            WriteIOPS_Avg               = $c['average'].WriteIOPS
-            WriteIOPS_Max               = $c['max'].WriteIOPS
-            TotalIOPS_Min               = $c['min'].TotalIOPS
-            TotalIOPS_Avg               = $c['average'].TotalIOPS
-            TotalIOPS_Max               = $c['max'].TotalIOPS
-            ReadBandwidthMiBps_Min      = $c['min'].ReadBandwidthMiBps
-            ReadBandwidthMiBps_Avg      = $c['average'].ReadBandwidthMiBps
-            ReadBandwidthMiBps_Max      = $c['max'].ReadBandwidthMiBps
-            WriteBandwidthMiBps_Min     = $c['min'].WriteBandwidthMiBps
-            WriteBandwidthMiBps_Avg     = $c['average'].WriteBandwidthMiBps
-            WriteBandwidthMiBps_Max     = $c['max'].WriteBandwidthMiBps
-            TotalBandwidthMiBps_Min     = $c['min'].TotalBandwidthMiBps
-            TotalBandwidthMiBps_Avg     = $c['average'].TotalBandwidthMiBps
-            TotalBandwidthMiBps_Max     = $c['max'].TotalBandwidthMiBps
-            ReadLatencyMs_Min           = $c['min'].ReadLatencyMs
-            ReadLatencyMs_Avg           = $c['average'].ReadLatencyMs
-            ReadLatencyMs_Max           = $c['max'].ReadLatencyMs
-            WriteLatencyMs_Min          = $c['min'].WriteLatencyMs
-            WriteLatencyMs_Avg          = $c['average'].WriteLatencyMs
-            WriteLatencyMs_Max          = $c['max'].WriteLatencyMs
-            TotalLatencyMs_Min          = $c['min'].TotalLatencyMs
-            TotalLatencyMs_Avg          = $c['average'].TotalLatencyMs
-            TotalLatencyMs_Max          = $c['max'].TotalLatencyMs
-            DeltaIOPS_Min               = [Math]::Round($c['min'].ReadIOPS - $c['min'].WriteIOPS, 2)
-            DeltaIOPS_Avg               = [Math]::Round($c['average'].ReadIOPS - $c['average'].WriteIOPS, 2)
-            DeltaIOPS_Max               = [Math]::Round($c['max'].ReadIOPS - $c['max'].WriteIOPS, 2)
-            DeltaBandwidthMiBps_Min     = [Math]::Round($c['min'].ReadBandwidthMiBps - $c['min'].WriteBandwidthMiBps, 2)
-            DeltaBandwidthMiBps_Avg     = [Math]::Round($c['average'].ReadBandwidthMiBps - $c['average'].WriteBandwidthMiBps, 2)
-            DeltaBandwidthMiBps_Max     = [Math]::Round($c['max'].ReadBandwidthMiBps - $c['max'].WriteBandwidthMiBps, 2)
-            DeltaLatencyMs_Min          = [Math]::Round($c['min'].ReadLatencyMs - $c['min'].WriteLatencyMs, 3)
-            DeltaLatencyMs_Avg          = [Math]::Round($c['average'].ReadLatencyMs - $c['average'].WriteLatencyMs, 3)
-            DeltaLatencyMs_Max          = [Math]::Round($c['max'].ReadLatencyMs - $c['max'].WriteLatencyMs, 3)
+            Array                   = $array
+            WindowMinutes           = $WindowMinutes
+            ResolutionMs            = $ResolutionMs
+            SampleCount             = $n
+            ReadIOPS_Min            = [Math]::Round($mins.ri, 2)
+            ReadIOPS_Avg            = [Math]::Round($avg.ri, 2)
+            ReadIOPS_Max            = [Math]::Round($maxs.ri, 2)
+            WriteIOPS_Min           = [Math]::Round($mins.wi, 2)
+            WriteIOPS_Avg           = [Math]::Round($avg.wi, 2)
+            WriteIOPS_Max           = [Math]::Round($maxs.wi, 2)
+            TotalIOPS_Min           = [Math]::Round($mins.ti, 2)
+            TotalIOPS_Avg           = [Math]::Round($avg.ti, 2)
+            TotalIOPS_Max           = [Math]::Round($maxs.ti, 2)
+            ReadBandwidthMiBps_Min  = Convert-BytesToMiB $mins.rb
+            ReadBandwidthMiBps_Avg  = Convert-BytesToMiB $avg.rb
+            ReadBandwidthMiBps_Max  = Convert-BytesToMiB $maxs.rb
+            WriteBandwidthMiBps_Min = Convert-BytesToMiB $mins.wb
+            WriteBandwidthMiBps_Avg = Convert-BytesToMiB $avg.wb
+            WriteBandwidthMiBps_Max = Convert-BytesToMiB $maxs.wb
+            TotalBandwidthMiBps_Min = Convert-BytesToMiB $mins.tb
+            TotalBandwidthMiBps_Avg = Convert-BytesToMiB $avg.tb
+            TotalBandwidthMiBps_Max = Convert-BytesToMiB $maxs.tb
+            ReadLatencyMs_Min       = [Math]::Round($mins.rl / 1000, 3)
+            ReadLatencyMs_Avg       = [Math]::Round($avg.rl / 1000, 3)
+            ReadLatencyMs_Max       = [Math]::Round($maxs.rl / 1000, 3)
+            WriteLatencyMs_Min      = [Math]::Round($mins.wl / 1000, 3)
+            WriteLatencyMs_Avg      = [Math]::Round($avg.wl / 1000, 3)
+            WriteLatencyMs_Max      = [Math]::Round($maxs.wl / 1000, 3)
+            DeltaIOPS_Avg           = [Math]::Round($avg.ri - $avg.wi, 2)
+            DeltaBandwidthMiBps_Avg = [Math]::Round((Convert-BytesToMiB $avg.rb) - (Convert-BytesToMiB $avg.wb), 2)
+            DeltaLatencyMs_Avg      = [Math]::Round(($avg.rl - $avg.wl) / 1000, 3)
         }
-        $allRows.Add($row) | Out-Null
+        [void]$allRows.Add($row)
     }
     catch {
-        Write-Error "Erreur sur '$array': $($_.Exception.Message)"
+        Write-Warning "Erreur sur '$array': $($_.Exception.Message)"
     }
     finally {
         if ($session) { Close-PureApiSession -Session $session }
@@ -266,6 +267,11 @@ foreach ($array in $Arrays) {
 
 if ($allRows.Count -eq 0) {
     throw 'Aucune ligne à exporter.'
+}
+
+$outputDir = Split-Path -Parent $OutputCsv
+if ($outputDir -and -not (Test-Path -LiteralPath $outputDir)) {
+    throw "Le répertoire de sortie n'existe pas: $outputDir"
 }
 
 $allRows | Sort-Object Array | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
