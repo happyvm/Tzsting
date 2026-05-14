@@ -208,7 +208,6 @@ foreach ($array in $Arrays) {
                 TotalBandwidthMiBps = Convert-BytesToMiB -BytesPerSec ($rb + $wb)
                 ReadLatencyMs       = [Math]::Round($rl / 1000, 3)
                 WriteLatencyMs      = [Math]::Round($wl / 1000, 3)
-                TotalLatencyMs      = [Math]::Round(($rl + $wl) / 2 / 1000, 3)
             }
         }
 
@@ -241,9 +240,6 @@ foreach ($array in $Arrays) {
             WriteLatencyMs_Min          = $c['min'].WriteLatencyMs
             WriteLatencyMs_Avg          = $c['average'].WriteLatencyMs
             WriteLatencyMs_Max          = $c['max'].WriteLatencyMs
-            TotalLatencyMs_Min          = $c['min'].TotalLatencyMs
-            TotalLatencyMs_Avg          = $c['average'].TotalLatencyMs
-            TotalLatencyMs_Max          = $c['max'].TotalLatencyMs
             DeltaIOPS_Min               = [Math]::Round($c['min'].ReadIOPS - $c['min'].WriteIOPS, 2)
             DeltaIOPS_Avg               = [Math]::Round($c['average'].ReadIOPS - $c['average'].WriteIOPS, 2)
             DeltaIOPS_Max               = [Math]::Round($c['max'].ReadIOPS - $c['max'].WriteIOPS, 2)
