@@ -21,6 +21,8 @@
         - stores the output in C:\temp inside the VM
     - Tries up to 5 local Windows credentials
     - Exports the label of the credential that succeeded
+    - Creates a root marker file on each non-CD-ROM Windows volume from inside the guest OS
+      and removes CD-ROM drive letters without requiring a reboot (Windows 2003 through 2025)
 
     All configurable values (defaults, guest account usernames) are read from
     config-precheck.psd1 located in the same folder as the script.
@@ -761,7 +763,6 @@ try {
 
         $rowKey   = "$vmName||$lotName"
         $tagStatus = if ($tagStatusByVmLot.ContainsKey($rowKey)) { $tagStatusByVmLot[$rowKey] } else { "NotProcessed" }
-
         # ----------------------------------------------------
         # NB_last_backup
         # ----------------------------------------------------
@@ -820,6 +821,11 @@ try {
         $ipconfigPath    = $null
         $ipconfigError   = $null
 
+        $cdRomDisableStatus   = "Skipped"
+        $cdRomDriveCount      = $null
+        $volumeMarkerFileCount = $null
+        $cdRomDisableError    = $null
+
         $windowsCredentialLabelUsed     = $null
         $windowsCredentialUserUsed      = $null
         $windowsCredentialAttemptErrors = $null
@@ -833,12 +839,14 @@ try {
 
         if (-not $SkipGuestOperations) {
             if ($vmView.Runtime.PowerState -ne "poweredOn") {
-                $uptimeStatus   = "SkippedPoweredOff"
-                $ipconfigStatus = "SkippedPoweredOff"
+                $uptimeStatus        = "SkippedPoweredOff"
+                $ipconfigStatus      = "SkippedPoweredOff"
+                $cdRomDisableStatus = "SkippedPoweredOff"
             }
             elseif (-not $toolsRunning) {
-                $uptimeStatus   = "SkippedToolsNotRunning"
-                $ipconfigStatus = "SkippedToolsNotRunning"
+                $uptimeStatus        = "SkippedToolsNotRunning"
+                $ipconfigStatus      = "SkippedToolsNotRunning"
+                $cdRomDisableStatus = "SkippedToolsNotRunning"
             }
             else {
                 # ------------------------------
@@ -891,7 +899,8 @@ awk '{print $1}' /proc/uptime
                         }
                     }
 
-                    $ipconfigStatus = "NotApplicable"
+                    $ipconfigStatus      = "NotApplicable"
+                    $cdRomDisableStatus = "NotApplicable"
                 }
 
                 # ------------------------------
@@ -903,6 +912,132 @@ awk '{print $1}' /proc/uptime
 
                     if (-not $windowsGuestCredentials -or $windowsGuestCredentials.Count -eq 0) {
                         $windowsCredentialLabelUsed = "NoCredentialConfigured"
+                    }
+
+                    # Create marker files on non-CD-ROM volumes, then remove CD-ROM drive letters
+                    # from inside the guest OS without requiring a reboot.
+                    # Windows 2003/2008 use WMIC from cmd.exe; Windows 2012+ uses PowerShell/CIM.
+                    if ($null -ne $windowsYear -and $windowsYear -ge 2012) {
+                        $windowsCdRomDisableScript = @'
+$ErrorActionPreference = "Stop"
+$removed = 0
+$volumeMarkerFiles = 0
+$removeErrors = 0
+$volumeMarkerErrors = 0
+$volumes = @(Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType <> 5" -ErrorAction SilentlyContinue)
+if (-not $volumes -or $volumes.Count -eq 0) {
+    $volumes = @(Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType <> 5" -ErrorAction SilentlyContinue)
+}
+foreach ($volume in $volumes) {
+    $volumeLetter = ([string]$volume.DeviceID).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($volumeLetter)) {
+        $letter = $volumeLetter.Substring(0, 1).ToLowerInvariant()
+        $markerPath = "${volumeLetter}\$letter.txt"
+        try {
+            Set-Content -Path $markerPath -Value "Volume marker for $volumeLetter" -Encoding ASCII -Force
+            $volumeMarkerFiles++
+        }
+        catch {
+            $volumeMarkerErrors++
+        }
+    }
+}
+$cdRomDrives = @(Get-CimInstance -ClassName Win32_CDROMDrive -ErrorAction SilentlyContinue)
+if (-not $cdRomDrives -or $cdRomDrives.Count -eq 0) {
+    $cdRomDrives = @(Get-WmiObject -Class Win32_CDROMDrive -ErrorAction SilentlyContinue)
+}
+foreach ($drive in $cdRomDrives) {
+    $driveLetter = ([string]$drive.Drive).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($driveLetter)) {
+        & mountvol $driveLetter /D | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $removed++
+        }
+        else {
+            $removeErrors++
+        }
+    }
+}
+Write-Output "VOLUME_MARKER_FILES_CREATED=$volumeMarkerFiles;CDROM_DRIVE_LETTERS_REMOVED=$removed;VOLUME_MARKER_FILE_ERRORS=$volumeMarkerErrors;CDROM_DRIVE_LETTER_REMOVE_ERRORS=$removeErrors"
+'@
+                        $cdRomScriptType = "PowerShell"
+                    }
+                    else {
+                        $windowsCdRomDisableScript = @'
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+set CDROM_REMOVED=0
+set VOLUME_MARKER_FILES=0
+set VOLUME_MARKER_ERRORS=0
+set CDROM_REMOVE_ERRORS=0
+for /f "skip=1 tokens=1" %%V in ('wmic logicaldisk where "DriveType ^<^> 5" get DeviceID 2^>nul') do (
+    if not "%%V"=="" (
+        set "VOLUME_DRIVE=%%V"
+        set "VOLUME_LETTER=!VOLUME_DRIVE:~0,1!"
+        for %%L in (a b c d e f g h i j k l m n o p q r s t u v w x y z) do if /I "!VOLUME_LETTER!"=="%%L" set "VOLUME_LETTER=%%L"
+        > "!VOLUME_DRIVE!\!VOLUME_LETTER!.txt" echo Volume marker for !VOLUME_DRIVE!
+        if errorlevel 1 (
+            set /a VOLUME_MARKER_ERRORS+=1
+        ) else (
+            set /a VOLUME_MARKER_FILES+=1
+        )
+    )
+)
+for /f "skip=1 tokens=1" %%D in ('wmic cdrom get Drive 2^>nul') do (
+    if not "%%D"=="" (
+        mountvol %%D /D > nul
+        if errorlevel 1 (
+            set /a CDROM_REMOVE_ERRORS+=1
+        ) else (
+            set /a CDROM_REMOVED+=1
+        )
+    )
+)
+echo VOLUME_MARKER_FILES_CREATED=%VOLUME_MARKER_FILES%;CDROM_DRIVE_LETTERS_REMOVED=%CDROM_REMOVED%;VOLUME_MARKER_FILE_ERRORS=%VOLUME_MARKER_ERRORS%;CDROM_DRIVE_LETTER_REMOVE_ERRORS=%CDROM_REMOVE_ERRORS%
+'@
+                        $cdRomScriptType = "Bat"
+                    }
+
+                    $cdRomDisableResult = Invoke-WindowsGuestScriptWithCredentialFallback `
+                        -VMObject $vmObject `
+                        -ScriptText $windowsCdRomDisableScript `
+                        -ScriptType $cdRomScriptType `
+                        -AuthCandidates $windowsGuestCredentials `
+                        -PreferredAuthLabel $preferredWindowsCredentialLabel `
+                        -ToolsWaitSecs $ToolsWaitSecs
+
+                    if ($cdRomDisableResult.Success) {
+                        $windowsCredentialLabelUsed      = $cdRomDisableResult.CredentialLabel
+                        $windowsCredentialUserUsed       = $cdRomDisableResult.CredentialUser
+                        $preferredWindowsCredentialLabel = $cdRomDisableResult.CredentialLabel
+
+                        if ($cdRomDisableResult.Output -match "VOLUME_MARKER_FILES_CREATED=([0-9]+);CDROM_DRIVE_LETTERS_REMOVED=([0-9]+);VOLUME_MARKER_FILE_ERRORS=([0-9]+);CDROM_DRIVE_LETTER_REMOVE_ERRORS=([0-9]+)") {
+                            $volumeMarkerFileCount = [int]$Matches[1]
+                            $cdRomDriveCount       = [int]$Matches[2]
+                            $markerErrorCount      = [int]$Matches[3]
+                            $removeErrorCount      = [int]$Matches[4]
+                            if ($markerErrorCount -gt 0 -or $removeErrorCount -gt 0) {
+                                $cdRomDisableStatus = "Error"
+                                $cdRomDisableError  = "Volume marker errors: $markerErrorCount; CD-ROM drive-letter removal errors: $removeErrorCount"
+                            }
+                            elseif ($cdRomDriveCount -eq 0) {
+                                $cdRomDisableStatus = "NoCdRomDriveLetter"
+                            }
+                            else {
+                                $cdRomDisableStatus = "DriveLettersRemovedInGuest"
+                            }
+                        }
+                        else {
+                            $cdRomDisableStatus = "VerificationError"
+                            $cdRomDisableError  = "Volume marker/CD-ROM removal command did not return the expected verification marker. Output: $($cdRomDisableResult.Output)"
+                        }
+                    }
+                    else {
+                        $cdRomDisableStatus          = "Error"
+                        $cdRomDisableError           = $cdRomDisableResult.Error
+                        $windowsCredentialLabelUsed  = "CredentialError"
+                        $windowsCredentialAttemptErrors = (@($windowsCredentialAttemptErrors, $cdRomDisableResult.Error) |
+                            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " || "
                     }
 
                     # Windows 2003/2008: uptime via wmic (CIM/PowerShell not available on these versions)
@@ -1035,6 +1170,11 @@ ping -n 2 127.0.0.1 > nul
             }
         }
 
+        if ($cdRomDisableStatus -in @("Error", "VerificationError")) {
+            Write-ExecutionLog "Cannot disable CD-ROM device in guest OS for $vmName : $cdRomDisableError" -Level ERROR
+            $errorRows.Add([PSCustomObject]@{ VMName = $vmName; Lot = $lotName; Error = "Guest OS CD-ROM disable failed: $cdRomDisableError" })
+        }
+
         # ----------------------------------------------------
         # VM detail row
         # ----------------------------------------------------
@@ -1047,6 +1187,11 @@ ping -n 2 127.0.0.1 > nul
             GuestFamily                    = $guestFamily
             WindowsYearDetected            = $windowsYear
             VMwareToolsRunning             = $toolsRunning
+
+            CdRomDisableStatus             = $cdRomDisableStatus
+            CdRomDriveCount                = $cdRomDriveCount
+            VolumeMarkerFileCount          = $volumeMarkerFileCount
+            CdRomDisableError              = $cdRomDisableError
 
             vCPUConfigured                 = $vCpuConfigured
             RAMConfiguredGB                = $ramConfiguredGB
@@ -1099,6 +1244,9 @@ ping -n 2 127.0.0.1 > nul
                 VMWithUptimeOverThreshold  = @($group | Where-Object { $_.UptimeOverThreshold -eq $true }).Count
                 VMWithIpconfigOK           = @($group | Where-Object { $_.IpconfigStatus -eq "OK" }).Count
                 VMWithIpconfigError        = @($group | Where-Object { $_.IpconfigStatus -in @("Error", "FileNotCreated") }).Count
+                VMWithCdRomDisabled        = @($group | Where-Object { $_.CdRomDisableStatus -eq "DriveLettersRemovedInGuest" }).Count
+                VMWithVolumeMarkerFile     = @($group | Where-Object { $_.VolumeMarkerFileCount -gt 0 }).Count
+                VMWithCdRomDisableError    = @($group | Where-Object { $_.CdRomDisableStatus -in @("Error", "VerificationError") }).Count
                 VMWithTagError             = @($group | Where-Object { $_.TagStatus -eq "TagError" }).Count
             }
         } |
