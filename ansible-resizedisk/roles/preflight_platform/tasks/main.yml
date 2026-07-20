@@ -34,7 +34,8 @@
   delegate_to: "{{ item }}"
   ansible.windows.win_shell: |
     $ErrorActionPreference = "SilentlyContinue"
-    if (Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue) { "FOUND" } else { "NOTFOUND" }
+    $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+    if ($vm) { "FOUND|$($vm.State)" } else { "NOTFOUND" }
   loop: "{{ groups['hyperv_hypervisor'] | default([]) }}"
   register: resizedisk_hyperv_search
   changed_when: false
@@ -48,12 +49,15 @@
 
 - name: Identify the Hyper-V host reporting a match, if any
   ansible.builtin.set_fact:
-    resizedisk_hyperv_matches: "{{ resizedisk_hyperv_search.results
-                                    | default([])
-                                    | selectattr('stdout', 'defined')
-                                    | selectattr('stdout', 'search', '^FOUND')
-                                    | map(attribute='item')
-                                    | list }}"
+    resizedisk_hyperv_match_results: "{{ resizedisk_hyperv_search.results
+                                          | default([])
+                                          | selectattr('stdout', 'defined')
+                                          | selectattr('stdout', 'search', '^FOUND')
+                                          | list }}"
+
+- name: Extract the matching host name(s)
+  ansible.builtin.set_fact:
+    resizedisk_hyperv_matches: "{{ resizedisk_hyperv_match_results | map(attribute='item') | list }}"
 
 - name: Fail on ambiguous placement (same name found on both platforms)
   ansible.builtin.fail:
@@ -70,10 +74,11 @@
     resizedisk_hypervisor_type: vmware
   when: resizedisk_found_vmware
 
-- name: Set resolved hypervisor_type and hyperv_host from the Hyper-V match
+- name: Set resolved hypervisor_type, hyperv_host and power state from the Hyper-V match
   ansible.builtin.set_fact:
     resizedisk_hypervisor_type: hyperv
     resizedisk_hyperv_host: "{{ resizedisk_hyperv_matches[0] }}"
+    resizedisk_hyperv_power_state: "{{ resizedisk_hyperv_match_results[0].stdout.split('|')[1] }}"
   when: resizedisk_hyperv_matches | length > 0
 
 - name: Fail if the CI could not be confirmed as a VM on any managed hypervisor

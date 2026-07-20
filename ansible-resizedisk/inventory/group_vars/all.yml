@@ -9,6 +9,12 @@
 # (shrinking a live disk/partition is unsupported here).
 resizedisk_min_growth_gb: 1
 
+# Extra headroom required, on top of the requested growth, on the
+# datastore (VMware) / host volume (Hyper-V) backing the disk. Prevents
+# filling the underlying storage to 0 bytes free.
+resizedisk_datastore_free_margin_gb: 10
+resizedisk_host_free_margin_gb: 10
+
 # --- vCenter connection (single vCenter managing the VMware estate) --------
 vcenter_hostname: vcenter.example.local
 vcenter_username: "{{ vault_vcenter_username }}"

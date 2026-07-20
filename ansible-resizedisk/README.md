@@ -80,16 +80,32 @@ connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 
 | Condition | VMware | Hyper-V |
 |---|---|---|
+| VM éteinte / non démarrée | `hw_power_status != 'poweredOn'` | `$vm.State != 'Running'` |
+| VM = template | `hw_is_template = true` | — |
+| Consolidation de snapshot en attente | `guest_consolidation_needed = true` | — |
 | Snapshots / checkpoints présents | `vmware_guest_snapshot_info` → `guest_snapshots.snapshots` non vide | `Get-VMSnapshot` → count > 0 |
 | RDM (physique ou virtuel) / virtual FC (NPIV) | `backing_type != 'FlatVer2'` (RDM = `RawDiskMappingVer1`, y compris RDM sur FC virtuel) | — (voir passthrough) |
 | Disque physique en passthrough | — | `VMHardDiskDrive.Path` vide (`DiskNumber` utilisé à la place) |
 | VHDX partagé (cluster invité) | — | `SupportPersistentReservations = true` |
 | Disque de différenciation | — | `Get-VHD.VhdType -eq 'Differencing'` |
+| Réplication active (DR) | — | `Get-VMReplication` → `State != 'Disabled'` |
+| Espace libre insuffisant sur le stockage sous-jacent | `freeSpace` du datastore < croissance demandée + `resizedisk_datastore_free_margin_gb` | `PSDrive.Free` du volume hôte < croissance demandée + `resizedisk_host_free_margin_gb` |
 
 Un RDM (physique, virtuel, ou présenté via un adaptateur Fibre Channel
 virtuel/NPIV) n'est de toute façon pas agrandissable via l'API vCenter :
 il faut agrandir le LUN côté baie de stockage puis rescanner. Ces
 disques sont donc simplement exclus, pas traités différemment.
+
+La VM doit être allumée : au-delà du disque lui-même, l'étape 5
+(extension du système de fichiers) a besoin d'un OS démarré pour être
+jointe par WinRM, VMware Tools ou PowerShell Direct - une VM éteinte est
+donc bloquée dès le preflight plutôt que de laisser échouer la sonde de
+connectivité avec un message moins parlant.
+
+> **Note** : les noms de champs `hw_power_status`, `hw_is_template` et
+> `guest_consolidation_needed` proviennent de `community.vmware.vmware_guest_info`
+> (déjà appelé par `preflight_platform`, donc sans coût supplémentaire) -
+> à valider contre la version de la collection réellement installée.
 
 ## Arborescence
 
@@ -182,6 +198,8 @@ repli WinRM indisponible).
 | `disk_controller_number` / `disk_unit_number` | `0` / `0` | disque SCSI VMware à agrandir |
 | `disk_number_hyperv` | `0` | index du `VMHardDiskDrive` Hyper-V |
 | `resizedisk_min_growth_gb` | `1` | garde-fou anti-shrink/no-op |
+| `resizedisk_datastore_free_margin_gb` | `10` | marge de sécurité exigée sur le datastore VMware, en plus de la croissance demandée |
+| `resizedisk_host_free_margin_gb` | `10` | marge de sécurité exigée sur le volume hôte Hyper-V, en plus de la croissance demandée |
 
 ### Par environnement (`inventory/group_vars/all.yml`)
 
