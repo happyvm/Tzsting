@@ -225,7 +225,30 @@
     datacenter: "{{ vcenter_datacenter }}"
     validate_certs: "{{ vmware_validate_certs }}"
     name: "{{ vmware_target_disk.backing_datastore }}"
+    gather_vmfs_mount_info: true
   register: vmware_datastore_info
+
+# vSphere has capped the max size of a single VMDK at 62TB since ESXi 5.5,
+# uniformly across VMFS5/6, VVols, NFS and vSAN. The old "2TB VMFS limit"
+# people remember only applies to VMFS3 (deprecated/unsupported for years,
+# but still detectable via vmfs_version, so still checked defensively) and
+# to RDM in physical compatibility mode (already excluded earlier - RDM
+# disks never reach this check at all).
+- name: Refuse to resize beyond the datastore's max supported VMDK size
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
+  vars:
+    vmware_is_vmfs3: "{{ vmware_datastore_info.datastores[0].type == 'VMFS'
+                          and (vmware_datastore_info.datastores[0].vmfs_version | default('0'))[0] == '3' }}"
+    vmware_max_vmdk_gb: "{{ 2040 if vmware_is_vmfs3 else 63488 }}"
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) <= (vmware_max_vmdk_gb | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB exceeds the maximum VMDK size
+      supported on datastore '{{ vmware_target_disk.backing_datastore }}'
+      ({{ vmware_max_vmdk_gb }}GB{{ ' - VMFS3, upgrade the datastore' if vmware_is_vmfs3 else '' }}).
 
 - name: Refuse to resize if the datastore is inaccessible
   when:
@@ -293,18 +316,32 @@
     $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
     $replicationState = (Get-VMReplication -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue).State
     $generation = (Get-VM -Name '{{ vm_name }}').Generation
+
+    # Best-effort: only meaningful if the FailoverClusters module is
+    # present on this host (it's a separate Windows feature, not always
+    # installed even on Hyper-V hosts that do belong to a cluster). A
+    # cluster-made-highly-available VM shows up as a cluster group with
+    # the same name as the VM.
+    $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+    $isClustered = $false
+    if ($clusterCheckAvailable) {
+        $isClustered = [bool](Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue)
+    }
+
     [PSCustomObject]@{
-        Path                = $drive.Path
-        ControllerType      = $drive.ControllerType
-        Generation          = $generation
-        IsPassthrough       = $isPassthrough
-        SharedVhdx          = [bool]$drive.SupportPersistentReservations
-        CheckpointCount     = $checkpointCount
-        VhdType             = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
-        VhdFormat           = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
-        SizeBytes           = if ($vhd) { $vhd.Size } else { $null }
-        ReplicationState    = if ($replicationState) { $replicationState.ToString() } else { $null }
-        HostVolumeFreeBytes = $hostVolumeFreeBytes
+        Path                  = $drive.Path
+        ControllerType        = $drive.ControllerType
+        Generation            = $generation
+        IsPassthrough         = $isPassthrough
+        SharedVhdx            = [bool]$drive.SupportPersistentReservations
+        CheckpointCount       = $checkpointCount
+        VhdType               = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
+        VhdFormat             = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
+        SizeBytes             = if ($vhd) { $vhd.Size } else { $null }
+        ReplicationState      = if ($replicationState) { $replicationState.ToString() } else { $null }
+        HostVolumeFreeBytes   = $hostVolumeFreeBytes
+        IsClustered           = $isClustered
+        ClusterCheckAvailable = $clusterCheckAvailable
     } | ConvertTo-Json -Compress
   changed_when: false
   register: hyperv_disk_lookup
@@ -386,6 +423,28 @@
       (SupportPersistentReservations), used for guest clustering. Resize
       requires coordinating all cluster nodes / removing sharing first -
       refusing to proceed automatically.
+
+# Best-effort: only meaningful when the FailoverClusters module is present
+# on resizedisk_hyperv_host (ClusterCheckAvailable=false otherwise, and we
+# simply can't tell - documented in the README rather than assumed safe).
+# A highly-available VM can fail over to another cluster node at any time,
+# including mid-resize, and Resize-VHD here targets one specific host -
+# blocking rather than warning, consistent with how shared VHDX/Replica
+# are handled above.
+- name: Refuse to resize a clustered (highly-available) VM
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
+    - hyperv_vhd_info.ClusterCheckAvailable
+  ansible.builtin.assert:
+    that:
+      - not hyperv_vhd_info.IsClustered
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster on
+      {{ resizedisk_hyperv_host }}. It can fail over to another node at
+      any time, including mid-resize - coordinate with the cluster
+      (e.g. temporarily disable failover, confirm current owner node)
+      before resizing, then run this outside of that window.
 
 - name: Refuse to resize while checkpoints exist
   when:

@@ -163,10 +163,21 @@ connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 | VHDX partagé (cluster invité) | — | `SupportPersistentReservations = true` |
 | Disque de différenciation | — | `Get-VHD.VhdType -eq 'Differencing'` |
 | Réplication active (DR) | — | `Get-VMReplication` → `State != 'Disabled'` |
+| VM en cluster (haute disponibilité) | — | `Get-ClusterGroup -Name <vm>` - **best-effort**, seulement si le module `FailoverClusters` est présent sur l'hôte (sinon non vérifiable, voir note) |
 | Datastore/volume inaccessible | `accessible = false` sur le datastore | — |
+| Taille au-delà du max VMDK supporté par le datastore | 2040GB si VMFS3, sinon 62TB (VMFS5/6, VVol, NFS, vSAN - plafond vSphere depuis ESXi 5.5) | — |
 | Espace libre insuffisant sur le stockage sous-jacent | `freeSpace` du datastore < croissance demandée + `resizedisk_datastore_free_margin_gb` | `PSDrive.Free` du volume hôte < croissance demandée + `resizedisk_host_free_margin_gb` |
 | Taille demandée au-delà du plafond de politique | `disk_new_size_gb > resizedisk_max_size_gb` (les deux plateformes) | idem |
 | Partition qui ne gagne aucun espace malgré le disque agrandi | vérifié après coup dans `resize_windows_filesystem` (voir note) | idem |
+
+La détection de VM clusterée Hyper-V est **best-effort** : elle dépend de
+la présence du module PowerShell `FailoverClusters` sur
+`resizedisk_hyperv_host`, une fonctionnalité Windows installée séparément
+et pas systématiquement présente même sur un hôte qui appartient
+réellement à un cluster. Si le module est absent, le check est
+silencieusement sauté (`ClusterCheckAvailable = false`) plutôt que de
+bloquer ou de faussement rassurer - à garder en tête si vos hôtes Hyper-V
+en cluster n'ont pas cette fonctionnalité installée.
 
 **Disque multi-writer (VMware) - non implémenté.** Ce flag (utilisé pour
 Oracle RAC ou d'autres clusters partageant un même VMDK) n'est exposé en
