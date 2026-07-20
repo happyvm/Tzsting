@@ -1,0 +1,4 @@
+---
+# Minimum growth (bytes) below which we consider the partition already
+# at its maximum size and skip the resize (avoids spurious "changed").
+windows_resize_threshold_bytes: 1048576

@@ -1,0 +1,59 @@
+---
+# Grows a VM's virtual hard disk (VHD/VHDX) on Hyper-V.
+# Runs delegated to the Hyper-V host itself (WinRM): Hyper-V has no
+# remote API comparable to vCenter's, disk management is local PowerShell.
+#
+# Note: online resize of an attached VHDX requires the disk to be on a
+# SCSI controller (Generation 2 VM, or Generation 1 with SCSI-attached
+# data disk). IDE-attached disks must be resized with the VM powered off.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - hyperv_host is defined
+      - vm_name is defined
+      - disk_new_size_gb is defined
+    fail_msg: >-
+      hyperv_host, vm_name and disk_new_size_gb must all be set for resize_disk_hyperv.
+
+- name: Locate the VHD/VHDX backing the target disk and its current size
+  delegate_to: "{{ hyperv_host }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $drive = Get-VM -Name '{{ vm_name }}' | Get-VMHardDiskDrive | Select-Object -Index {{ disk_number_hyperv }}
+    if (-not $drive) {
+        throw "No VMHardDiskDrive found at index {{ disk_number_hyperv }} for VM '{{ vm_name }}'"
+    }
+    $vhd = Get-VHD -Path $drive.Path
+    [PSCustomObject]@{
+        Path         = $drive.Path
+        ControllerType = $drive.ControllerType
+        SizeBytes    = $vhd.Size
+    } | ConvertTo-Json -Compress
+  changed_when: false
+  register: hyperv_disk_lookup
+
+- name: Parse current disk info
+  ansible.builtin.set_fact:
+    hyperv_vhd_info: "{{ hyperv_disk_lookup.stdout | from_json }}"
+
+- name: Refuse to shrink or no-op the disk
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) >= ((hyperv_vhd_info.SizeBytes | int / 1073741824) | round(0, 'ceil') | int) + (resizedisk_min_growth_gb | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB is not at least
+      {{ resizedisk_min_growth_gb }}GB larger than the current disk size
+      ({{ (hyperv_vhd_info.SizeBytes | int / 1073741824) | round(2) }}GB). Refusing to shrink/no-op.
+
+- name: Grow the virtual hard disk to the requested size
+  delegate_to: "{{ hyperv_host }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    Resize-VHD -Path '{{ hyperv_vhd_info.Path }}' -SizeBytes {{ (disk_new_size_gb | int) * 1073741824 }}
+  register: hyperv_resize_result
+
+- name: Report new disk size
+  ansible.builtin.debug:
+    msg: >-
+      Disk {{ hyperv_vhd_info.Path }} on {{ vm_name }} resized to {{ disk_new_size_gb }}GB.

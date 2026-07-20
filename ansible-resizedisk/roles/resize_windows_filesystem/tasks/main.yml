@@ -1,0 +1,66 @@
+---
+# Extends the Windows partition/filesystem on windows_drive_letter to
+# fill whatever free space now follows it on the disk. Hypervisor-agnostic:
+# by the time this role runs, the underlying virtual disk has already been
+# grown by resize_disk_vmware or resize_disk_hyperv. Runs on the guest.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - windows_drive_letter is defined
+    fail_msg: "windows_drive_letter must be set for resize_windows_filesystem."
+
+- name: Rescan storage so Windows sees the new virtual disk size
+  ansible.windows.win_shell: Update-HostStorageCache
+  changed_when: false
+
+- name: Bring the disk online if it was left offline
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $disk = Get-Partition -DriveLetter '{{ windows_drive_letter }}' | Get-Disk
+    if ($disk.IsOffline) {
+        Set-Disk -Number $disk.Number -IsOffline $false
+        "changed"
+    } else {
+        "ok"
+    }
+  register: windows_disk_online
+  changed_when: "'changed' in windows_disk_online.stdout"
+
+- name: Read current partition size and maximum supported size
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $partition = Get-Partition -DriveLetter '{{ windows_drive_letter }}'
+    $supported = Get-PartitionSupportedSize -DriveLetter '{{ windows_drive_letter }}'
+    [PSCustomObject]@{
+        CurrentSize = $partition.Size
+        MaxSize     = $supported.SizeMax
+    } | ConvertTo-Json -Compress
+  changed_when: false
+  register: windows_partition_lookup
+
+- name: Parse partition size info
+  ansible.builtin.set_fact:
+    windows_partition_info: "{{ windows_partition_lookup.stdout | from_json }}"
+
+- name: Extend the partition to fill the disk
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    Resize-Partition -DriveLetter '{{ windows_drive_letter }}' -Size {{ windows_partition_info.MaxSize }}
+  when: >-
+    (windows_partition_info.MaxSize | int) - (windows_partition_info.CurrentSize | int)
+    > windows_resize_threshold_bytes
+  register: windows_resize_result
+
+- name: Report final drive size
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    Get-Volume -DriveLetter '{{ windows_drive_letter }}' |
+      Select-Object DriveLetter, FileSystem, @{N='SizeGB';E={[math]::Round($_.Size/1GB,2)}}, @{N='FreeGB';E={[math]::Round($_.SizeRemaining/1GB,2)}} |
+      ConvertTo-Json -Compress
+  changed_when: false
+  register: windows_volume_info
+
+- name: Show resulting volume size
+  ansible.builtin.debug:
+    msg: "{{ windows_volume_info.stdout | from_json }}"

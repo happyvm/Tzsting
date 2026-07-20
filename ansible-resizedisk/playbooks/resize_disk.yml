@@ -1,0 +1,40 @@
+---
+# Grows a VM's virtual disk (VMware or Hyper-V, selected per-host via
+# hypervisor_type) and then extends the Windows partition/filesystem
+# hosted on it.
+#
+# Usage:
+#   ansible-playbook playbooks/resize_disk.yml -l winsrv01
+#   ansible-playbook playbooks/resize_disk.yml -l winsrv01 -e disk_new_size_gb=200
+#
+# All required variables (vm_name, disk_new_size_gb, windows_drive_letter,
+# hypervisor_type, plus the vmware_*/hyperv_* connection details) are
+# expected to be defined per-host in inventory - see
+# inventory/hosts.yml.example.
+
+- name: Grow virtual disk at the hypervisor layer
+  hosts: guest_windows
+  gather_facts: false
+  tasks:
+    - name: Resize disk on VMware
+      ansible.builtin.include_role:
+        name: resize_disk_vmware
+      when: hypervisor_type == 'vmware'
+
+    - name: Resize disk on Hyper-V
+      ansible.builtin.include_role:
+        name: resize_disk_hyperv
+      when: hypervisor_type == 'hyperv'
+
+    - name: Fail on unknown hypervisor_type
+      ansible.builtin.fail:
+        msg: "hypervisor_type must be 'vmware' or 'hyperv', got: {{ hypervisor_type | default('undefined') }}"
+      when: hypervisor_type not in ['vmware', 'hyperv']
+
+- name: Extend the Windows filesystem to use the new disk space
+  hosts: guest_windows
+  gather_facts: false
+  tasks:
+    - name: Resize Windows partition/filesystem
+      ansible.builtin.include_role:
+        name: resize_windows_filesystem
