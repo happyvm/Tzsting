@@ -26,9 +26,17 @@ tout le reste par délégation, en 6 étapes :
      (pas une VM gérée / mal orthographié) ou sur les **deux** à la fois
      (ambiguïté) ;
    - expose `resizedisk_hypervisor_type` (`vmware`/`hyperv`) et, pour
-     Hyper-V, `resizedisk_hyperv_host` (l'hôte qui héberge la VM).
+     Hyper-V, `resizedisk_hyperv_host` (l'hôte qui héberge la VM,
+     **toujours** issu de cette recherche directe sur l'inventaire, jamais
+     du nom d'hôte renvoyé par SCVMM - voir juste en dessous).
    - Peut être court-circuité en passant `hypervisor_type` en extra-var
      si le workflow ServiceNow connaît déjà la plateforme (ex. classe CMDB).
+   - Pour une VM Hyper-V, détecte en plus si elle est **gérée par SCVMM**
+     (`resizedisk_managed_by_scvmm`) : si `scvmm_server` est configuré,
+     interroge SCVMM (`Get-SCVirtualMachine -Name`) ; sinon, ou pour
+     court-circuiter la détection, passer `managed_by_scvmm` en extra-var.
+     Ce booléen ne détermine que *comment* l'étape 5 agrandit le disque -
+     voir plus bas.
 
 2. **`resizedisk_lock`** (`resizedisk_lock_action: acquire`) — pose un
    verrou par VM avant toute autre action, pour qu'une double soumission
@@ -82,10 +90,24 @@ tout le reste par délégation, en 6 étapes :
    payer le coût d'un timeout WinRM/SSH + repli pour une requête de toute
    façon vouée à l'échec côté disque.
 
-5. **Agrandissement du disque côté hyperviseur** (`resize_disk_vmware` ou
-   `resize_disk_hyperv` selon `resizedisk_hypervisor_type`) — API vCenter
-   pour VMware, `Resize-VHD` délégué à l'hôte Hyper-V. Ne fait plus que
-   l'action elle-même, les contrôles ayant déjà eu lieu à l'étape 3.
+5. **Agrandissement du disque côté hyperviseur** — trois rôles possibles
+   selon `resizedisk_hypervisor_type`/`resizedisk_managed_by_scvmm` :
+   - **`resize_disk_vmware`** — API vCenter (`vmware_guest_disk`).
+   - **`resize_disk_hyperv`** — `Resize-VHD` délégué directement à
+     `resizedisk_hyperv_host`.
+   - **`resize_disk_scvmm`** — VM Hyper-V gérée par SCVMM :
+     `Expand-SCVirtualDiskDrive`, délégué à `scvmm_server`, au lieu de
+     `Resize-VHD` en direct. Nécessaire car un `Resize-VHD` hors bande
+     laisse la base SCVMM afficher l'ancienne taille jusqu'à un rafraîchissement
+     manuel. Cible **exactement** le disque déjà validé par l'étape 3 (les
+     propriétés `ControllerNumber`/`ControllerLocation` captées là-bas sont
+     réutilisées comme `Bus`/`Lun` SCVMM), pas une nouvelle sélection
+     indépendante qui risquerait de désigner un autre disque.
+
+   Tous ne font que l'action elle-même, les contrôles ayant déjà eu lieu à
+   l'étape 3 (identiques que la VM soit gérée en direct ou via SCVMM - ça
+   ne change que l'API utilisée pour l'action finale, pas les vérifications
+   de sécurité, qui interrogent toujours directement l'hôte Hyper-V réel).
    Strictement identique pour Windows et Linux : au niveau hyperviseur, le
    disque n'a pas d'OS. Sauté (sans erreur) si `resizedisk_disk_grow_needed`
    est faux - voir "Reprise après échec partiel" ci-dessous.
@@ -163,21 +185,59 @@ connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 | VHDX partagé (cluster invité) | — | `SupportPersistentReservations = true` |
 | Disque de différenciation | — | `Get-VHD.VhdType -eq 'Differencing'` |
 | Réplication active (DR) | — | `Get-VMReplication` → `State != 'Disabled'` |
-| VM en cluster (haute disponibilité) | — | `Get-ClusterGroup -Name <vm>` - **best-effort**, seulement si le module `FailoverClusters` est présent sur l'hôte (sinon non vérifiable, voir note) |
+| VM en cluster (haute disponibilité), nœud propriétaire ≠ hôte détecté | — | `Get-ClusterGroup -Name <vm>` → `OwnerNode` ≠ `resizedisk_hyperv_host` - **échec net, pas de contournement possible** (signal de failover en cours) |
+| VM en cluster (haute disponibilité), sans override | — | idem, sans `-e resizedisk_allow_clustered_vm=true` |
+| Stockage S2D/pool dégradé | — | `Get-StoragePool`/`Get-PhysicalDisk` → `HealthStatus != 'Healthy'` sur un pool non-primordial ou un disque physique |
 | Datastore/volume inaccessible | `accessible = false` sur le datastore | — |
 | Taille au-delà du max VMDK supporté par le datastore | 2040GB si VMFS3, sinon 62TB (VMFS5/6, VVol, NFS, vSAN - plafond vSphere depuis ESXi 5.5) | — |
 | Espace libre insuffisant sur le stockage sous-jacent | `freeSpace` du datastore < croissance demandée + `resizedisk_datastore_free_margin_gb` | `PSDrive.Free` du volume hôte < croissance demandée + `resizedisk_host_free_margin_gb` |
 | Taille demandée au-delà du plafond de politique | `disk_new_size_gb > resizedisk_max_size_gb` (les deux plateformes) | idem |
 | Partition qui ne gagne aucun espace malgré le disque agrandi | vérifié après coup dans `resize_windows_filesystem` (voir note) | idem |
 
-La détection de VM clusterée Hyper-V est **best-effort** : elle dépend de
-la présence du module PowerShell `FailoverClusters` sur
+**Cluster CSV Hyper-V, en détail.** Deux garde-fous distincts, l'un
+contournable et l'autre non :
+- **Nœud propriétaire différent de l'hôte détecté** (`ClusterOwnerNode`
+  vs `resizedisk_hyperv_host`) → la VM vient probablement de basculer,
+  nos informations sont potentiellement obsolètes. **Aucun override ne
+  passe outre** ce cas précis - c'est un signal d'instabilité en direct,
+  pas une question de coordination.
+- **VM clusterée, nœud propriétaire cohérent** → bloqué par défaut
+  (elle peut basculer *pendant* le resize), mais contournable avec
+  `-e resizedisk_allow_clustered_vm=true` une fois la coordination faite
+  manuellement (pas de failover en attente, fenêtre de maintenance...).
+
+La détection cluster elle-même est **best-effort** : elle dépend de la
+présence du module PowerShell `FailoverClusters` sur
 `resizedisk_hyperv_host`, une fonctionnalité Windows installée séparément
 et pas systématiquement présente même sur un hôte qui appartient
 réellement à un cluster. Si le module est absent, le check est
 silencieusement sauté (`ClusterCheckAvailable = false`) plutôt que de
 bloquer ou de faussement rassurer - à garder en tête si vos hôtes Hyper-V
 en cluster n'ont pas cette fonctionnalité installée.
+
+**S2D/hyperconvergence.** Le check de santé du stockage (pools/disques
+physiques) est volontairement générique - il ne remonte pas jusqu'au pool
+*spécifique* qui porte le CSV visé (chaîne CSV → Cluster Virtual Disk →
+Storage Pool trop fragile à corréler de façon fiable), il vérifie l'état
+de **tout** le stockage poolé sur l'hôte. Sur un hôte sans stockage poolé
+(SAN/DAS classique), les listes remontent vides et le check ne fait rien
+- aucune détection "est-ce du S2D" séparée n'est nécessaire.
+
+**Intégration SCVMM, en détail.** Quand `resizedisk_managed_by_scvmm` est
+vrai, seule l'action finale de resize change (`resize_disk_scvmm` au lieu
+de `resize_disk_hyperv`) - *toutes* les vérifications ci-dessus
+(snapshots, cluster, S2D, IDE/Generation 1, réplication...) continuent
+d'interroger `resizedisk_hyperv_host` en direct via PowerShell Hyper-V,
+pas via SCVMM. Deux raisons à ça : SCVMM ne change rien à ces
+contraintes techniques sous-jacentes (un VHDX avec des checkpoints reste
+tout aussi problématique qu'il soit géré par SCVMM ou non), et ça évite
+de dupliquer toute la logique de détection pour un deuxième système de
+requêtage. `resize_disk_scvmm` cible le disque via `Bus`/`Lun` (adressage
+SCVMM), mappés directement depuis les `ControllerNumber`/`ControllerLocation`
+Hyper-V captés par `preflight_disk_constraints` sur ce même disque - pas
+une nouvelle sélection indépendante par `disk_controller_number`/`disk_unit_number`,
+qui utiliseraient un adressage différent (index ordinal côté Hyper-V
+direct) et pourraient désigner un autre disque en cas de désaccord.
 
 **Disque multi-writer (VMware) - non implémenté.** Ce flag (utilisé pour
 Oracle RAC ou d'autres clusters partageant un même VMDK) n'est exposé en
@@ -280,6 +340,7 @@ ansible-resizedisk/
     ├── preflight_connectivity/          # WinRM/SSH, sinon VMware Tools / PowerShell Direct
     ├── resize_disk_vmware/              # resize via API vCenter
     ├── resize_disk_hyperv/              # resize via Resize-VHD sur l'hôte Hyper-V
+    ├── resize_disk_scvmm/               # resize via Expand-SCVirtualDiskDrive (VM gérée par SCVMM)
     ├── run_guest_command/               # exécution PowerShell/bash multi-canal dans l'invité
     ├── resize_windows_filesystem/       # extension partition NTFS dans l'invité Windows
     └── resize_linux_filesystem/         # growpart + resize2fs/xfs_growfs/btrfs (+ LVM) dans l'invité Linux
@@ -357,6 +418,16 @@ projet pendant son développement - et a permis de trouver un vrai bug
 - **Hyper-V, resize à chaud** : le disque doit être rattaché à un
   contrôleur SCSI (VM Generation 2, ou disque de données SCSI sur une
   Generation 1). Un disque IDE nécessite l'arrêt de la VM.
+- **Hyper-V en cluster (CSV)** : le module PowerShell `FailoverClusters`
+  doit être installé sur `resizedisk_hyperv_host` pour que la détection
+  de VM clusterée fonctionne (sinon silencieusement non vérifiable, voir
+  plus haut). Compte de service avec droits de lecture sur le cluster.
+- **SCVMM** (si `scvmm_server` est configuré) : le module PowerShell
+  `virtualmachinemanager` doit être installé sur `scvmm_server` (présent
+  par défaut sur un serveur de gestion SCVMM), et le compte de service
+  doit avoir les droits SCVMM nécessaires pour `Get-SCVirtualMachine`/
+  `Expand-SCVirtualDiskDrive`. Sans `scvmm_server` configuré, ce projet
+  se comporte exactement comme avant (resize direct via `Resize-VHD`).
 
 ## Utilisation
 
@@ -435,12 +506,15 @@ utilisé en cas de repli WinRM/SSH indisponible).
 | `resizedisk_host_free_margin_gb` | `10` | marge de sécurité exigée sur le volume hôte Hyper-V, en plus de la croissance demandée |
 | `resizedisk_max_size_gb` | `2000` | plafond de politique anti-saisie-erronée ; à relever explicitement pour un disque légitimement plus gros |
 | `resizedisk_lock_timeout_seconds` | `7200` | délai avant qu'un verrou par VM soit considéré abandonné (run planté) et puisse être cassé par un nouveau run |
+| `managed_by_scvmm` | auto-détecté si `scvmm_server` configuré | `true`/`false`, pour sauter la détection SCVMM |
+| `resizedisk_allow_clustered_vm` | `false` | `true` pour agrandir une VM Hyper-V clusterée une fois la coordination faite manuellement (sans effet si le nœud propriétaire a changé - voir plus haut) |
 
 ### Par environnement (`inventory/group_vars/all.yml`)
 
 | Variable | Description |
 |---|---|
 | `vcenter_hostname` / `vcenter_username` / `vcenter_password` / `vcenter_datacenter` | connexion API vCenter (une seule, pour tout le parc VMware) |
+| `scvmm_server` / `scvmm_username` / `scvmm_password` | serveur SCVMM optionnel (`inventory_hostname` du groupe `scvmm_management`) ; laisser `scvmm_server` vide désactive toute détection SCVMM |
 | `disk_controller_type` / `disk_controller_number` / `disk_unit_number` / `disk_number_hyperv` | défauts du disque ciblé (voir tableau "Optionnelles" ci-dessus) |
 | groupe `hyperv_hypervisor` (inventaire) | parc des hôtes Hyper-V à interroger pour localiser une VM |
 

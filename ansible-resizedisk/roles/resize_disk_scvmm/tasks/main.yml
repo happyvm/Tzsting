@@ -1,0 +1,62 @@
+---
+# Grows a VM's virtual disk via SCVMM (Expand-SCVirtualDiskDrive) instead
+# of direct Resize-VHD on the Hyper-V host - used instead of
+# resize_disk_hyperv whenever resizedisk_managed_by_scvmm is true, so
+# SCVMM's database doesn't drift out of sync with the actual disk size
+# (a direct out-of-band Resize-VHD leaves SCVMM showing the old size
+# until a "Refresh Virtual Machine" job happens to run).
+#
+# Assumes preflight_disk_constraints already ran against the underlying
+# Hyper-V host directly (hyperv_vhd_info, all the same safety checks:
+# snapshots, cluster placement, S2D health...) - SCVMM management doesn't
+# change any of that, it's a different API for the final resize action
+# only. Targets the exact same disk preflight validated by matching
+# Bus/Lun (SCVMM's addressing) against the ControllerNumber/
+# ControllerLocation captured there (Hyper-V's addressing for the same
+# concept) - not re-deriving it from disk_controller_number/disk_unit_number,
+# which would risk picking a different disk if the two ever disagree.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+      - vm_name is defined
+      - disk_new_size_gb is defined
+      - hyperv_vhd_info is defined
+      - resizedisk_disk_grow_needed is defined
+    fail_msg: >-
+      scvmm_server must be configured, vm_name/disk_new_size_gb must be
+      set, and hyperv_vhd_info/resizedisk_disk_grow_needed must have been
+      resolved by preflight_disk_constraints.
+
+- name: Grow the virtual disk via SCVMM
+  when: resizedisk_disk_grow_needed
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ vm_name }}' not found in SCVMM"
+      }
+
+      $drive = Get-SCVirtualDiskDrive -VM $vm | Where-Object {
+          $_.Bus -eq {{ hyperv_vhd_info.ControllerNumber }} -and $_.Lun -eq {{ hyperv_vhd_info.ControllerLocation }}
+      }
+      if (-not $drive) {
+          throw "No virtual disk drive found at Bus {{ hyperv_vhd_info.ControllerNumber }}, Lun {{ hyperv_vhd_info.ControllerLocation }} for VM '{{ vm_name }}' in SCVMM"
+      }
+
+      Expand-SCVirtualDiskDrive -VirtualDiskDrive $drive -VirtualHardDiskSizeGB {{ disk_new_size_gb }} | Out-Null
+  register: scvmm_resize_result
+
+- name: Report new disk size
+  when: resizedisk_disk_grow_needed
+  ansible.builtin.debug:
+    msg: >-
+      Disk (Bus {{ hyperv_vhd_info.ControllerNumber }}, Lun {{ hyperv_vhd_info.ControllerLocation }})
+      on {{ vm_name }} resized to {{ disk_new_size_gb }}GB via SCVMM.

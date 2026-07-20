@@ -33,11 +33,19 @@
 #                              python 2.6 cannot run Ansible modules at all)
 #   disk_controller_number / disk_unit_number   VMware SCSI disk to grow (default 0/0)
 #   disk_number_hyperv                          Hyper-V VMHardDiskDrive index (default 0)
+#   managed_by_scvmm     true|false - skip SCVMM auto-detection if already known;
+#                        when true (or auto-detected via scvmm_server), the disk
+#                        is grown through Expand-SCVirtualDiskDrive instead of
+#                        Resize-VHD, so SCVMM's database stays in sync
+#   resizedisk_allow_clustered_vm   true to proceed on a highly-available Hyper-V
+#                                   VM once failover has been coordinated manually
+#                                   (default: refuse - it can fail over mid-resize)
 #
-# vCenter connection (vcenter_hostname/username/password/datacenter) and
-# the Hyper-V host fleet (inventory group hyperv_hypervisor) are expected
-# to be defined once for the whole environment - see group_vars/all.yml
-# and inventory/hosts.yml.example.
+# vCenter connection (vcenter_hostname/username/password/datacenter), the
+# Hyper-V host fleet (inventory group hyperv_hypervisor), and optionally
+# an SCVMM management server (scvmm_server) are expected to be defined
+# once for the whole environment - see group_vars/all.yml and
+# inventory/hosts.yml.example.
 #
 # Usage:
 #   ansible-playbook playbooks/resize_disk.yml \
@@ -82,10 +90,19 @@
             name: resize_disk_vmware
           when: resizedisk_hypervisor_type == 'vmware'
 
-        - name: Grow the virtual disk on Hyper-V
+        - name: Grow the virtual disk on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: resize_disk_scvmm
+          when:
+            - resizedisk_hypervisor_type == 'hyperv'
+            - resizedisk_managed_by_scvmm
+
+        - name: Grow the virtual disk on Hyper-V directly
           ansible.builtin.include_role:
             name: resize_disk_hyperv
-          when: resizedisk_hypervisor_type == 'hyperv'
+          when:
+            - resizedisk_hypervisor_type == 'hyperv'
+            - not resizedisk_managed_by_scvmm
 
         - name: Extend the Windows filesystem to use the new disk space
           ansible.builtin.include_role:
@@ -107,6 +124,7 @@
               resizedisk_summary:
                 vm_name: "{{ vm_name }}"
                 hypervisor_type: "{{ resizedisk_hypervisor_type }}"
+                managed_by_scvmm: "{{ resizedisk_managed_by_scvmm }}"
                 guest_os: "{{ resizedisk_guest_os }}"
                 exec_method: "{{ resizedisk_exec_method }}"
                 target: "{{ windows_drive_letter if resizedisk_guest_os == 'windows' else linux_target }}"

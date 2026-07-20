@@ -310,9 +310,11 @@
       $isPassthrough = [string]::IsNullOrEmpty($drive.Path)
       $vhd = $null
       $hostVolumeFreeBytes = $null
+      $isOnCsv = $false
       if (-not $isPassthrough) {
           $vhd = Get-VHD -Path $drive.Path
           $hostVolumeFreeBytes = (Get-Item $drive.Path).PSDrive.Free
+          $isOnCsv = $drive.Path -match '^[A-Za-z]:\\ClusterStorage\\'
       }
       $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
       $replicationState = (Get-VMReplication -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue).State
@@ -322,27 +324,53 @@
       # present on this host (it's a separate Windows feature, not always
       # installed even on Hyper-V hosts that do belong to a cluster). A
       # cluster-made-highly-available VM shows up as a cluster group with
-      # the same name as the VM.
+      # the same name as the VM; its OwnerNode is whichever node currently
+      # runs it - if that's not the host we're about to delegate to, the
+      # VM likely just failed over and our other facts here may be stale.
       $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
       $isClustered = $false
+      $clusterOwnerNode = $null
       if ($clusterCheckAvailable) {
-          $isClustered = [bool](Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue)
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
       }
 
+      # Best-effort S2D/hyperconverged check: any non-primordial storage
+      # pool (an actual S2D pool, not the implicit per-disk primordial
+      # one) or physical disk that isn't Healthy. Empty rather than
+      # unavailable on a host with no pooled storage, so this is a silent
+      # no-op on plain SAN/DAS Hyper-V hosts - no separate "is this S2D"
+      # detection needed.
+      $unhealthyStoragePools = @(Get-StoragePool -ErrorAction SilentlyContinue |
+          Where-Object { -not $_.IsPrimordial -and $_.HealthStatus -ne 'Healthy' } |
+          ForEach-Object { $_.FriendlyName })
+      $unhealthyPhysicalDisks = @(Get-PhysicalDisk -ErrorAction SilentlyContinue |
+          Where-Object { $_.HealthStatus -ne 'Healthy' } |
+          ForEach-Object { $_.FriendlyName })
+
       [PSCustomObject]@{
-          Path                  = $drive.Path
-          ControllerType        = $drive.ControllerType
-          Generation            = $generation
-          IsPassthrough         = $isPassthrough
-          SharedVhdx            = [bool]$drive.SupportPersistentReservations
-          CheckpointCount       = $checkpointCount
-          VhdType               = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
-          VhdFormat             = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
-          SizeBytes             = if ($vhd) { $vhd.Size } else { $null }
-          ReplicationState      = if ($replicationState) { $replicationState.ToString() } else { $null }
-          HostVolumeFreeBytes   = $hostVolumeFreeBytes
-          IsClustered           = $isClustered
-          ClusterCheckAvailable = $clusterCheckAvailable
+          Path                   = $drive.Path
+          ControllerType         = $drive.ControllerType
+          ControllerNumber       = $drive.ControllerNumber
+          ControllerLocation     = $drive.ControllerLocation
+          Generation             = $generation
+          IsPassthrough          = $isPassthrough
+          IsOnCsv                = $isOnCsv
+          SharedVhdx             = [bool]$drive.SupportPersistentReservations
+          CheckpointCount        = $checkpointCount
+          VhdType                = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
+          VhdFormat              = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
+          SizeBytes              = if ($vhd) { $vhd.Size } else { $null }
+          ReplicationState       = if ($replicationState) { $replicationState.ToString() } else { $null }
+          HostVolumeFreeBytes    = $hostVolumeFreeBytes
+          IsClustered            = $isClustered
+          ClusterCheckAvailable  = $clusterCheckAvailable
+          ClusterOwnerNode       = $clusterOwnerNode
+          UnhealthyStoragePools  = $unhealthyStoragePools
+          UnhealthyPhysicalDisks = $unhealthyPhysicalDisks
       } | ConvertTo-Json -Compress
   changed_when: false
   register: hyperv_disk_lookup
@@ -432,20 +460,54 @@
 # including mid-resize, and Resize-VHD here targets one specific host -
 # blocking rather than warning, consistent with how shared VHDX/Replica
 # are handled above.
-- name: Refuse to resize a clustered (highly-available) VM
+- name: Refuse to resize a clustered VM if the owner node doesn't match where we're about to act
+  # No override for this one: a mismatch means the VM likely just failed
+  # over, so resizedisk_hyperv_host (and everything else gathered above)
+  # may already be stale, regardless of whether an operator has otherwise
+  # coordinated the resize.
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
+    - hyperv_vhd_info.IsClustered
+    - hyperv_vhd_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.ClusterOwnerNode == resizedisk_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ hyperv_vhd_info.ClusterOwnerNode }}, not {{ resizedisk_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to resize a clustered (highly-available) VM without an explicit override
   when:
     - resizedisk_hypervisor_type == 'hyperv'
     - resizedisk_disk_grow_needed
     - hyperv_vhd_info.ClusterCheckAvailable
+    - hyperv_vhd_info.IsClustered
   ansible.builtin.assert:
     that:
-      - not hyperv_vhd_info.IsClustered
+      - resizedisk_allow_clustered_vm | bool
     fail_msg: >-
-      '{{ vm_name }}' is a highly-available VM in a Failover Cluster on
-      {{ resizedisk_hyperv_host }}. It can fail over to another node at
-      any time, including mid-resize - coordinate with the cluster
-      (e.g. temporarily disable failover, confirm current owner node)
-      before resizing, then run this outside of that window.
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ hyperv_vhd_info.ClusterOwnerNode }}{{ ', on a CSV volume' if hyperv_vhd_info.IsOnCsv
+      else ' - NOT on a CSV volume, unusual for a clustered VM, double-check the disk layout' }}).
+      It can fail over to another node mid-resize. Coordinate with the
+      cluster first (confirm no pending failover / maintenance on other
+      nodes), then pass -e resizedisk_allow_clustered_vm=true to proceed.
+
+- name: Refuse to resize if underlying S2D/pooled storage is unhealthy
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
+    - (hyperv_vhd_info.UnhealthyStoragePools | length > 0) or (hyperv_vhd_info.UnhealthyPhysicalDisks | length > 0)
+  ansible.builtin.fail:
+    msg: >-
+      Storage on {{ resizedisk_hyperv_host }} is unhealthy - pool(s):
+      {{ hyperv_vhd_info.UnhealthyStoragePools | join(', ') if hyperv_vhd_info.UnhealthyStoragePools | length > 0 else 'none' }};
+      physical disk(s): {{ hyperv_vhd_info.UnhealthyPhysicalDisks | join(', ') if hyperv_vhd_info.UnhealthyPhysicalDisks | length > 0 else 'none' }}.
+      Writing more data (growing a disk) to a degraded S2D/Storage Spaces
+      pool increases risk - resolve the storage health issue first.
 
 - name: Refuse to resize while checkpoints exist
   when:

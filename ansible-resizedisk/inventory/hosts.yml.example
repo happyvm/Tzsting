@@ -33,3 +33,36 @@ all:
           ansible_port: 5986
           ansible_user: "{{ vault_hyperv_username }}"
           ansible_password: "{{ vault_hyperv_password }}"
+
+        # Cluster nodes work the same way - just list every node. A VM is
+        # found on whichever node currently owns it (Get-VM only shows
+        # VMs actually running on the host it's queried against).
+        hyperv-clu01-node01:
+          ansible_host: hyperv-clu01-node01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+        hyperv-clu01-node02:
+          ansible_host: hyperv-clu01-node02.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+    # Optional: only needed if scvmm_server is set in group_vars/all.yml
+    # to enable SCVMM-managed-VM auto-detection (routes the resize through
+    # Expand-SCVirtualDiskDrive instead of Resize-VHD). The inventory
+    # hostname here (scvmm01) is what scvmm_server must reference.
+    scvmm_management:
+      hosts:
+        scvmm01:
+          ansible_host: scvmm01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_scvmm_username }}"
+          ansible_password: "{{ vault_scvmm_password }}"
