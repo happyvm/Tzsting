@@ -61,49 +61,62 @@
       ansible.builtin.include_role:
         name: preflight_platform
 
-    - name: Block early on anything unsafe to resize (snapshots, RDM/virtual FC, passthrough, shared VHDX, checkpoints...)
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
       ansible.builtin.include_role:
-        name: preflight_disk_constraints
-
-    - name: Determine how to reach the guest OS (WinRM/SSH, or a VMBus/VMware Tools fallback)
-      ansible.builtin.include_role:
-        name: preflight_connectivity
-
-    - name: Grow the virtual disk on VMware
-      ansible.builtin.include_role:
-        name: resize_disk_vmware
-      when: resizedisk_hypervisor_type == 'vmware'
-
-    - name: Grow the virtual disk on Hyper-V
-      ansible.builtin.include_role:
-        name: resize_disk_hyperv
-      when: resizedisk_hypervisor_type == 'hyperv'
-
-    - name: Extend the Windows filesystem to use the new disk space
-      ansible.builtin.include_role:
-        name: resize_windows_filesystem
-      when: resizedisk_guest_os == 'windows'
-
-    - name: Extend the Linux filesystem to use the new disk space
-      ansible.builtin.include_role:
-        name: resize_linux_filesystem
-      when: resizedisk_guest_os == 'linux'
-
-    - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+        name: resizedisk_lock
       vars:
-        resizedisk_final_size_gb: "{{ windows_resize_result.SizeGB if resizedisk_guest_os == 'windows' else (linux_resize_result.SizeBytes | int / 1073741824) | round(2) }}"
-        resizedisk_final_free_gb: "{{ windows_resize_result.FreeGB if resizedisk_guest_os == 'windows' else (linux_resize_result.AvailBytes | int / 1073741824) | round(2) }}"
-        resizedisk_partition_resized: "{{ windows_resize_result.PartitionResized if resizedisk_guest_os == 'windows' else linux_resize_result.PartitionResized }}"
-      ansible.builtin.set_stats:
-        data:
-          resizedisk_summary:
-            vm_name: "{{ vm_name }}"
-            hypervisor_type: "{{ resizedisk_hypervisor_type }}"
-            guest_os: "{{ resizedisk_guest_os }}"
-            exec_method: "{{ resizedisk_exec_method }}"
-            target: "{{ windows_drive_letter if resizedisk_guest_os == 'windows' else linux_target }}"
-            requested_size_gb: "{{ disk_new_size_gb }}"
-            resulting_size_gb: "{{ resizedisk_final_size_gb }}"
-            resulting_free_gb: "{{ resizedisk_final_free_gb }}"
-            partition_resized: "{{ resizedisk_partition_resized }}"
-        aggregate: false
+        resizedisk_lock_action: acquire
+
+    - block:
+        - name: Block early on anything unsafe to resize (snapshots, RDM/virtual FC, passthrough, shared VHDX, checkpoints...)
+          ansible.builtin.include_role:
+            name: preflight_disk_constraints
+
+        - name: Determine how to reach the guest OS (WinRM/SSH, or a VMBus/VMware Tools fallback)
+          ansible.builtin.include_role:
+            name: preflight_connectivity
+
+        - name: Grow the virtual disk on VMware
+          ansible.builtin.include_role:
+            name: resize_disk_vmware
+          when: resizedisk_hypervisor_type == 'vmware'
+
+        - name: Grow the virtual disk on Hyper-V
+          ansible.builtin.include_role:
+            name: resize_disk_hyperv
+          when: resizedisk_hypervisor_type == 'hyperv'
+
+        - name: Extend the Windows filesystem to use the new disk space
+          ansible.builtin.include_role:
+            name: resize_windows_filesystem
+          when: resizedisk_guest_os == 'windows'
+
+        - name: Extend the Linux filesystem to use the new disk space
+          ansible.builtin.include_role:
+            name: resize_linux_filesystem
+          when: resizedisk_guest_os == 'linux'
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          vars:
+            resizedisk_final_size_gb: "{{ windows_resize_result.SizeGB if resizedisk_guest_os == 'windows' else (linux_resize_result.SizeBytes | int / 1073741824) | round(2) }}"
+            resizedisk_final_free_gb: "{{ windows_resize_result.FreeGB if resizedisk_guest_os == 'windows' else (linux_resize_result.AvailBytes | int / 1073741824) | round(2) }}"
+            resizedisk_partition_resized: "{{ windows_resize_result.PartitionResized if resizedisk_guest_os == 'windows' else linux_resize_result.PartitionResized }}"
+          ansible.builtin.set_stats:
+            data:
+              resizedisk_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ resizedisk_hypervisor_type }}"
+                guest_os: "{{ resizedisk_guest_os }}"
+                exec_method: "{{ resizedisk_exec_method }}"
+                target: "{{ windows_drive_letter if resizedisk_guest_os == 'windows' else linux_target }}"
+                requested_size_gb: "{{ disk_new_size_gb }}"
+                resulting_size_gb: "{{ resizedisk_final_size_gb }}"
+                resulting_free_gb: "{{ resizedisk_final_free_gb }}"
+                partition_resized: "{{ resizedisk_partition_resized }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: resizedisk_lock
+          vars:
+            resizedisk_lock_action: release

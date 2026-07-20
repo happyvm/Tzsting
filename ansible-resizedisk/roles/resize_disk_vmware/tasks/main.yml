@@ -5,7 +5,10 @@
 #
 # Assumes preflight_disk_constraints already ran: it looked up the disk
 # (vmware_target_disk) and rejected anything unsafe to grow (snapshots,
-# RDM/virtual FC, shrink/no-op).
+# RDM/virtual FC, shrink). resizedisk_disk_grow_needed is false when the
+# disk is already at/above the requested size (a retry after a previous
+# run's filesystem step failed) - the actual resize call is skipped in
+# that case, but this role still runs so the assert below stays honest.
 
 - name: Assert required variables/facts are defined
   ansible.builtin.assert:
@@ -17,12 +20,15 @@
       - vm_name is defined
       - disk_new_size_gb is defined
       - vmware_target_disk is defined
+      - resizedisk_disk_grow_needed is defined
     fail_msg: >-
       vcenter_hostname, vcenter_username, vcenter_password, vcenter_datacenter,
       vm_name and disk_new_size_gb must all be set for resize_disk_vmware, and
-      vmware_target_disk must have been resolved by preflight_disk_constraints.
+      vmware_target_disk/resizedisk_disk_grow_needed must have been resolved
+      by preflight_disk_constraints.
 
 - name: Grow the virtual disk to the requested size
+  when: resizedisk_disk_grow_needed
   delegate_to: localhost
   community.vmware.vmware_guest_disk:
     hostname: "{{ vcenter_hostname }}"
@@ -40,6 +46,7 @@
   register: vmware_resize_result
 
 - name: Report new disk size
+  when: resizedisk_disk_grow_needed
   ansible.builtin.debug:
     msg: >-
       Disk (controller {{ disk_controller_number }}, unit {{ disk_unit_number }})

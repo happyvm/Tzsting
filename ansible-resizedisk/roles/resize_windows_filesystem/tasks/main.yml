@@ -99,6 +99,13 @@
     windows_resize_result: "{{ run_guest_command_result.stdout | from_json }}"
 
 - name: Fail if the partition gained no space despite the disk having been grown
+  # Only enforced when this run actually grew the disk (resizedisk_disk_grow_needed):
+  # if the disk was already at/above target coming in - e.g. a retry after a
+  # previous run's filesystem step failed - PartitionResized=false here is
+  # the expected "nothing left to do" outcome, not a sign of a wrong-disk
+  # mismatch. That detection stays fully intact for the common case: the
+  # first run where a resize was actually requested and performed.
+  when: resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - windows_resize_result.PartitionResized

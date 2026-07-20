@@ -15,7 +15,7 @@ extra-vars résolues depuis la CI/le RITM/le change request.
 ## Fonctionnement
 
 Le playbook s'exécute en une seule play (`hosts: localhost`) qui orchestre
-tout le reste par délégation, en 5 étapes :
+tout le reste par délégation, en 6 étapes :
 
 1. **`preflight_platform`** — valide que la cible est bien une VM et
    détecte l'hyperviseur :
@@ -30,7 +30,26 @@ tout le reste par délégation, en 5 étapes :
    - Peut être court-circuité en passant `hypervisor_type` en extra-var
      si le workflow ServiceNow connaît déjà la plateforme (ex. classe CMDB).
 
-2. **`preflight_disk_constraints`** — bloque tôt, avant toute sonde de
+2. **`resizedisk_lock`** (`resizedisk_lock_action: acquire`) — pose un
+   verrou par VM avant toute autre action, pour qu'une double soumission
+   ServiceNow (ou un relancement pendant qu'un run est encore en cours)
+   sur la même VM ne se marche pas dessus. Le reste de la play (étapes 3
+   à 6) est ensuite enveloppé dans un `block`/`always` : le verrou est
+   relâché systématiquement en fin de run, succès ou échec. Détail
+   important, les deux garanties ne sont **pas équivalentes** :
+   - **Hyper-V** : fichier créé avec `FileMode.CreateNew` sur l'hôte
+     Hyper-V - création atomique côté OS, donc un verrou mutex réel.
+   - **VMware** : marqueur écrit dans l'annotation de la VM (lecture puis
+     écriture via l'API vCenter) - aucune opération de type
+     compare-and-swap disponible sur ce champ, donc **best-effort** :
+     réduit fortement la fenêtre de course (couvre le cas courant du
+     double-clic sur "Soumettre") sans être une garantie absolue contre
+     deux runs démarrant au même instant.
+   - Un verrou expire automatiquement après `resizedisk_lock_timeout_seconds`
+     (2h par défaut), pour ne pas bloquer indéfiniment après un run qui a
+     crashé sans passer par le `always`.
+
+3. **`preflight_disk_constraints`** — bloque tôt, avant toute sonde de
    connectivité et toute action, si le disque n'est pas sûr à agrandir
    (snapshots, RDM/virtual FC, passthrough, VHDX partagé... voir tableau
    ci-dessous). Fait aussi le lookup du disque une seule fois
@@ -40,7 +59,7 @@ tout le reste par délégation, en 5 étapes :
    auto-détecté côté VMware (`hw_guest_id`), à fournir explicitement via
    `guest_os` côté Hyper-V (voir note plus bas).
 
-3. **`preflight_connectivity`** — détermine le canal pour parler au système
+4. **`preflight_connectivity`** — détermine le canal pour parler au système
    invité, selon `resizedisk_guest_os` :
    - **Windows** : teste WinRM (`win_ping`, avec `ignore_unreachable`) ;
      si WinRM ne répond pas, bascule sur les **opérations invité VMware
@@ -63,14 +82,15 @@ tout le reste par délégation, en 5 étapes :
    payer le coût d'un timeout WinRM/SSH + repli pour une requête de toute
    façon vouée à l'échec côté disque.
 
-4. **Agrandissement du disque côté hyperviseur** (`resize_disk_vmware` ou
+5. **Agrandissement du disque côté hyperviseur** (`resize_disk_vmware` ou
    `resize_disk_hyperv` selon `resizedisk_hypervisor_type`) — API vCenter
    pour VMware, `Resize-VHD` délégué à l'hôte Hyper-V. Ne fait plus que
-   l'action elle-même, les contrôles ayant déjà eu lieu à l'étape 2.
+   l'action elle-même, les contrôles ayant déjà eu lieu à l'étape 3.
    Strictement identique pour Windows et Linux : au niveau hyperviseur, le
-   disque n'a pas d'OS.
+   disque n'a pas d'OS. Sauté (sans erreur) si `resizedisk_disk_grow_needed`
+   est faux - voir "Reprise après échec partiel" ci-dessous.
 
-5. **`resize_windows_filesystem`** (Windows) ou **`resize_linux_filesystem`**
+6. **`resize_windows_filesystem`** (Windows) ou **`resize_linux_filesystem`**
    (Linux), selon `resizedisk_guest_os` :
    - **Windows** : rescan du stockage, remise en ligne du disque si
      besoin, puis `Resize-Partition` jusqu'à la taille max.
@@ -84,16 +104,44 @@ tout le reste par délégation, en 5 étapes :
 
    Les deux rôles s'exécutent via `run_guest_command`, un rôle générique
    qui envoie le même script (PowerShell ou bash) par le canal choisi à
-   l'étape 3, en un seul aller-retour.
+   l'étape 4, en un seul aller-retour.
 
 Un résumé structuré (`resizedisk_summary`) est publié via
 `ansible.builtin.set_stats` — récupérable comme *artifact* de job
 AWX/Tower et donc lisible par ServiceNow en retour de l'appel.
 
-Les rôles de resize disque sont **idempotents et refusent de rétrécir ou
-de ne rien faire** : si la taille demandée n'est pas au moins
-`resizedisk_min_growth_gb` (par défaut 1 Go) au-dessus de la taille
-actuelle, la tâche échoue explicitement.
+Les rôles de resize disque **refusent de rétrécir** (échec explicite si
+`disk_new_size_gb` < taille actuelle) et sont **idempotents/rejouables** :
+si le disque est déjà à la taille demandée (à moins de
+`resizedisk_min_growth_gb`, 1 Go par défaut, de croissance restante), le
+resize côté hyperviseur est simplement sauté - le playbook continue vers
+l'étape filesystem plutôt que d'échouer.
+
+### Reprise après échec partiel
+
+Scénario : le disque est agrandi côté hyperviseur, puis l'étape filesystem
+échoue (coupure réseau, VM qui plante en plein run...). Relancer le
+playbook avec les **mêmes paramètres** doit reprendre là où ça s'est
+arrêté, pas échouer bêtement en expliquant que la taille demandée est déjà
+atteinte.
+
+C'est le rôle de `resizedisk_disk_grow_needed`, calculé dans
+`preflight_disk_constraints` :
+- `disk_new_size_gb` < taille actuelle → échec (tentative de rétrécissement,
+  toujours une erreur).
+- `disk_new_size_gb` ≥ taille actuelle mais croissance < `resizedisk_min_growth_gb`
+  → `resizedisk_disk_grow_needed = false` : `resize_disk_vmware`/`resize_disk_hyperv`
+  sautent l'appel API, mais `resize_windows_filesystem`/`resize_linux_filesystem`
+  s'exécutent quand même.
+- Sinon → `resizedisk_disk_grow_needed = true`, resize normal.
+
+Le check "la partition/le filesystem n'a gagné aucun espace" (protection
+contre une mauvaise cible, voir plus haut) n'est un échec bloquant que
+si `resizedisk_disk_grow_needed` était vrai *pour ce run* : sur un
+relancement où le disque était déjà à la bonne taille, ne rien gagner
+est le comportement normal (déjà fait), pas un signal de mauvaise
+configuration. Cette protection reste pleinement active pour le cas
+courant (premier run qui grandit réellement le disque).
 
 ### Conditions bloquantes vérifiées en preflight
 
@@ -211,6 +259,7 @@ ansible-resizedisk/
 ├── playbooks/resize_disk.yml            # playbook principal (hosts: localhost)
 └── roles/
     ├── preflight_platform/              # VM ? VMware ou Hyper-V ?
+    ├── resizedisk_lock/                 # verrou par VM (acquire/release), anti double-run
     ├── preflight_disk_constraints/      # snapshot/RDM/passthrough/VHDX partagé... -> bloque tôt + guest_os
     ├── preflight_connectivity/          # WinRM/SSH, sinon VMware Tools / PowerShell Direct
     ├── resize_disk_vmware/              # resize via API vCenter
@@ -326,6 +375,7 @@ utilisé en cas de repli WinRM/SSH indisponible).
 | `resizedisk_datastore_free_margin_gb` | `10` | marge de sécurité exigée sur le datastore VMware, en plus de la croissance demandée |
 | `resizedisk_host_free_margin_gb` | `10` | marge de sécurité exigée sur le volume hôte Hyper-V, en plus de la croissance demandée |
 | `resizedisk_max_size_gb` | `2000` | plafond de politique anti-saisie-erronée ; à relever explicitement pour un disque légitimement plus gros |
+| `resizedisk_lock_timeout_seconds` | `7200` | délai avant qu'un verrou par VM soit considéré abandonné (run planté) et puisse être cassé par un nouveau run |
 
 ### Par environnement (`inventory/group_vars/all.yml`)
 

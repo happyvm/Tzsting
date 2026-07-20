@@ -134,8 +134,47 @@
   ansible.builtin.set_fact:
     vmware_target_disk: "{{ vmware_matching_disks[0] }}"
 
-- name: Check for existing snapshots on the VM
+- name: Determine the current size of the target disk in GB
   when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    vmware_current_size_gb: "{{ (vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(0, 'ceil') | int }}"
+
+- name: Refuse to shrink the disk (VMware)
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) >= (vmware_current_size_gb | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB is smaller than the current
+      disk size ({{ vmware_current_size_gb }}GB). Shrinking a live disk is
+      not supported.
+
+# resizedisk_disk_grow_needed distinguishes "shrink attempt" (hard failure,
+# above) from "already at or past the target" (below: skip the hypervisor
+# resize and go straight to the filesystem step). Without this, a retry
+# after the filesystem step failed on a previous run - the disk having
+# already been grown - would hit a hard failure here instead of resuming.
+- name: Determine whether the disk actually needs to grow (VMware)
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    resizedisk_disk_grow_needed: "{{ ((disk_new_size_gb | int) - (vmware_current_size_gb | int)) >= (resizedisk_min_growth_gb | int) }}"
+
+- name: Report when the disk is already at/near the requested size
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - not resizedisk_disk_grow_needed
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' disk is already at {{ vmware_current_size_gb }}GB
+      (requested {{ disk_new_size_gb }}GB) - skipping the hypervisor-level
+      resize and going straight to the filesystem step. This is the
+      expected path on a retry after a previous run grew the disk but
+      didn't finish extending the filesystem.
+
+- name: Check for existing snapshots on the VM
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
   delegate_to: localhost
   community.vmware.vmware_guest_snapshot_info:
     hostname: "{{ vcenter_hostname }}"
@@ -147,7 +186,9 @@
   register: vmware_snapshot_info
 
 - name: Refuse to resize while snapshots exist
-  when: resizedisk_hypervisor_type == 'vmware'
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - (vmware_snapshot_info.guest_snapshots.snapshots | default([])) | length == 0
@@ -158,7 +199,9 @@
       them first.
 
 - name: Refuse to resize a non-VMDK-backed disk (RDM / virtual FC / other passthrough)
-  when: resizedisk_hypervisor_type == 'vmware'
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - vmware_target_disk.backing_type == 'FlatVer2'
@@ -170,18 +213,10 @@
       resized through the vCenter API - grow the LUN on the storage array
       and rescan instead.
 
-- name: Refuse to shrink or no-op the disk (VMware)
-  when: resizedisk_hypervisor_type == 'vmware'
-  ansible.builtin.assert:
-    that:
-      - (disk_new_size_gb | int) >= ((vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(0, 'ceil') | int) + (resizedisk_min_growth_gb | int)
-    fail_msg: >-
-      Requested size {{ disk_new_size_gb }}GB is not at least
-      {{ resizedisk_min_growth_gb }}GB larger than the current disk size
-      ({{ (vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(2) }}GB). Refusing to shrink/no-op.
-
 - name: Check free space on the datastore backing the target disk
-  when: resizedisk_hypervisor_type == 'vmware'
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
   delegate_to: localhost
   community.vmware.vmware_datastore_info:
     hostname: "{{ vcenter_hostname }}"
@@ -193,7 +228,9 @@
   register: vmware_datastore_info
 
 - name: Refuse to resize if the datastore is inaccessible
-  when: resizedisk_hypervisor_type == 'vmware'
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - vmware_datastore_info.datastores[0].accessible
@@ -203,7 +240,9 @@
       refusing to attempt a resize against it.
 
 - name: Refuse to resize if the datastore doesn't have enough free space
-  when: resizedisk_hypervisor_type == 'vmware'
+  when:
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_disk_grow_needed
   vars:
     vmware_growth_bytes: "{{ ((disk_new_size_gb | int) * 1073741824) - (vmware_target_disk.capacity_in_kb | int * 1024) }}"
     vmware_datastore_free_bytes: "{{ vmware_datastore_info.datastores[0].freeSpace | int }}"
@@ -275,8 +314,43 @@
   ansible.builtin.set_fact:
     hyperv_vhd_info: "{{ hyperv_disk_lookup.stdout | from_json }}"
 
-- name: Refuse to resize a pass-through (physical) disk
+- name: Refuse to shrink the disk (Hyper-V)
   when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) >= ((hyperv_vhd_info.SizeBytes | int / 1073741824) | round(0, 'ceil') | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB is smaller than the current
+      disk size ({{ (hyperv_vhd_info.SizeBytes | int / 1073741824) | round(2) }}GB).
+      Shrinking a live disk is not supported.
+
+# See the matching VMware comment above: distinguishes a shrink attempt
+# (hard failure, above) from "already at or past the target" (skip the
+# hypervisor resize, still run the filesystem step) so a retry after a
+# previous run's filesystem step failed can resume instead of hard-failing.
+- name: Determine whether the disk actually needs to grow (Hyper-V)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    resizedisk_disk_grow_needed: >-
+      {{ (disk_new_size_gb | int) - ((hyperv_vhd_info.SizeBytes | int / 1073741824) | round(0, 'ceil') | int) >= (resizedisk_min_growth_gb | int) }}
+
+- name: Report when the disk is already at/near the requested size
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - not resizedisk_disk_grow_needed
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' disk is already at
+      {{ (hyperv_vhd_info.SizeBytes | int / 1073741824) | round(2) }}GB
+      (requested {{ disk_new_size_gb }}GB) - skipping the hypervisor-level
+      resize and going straight to the filesystem step. This is the
+      expected path on a retry after a previous run grew the disk but
+      didn't finish extending the filesystem.
+
+- name: Refuse to resize a pass-through (physical) disk
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - not hyperv_vhd_info.IsPassthrough
@@ -286,7 +360,9 @@
       the storage/LUN level and rescanned in the guest, not resized here.
 
 - name: Refuse to hot-resize an IDE-attached disk (Generation 1 system disk)
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - hyperv_vhd_info.ControllerType != 'IDE'
@@ -299,7 +375,9 @@
       downtime.
 
 - name: Refuse to resize a shared VHDX
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - not hyperv_vhd_info.SharedVhdx
@@ -310,7 +388,9 @@
       refusing to proceed automatically.
 
 - name: Refuse to resize while checkpoints exist
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - hyperv_vhd_info.CheckpointCount == 0
@@ -320,7 +400,9 @@
       merge them first.
 
 - name: Refuse to resize a differencing disk directly
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - hyperv_vhd_info.VhdType != 'Differencing'
@@ -330,7 +412,9 @@
       the chain, not the differencing disk directly.
 
 - name: Refuse to grow a legacy VHD beyond its 2040GB format limit
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - not (hyperv_vhd_info.VhdFormat == 'VHD' and (disk_new_size_gb | int) > 2040)
@@ -340,7 +424,9 @@
       Convert it to VHDX first (Convert-VHD) if you need to grow past that.
 
 - name: Refuse to resize while Hyper-V Replica is active
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - (hyperv_vhd_info.ReplicationState | default('Disabled', true)) == 'Disabled'
@@ -350,18 +436,10 @@
       replicated VM breaks replication unless it's paused/removed first -
       refusing to proceed automatically.
 
-- name: Refuse to shrink or no-op the disk (Hyper-V)
-  when: resizedisk_hypervisor_type == 'hyperv'
-  ansible.builtin.assert:
-    that:
-      - (disk_new_size_gb | int) >= ((hyperv_vhd_info.SizeBytes | int / 1073741824) | round(0, 'ceil') | int) + (resizedisk_min_growth_gb | int)
-    fail_msg: >-
-      Requested size {{ disk_new_size_gb }}GB is not at least
-      {{ resizedisk_min_growth_gb }}GB larger than the current disk size
-      ({{ (hyperv_vhd_info.SizeBytes | int / 1073741824) | round(2) }}GB). Refusing to shrink/no-op.
-
 - name: Refuse to resize if the hosting volume doesn't have enough free space
-  when: resizedisk_hypervisor_type == 'hyperv'
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - resizedisk_disk_grow_needed
   vars:
     hyperv_growth_bytes: "{{ ((disk_new_size_gb | int) * 1073741824) - (hyperv_vhd_info.SizeBytes | int) }}"
   ansible.builtin.assert:
