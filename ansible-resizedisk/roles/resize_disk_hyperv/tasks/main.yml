@@ -18,7 +18,7 @@
       resize_disk_hyperv (resizedisk_hyperv_host is normally resolved by the
       preflight_platform role).
 
-- name: Locate the VHD/VHDX backing the target disk and its current size
+- name: Locate the VHD/VHDX backing the target disk and gather resize-eligibility facts
   delegate_to: "{{ resizedisk_hyperv_host }}"
   ansible.windows.win_shell: |
     $ErrorActionPreference = "Stop"
@@ -26,11 +26,20 @@
     if (-not $drive) {
         throw "No VMHardDiskDrive found at index {{ disk_number_hyperv }} for VM '{{ vm_name }}'"
     }
-    $vhd = Get-VHD -Path $drive.Path
+    $isPassthrough = [string]::IsNullOrEmpty($drive.Path)
+    $vhd = $null
+    if (-not $isPassthrough) {
+        $vhd = Get-VHD -Path $drive.Path
+    }
+    $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
     [PSCustomObject]@{
-        Path         = $drive.Path
-        ControllerType = $drive.ControllerType
-        SizeBytes    = $vhd.Size
+        Path            = $drive.Path
+        ControllerType  = $drive.ControllerType
+        IsPassthrough   = $isPassthrough
+        SharedVhdx      = [bool]$drive.SupportPersistentReservations
+        CheckpointCount = $checkpointCount
+        VhdType         = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
+        SizeBytes       = if ($vhd) { $vhd.Size } else { $null }
     } | ConvertTo-Json -Compress
   changed_when: false
   register: hyperv_disk_lookup
@@ -38,6 +47,50 @@
 - name: Parse current disk info
   ansible.builtin.set_fact:
     hyperv_vhd_info: "{{ hyperv_disk_lookup.stdout | from_json }}"
+
+# --- Resize-blocking conditions -------------------------------------------
+# Resize-VHD only operates on VHD/VHDX files: it cannot touch a physical
+# disk attached in pass-through mode, a shared VHDX used for guest
+# clustering (SupportPersistentReservations), or a disk that's part of a
+# checkpoint/differencing chain (resizing the wrong member of the chain
+# silently produces an inconsistent disk).
+
+- name: Refuse to resize a pass-through (physical) disk
+  ansible.builtin.assert:
+    that:
+      - not hyperv_vhd_info.IsPassthrough
+    fail_msg: >-
+      The disk at index {{ disk_number_hyperv }} on '{{ vm_name }}' is a
+      pass-through (physical) disk, not a VHD/VHDX. It must be grown at
+      the storage/LUN level and rescanned in the guest, not resized here.
+
+- name: Refuse to resize a shared VHDX
+  ansible.builtin.assert:
+    that:
+      - not hyperv_vhd_info.SharedVhdx
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} on '{{ vm_name }}' is a shared VHDX
+      (SupportPersistentReservations), used for guest clustering. Resize
+      requires coordinating all cluster nodes / removing sharing first -
+      refusing to proceed automatically.
+
+- name: Refuse to resize while checkpoints exist
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.CheckpointCount == 0
+    fail_msg: >-
+      '{{ vm_name }}' has {{ hyperv_vhd_info.CheckpointCount }} checkpoint(s).
+      Hyper-V does not support resizing a VHDX with checkpoints - remove or
+      merge them first.
+
+- name: Refuse to resize a differencing disk directly
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.VhdType != 'Differencing'
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} on '{{ vm_name }}' is a differencing disk
+      (part of a parent/child chain). Resize the base disk after merging
+      the chain, not the differencing disk directly.
 
 - name: Refuse to shrink or no-op the disk
   ansible.builtin.assert:

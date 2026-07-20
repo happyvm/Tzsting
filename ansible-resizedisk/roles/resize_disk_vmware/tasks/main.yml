@@ -34,6 +34,47 @@
                              | selectattr('unit_number', 'equalto', disk_unit_number)
                              | first }}"
 
+# --- Resize-blocking conditions -------------------------------------------
+# vSphere refuses (or silently breaks consolidation for) a hot-grow of a
+# VMDK that has snapshots, and vmware_guest_disk cannot resize anything
+# that isn't a plain VMDK: RDM (physical or virtual compatibility mode,
+# which is also how RDM-over-virtual-FC/NPIV LUNs surface here) reports a
+# non-FlatVer2 backing_type and must be grown on the storage array side
+# instead.
+
+- name: Check for existing snapshots on the VM
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: vmware_snapshot_info
+
+- name: Refuse to resize while snapshots exist
+  ansible.builtin.assert:
+    that:
+      - (vmware_snapshot_info.guest_snapshots.snapshots | default([])) | length == 0
+    fail_msg: >-
+      '{{ vm_name }}' has {{ vmware_snapshot_info.guest_snapshots.snapshots | default([]) | length }}
+      snapshot(s) ({{ vmware_snapshot_info.guest_snapshots.snapshots | default([]) | map(attribute='name') | join(', ') }}).
+      Resizing a disk with snapshots present is unsupported - consolidate/remove
+      them first.
+
+- name: Refuse to resize a non-VMDK-backed disk (RDM / virtual FC / other passthrough)
+  ansible.builtin.assert:
+    that:
+      - vmware_target_disk.backing_type == 'FlatVer2'
+    fail_msg: >-
+      Disk (controller {{ disk_controller_number }}, unit {{ disk_unit_number }})
+      on '{{ vm_name }}' is backed by {{ vmware_target_disk.backing_type }},
+      not a standard VMDK. RDM disks (physical or virtual compatibility
+      mode, including RDM over virtual Fibre Channel/NPIV) cannot be
+      resized through the vCenter API - grow the LUN on the storage array
+      and rescan instead.
+
 - name: Refuse to shrink or no-op the disk
   ansible.builtin.assert:
     that:

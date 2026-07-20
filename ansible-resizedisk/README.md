@@ -62,6 +62,24 @@ de ne rien faire** : si la taille demandée n'est pas au moins
 `resizedisk_min_growth_gb` (par défaut 1 Go) au-dessus de la taille
 actuelle, la tâche échoue explicitement.
 
+### Conditions bloquantes vérifiées avant tout resize
+
+`resize_disk_vmware` et `resize_disk_hyperv` échouent explicitement
+(sans rien modifier) si l'une de ces conditions est détectée :
+
+| Condition | VMware | Hyper-V |
+|---|---|---|
+| Snapshots / checkpoints présents | `vmware_guest_snapshot_info` → `guest_snapshots.snapshots` non vide | `Get-VMSnapshot` → count > 0 |
+| RDM (physique ou virtuel) / virtual FC (NPIV) | `backing_type != 'FlatVer2'` (RDM = `RawDiskMappingVer1`, y compris RDM sur FC virtuel) | — (voir passthrough) |
+| Disque physique en passthrough | — | `VMHardDiskDrive.Path` vide (`DiskNumber` utilisé à la place) |
+| VHDX partagé (cluster invité) | — | `SupportPersistentReservations = true` |
+| Disque de différenciation | — | `Get-VHD.VhdType -eq 'Differencing'` |
+
+Un RDM (physique, virtuel, ou présenté via un adaptateur Fibre Channel
+virtuel/NPIV) n'est de toute façon pas agrandissable via l'API vCenter :
+il faut agrandir le LUN côté baie de stockage puis rescanner. Ces
+disques sont donc simplement exclus, pas traités différemment.
+
 ## Arborescence
 
 ```
