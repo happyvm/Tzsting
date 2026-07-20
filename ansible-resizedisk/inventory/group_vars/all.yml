@@ -1,0 +1,17 @@
+---
+# Environment-wide defaults. Override per-environment (e.g. group_vars/all.yml
+# per inventory, or -e on the CLI / AWX survey) as needed. Secrets
+# (vcenter_password, vault_* below) belong in ansible-vault or the AWX
+# credential store, never committed in clear text.
+
+# --- Safety net -------------------------------------------------------------
+# Refuse to "resize" to something smaller or equal to the current size
+# (shrinking a live disk/partition is unsupported here).
+resizedisk_min_growth_gb: 1
+
+# --- vCenter connection (single vCenter managing the VMware estate) --------
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false

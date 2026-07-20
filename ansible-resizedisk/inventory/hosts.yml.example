@@ -1,16 +1,17 @@
 ---
 # Copy this file to hosts.yml and adapt it to your environment.
 #
-# - "hyperv_hypervisor" lists the actual Hyper-V Windows Server hosts.
-#   The resize_disk_hyperv role connects to these over WinRM to grow the
-#   VHD/VHDX file, so they need real WinRM connection vars.
+# There is deliberately no per-VM inventory here: the target VM, its
+# credentials and the requested size are supplied as extra-vars at run
+# time (typically by a ServiceNow workflow calling an AWX/Tower job
+# template - see playbooks/resize_disk.yml for the full list of vars).
 #
-# - "guest_windows" lists the Windows VMs whose disk/filesystem is being
-#   grown. hypervisor_type selects which backend role runs:
-#     * vmware -> resize_disk_vmware talks to vCenter's API directly
-#       (no separate inventory host needed for vCenter itself).
-#     * hyperv -> resize_disk_hyperv is delegated to the matching host
-#       in hyperv_hypervisor (see hyperv_host below).
+# This inventory only needs to describe the *hypervisor estate* itself:
+# the fleet of Hyper-V hosts the playbook should search when looking for
+# a given VM by name. The vCenter connection is a single set of
+# credentials/endpoint, defined in group_vars/all.yml instead (a Windows
+# VM's placement inside vCenter's inventory tree doesn't need its own
+# host entry - the vCenter API is queried directly by VM name).
 
 all:
   children:
@@ -25,43 +26,10 @@ all:
           ansible_user: "{{ vault_hyperv_username }}"
           ansible_password: "{{ vault_hyperv_password }}"
 
-    guest_windows:
-      hosts:
-
-        # --- Example VM hosted on VMware ---------------------------------
-        winsrv01:
-          ansible_host: winsrv01.example.local
+        hyperv-host02:
+          ansible_host: hyperv-host02.example.local
           ansible_connection: winrm
           ansible_winrm_transport: kerberos
           ansible_port: 5986
-          ansible_user: "{{ vault_guest_username }}"
-          ansible_password: "{{ vault_guest_password }}"
-
-          hypervisor_type: vmware
-          vm_name: winsrv01
-          vcenter_hostname: vcenter.example.local
-          vcenter_username: "{{ vault_vmware_username }}"
-          vcenter_password: "{{ vault_vmware_password }}"
-          vcenter_datacenter: DC01
-          disk_controller_number: 0      # SCSI controller holding the disk
-          disk_unit_number: 0            # SCSI unit number of the disk to grow
-
-          disk_new_size_gb: 100
-          windows_drive_letter: C
-
-        # --- Example VM hosted on Hyper-V ---------------------------------
-        winsrv02:
-          ansible_host: winsrv02.example.local
-          ansible_connection: winrm
-          ansible_winrm_transport: kerberos
-          ansible_port: 5986
-          ansible_user: "{{ vault_guest_username }}"
-          ansible_password: "{{ vault_guest_password }}"
-
-          hypervisor_type: hyperv
-          vm_name: winsrv02
-          hyperv_host: hyperv-host01     # must match an inventory_hostname in hyperv_hypervisor
-          disk_number_hyperv: 0          # index of the VMHardDiskDrive on the VM
-
-          disk_new_size_gb: 150
-          windows_drive_letter: D
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"

@@ -1,40 +1,73 @@
 ---
-# Grows a VM's virtual disk (VMware or Hyper-V, selected per-host via
-# hypervisor_type) and then extends the Windows partition/filesystem
-# hosted on it.
+# Grows a VM's virtual disk (VMware or Hyper-V, auto-detected) and then
+# extends the Windows partition/filesystem hosted on it. Designed to be
+# triggered from a ServiceNow workflow (e.g. via an AWX/Tower job
+# template, called from a Flow/Orchestration action or a MID Server) -
+# there is no static per-VM inventory: everything about the target VM is
+# passed as extra-vars, resolved from the CMDB CI record / change request.
+#
+# Required extra-vars:
+#   vm_name               CI / VM name, as known to vCenter and/or Hyper-V
+#   disk_new_size_gb       target size in GB
+#   windows_drive_letter   drive letter to extend (e.g. C)
+#   guest_username         guest OS admin credential (login)
+#   guest_password         guest OS admin credential (password)
+#
+# Optional extra-vars:
+#   hypervisor_type   vmware|hyperv - skip auto-detection if already known
+#   target_ip         IP/FQDN to reach the guest over WinRM (default: vm_name)
+#   disk_controller_number / disk_unit_number   VMware SCSI disk to grow (default 0/0)
+#   disk_number_hyperv                          Hyper-V VMHardDiskDrive index (default 0)
+#
+# vCenter connection (vcenter_hostname/username/password/datacenter) and
+# the Hyper-V host fleet (inventory group hyperv_hypervisor) are expected
+# to be defined once for the whole environment - see group_vars/all.yml
+# and inventory/hosts.yml.example.
 #
 # Usage:
-#   ansible-playbook playbooks/resize_disk.yml -l winsrv01
-#   ansible-playbook playbooks/resize_disk.yml -l winsrv01 -e disk_new_size_gb=200
-#
-# All required variables (vm_name, disk_new_size_gb, windows_drive_letter,
-# hypervisor_type, plus the vmware_*/hyperv_* connection details) are
-# expected to be defined per-host in inventory - see
-# inventory/hosts.yml.example.
+#   ansible-playbook playbooks/resize_disk.yml \
+#     -e vm_name=WINSRV01 -e disk_new_size_gb=200 -e windows_drive_letter=C \
+#     -e guest_username=Administrator -e guest_password=*** \
+#     --vault-password-file .vault_pass
 
-- name: Grow virtual disk at the hypervisor layer
-  hosts: guest_windows
+- name: Resize a VM disk and its Windows filesystem
+  hosts: localhost
+  connection: local
   gather_facts: false
+
   tasks:
-    - name: Resize disk on VMware
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Determine how to reach the guest OS (WinRM, or a VMBus/VMware Tools fallback)
+      ansible.builtin.include_role:
+        name: preflight_connectivity
+
+    - name: Grow the virtual disk on VMware
       ansible.builtin.include_role:
         name: resize_disk_vmware
-      when: hypervisor_type == 'vmware'
+      when: resizedisk_hypervisor_type == 'vmware'
 
-    - name: Resize disk on Hyper-V
+    - name: Grow the virtual disk on Hyper-V
       ansible.builtin.include_role:
         name: resize_disk_hyperv
-      when: hypervisor_type == 'hyperv'
+      when: resizedisk_hypervisor_type == 'hyperv'
 
-    - name: Fail on unknown hypervisor_type
-      ansible.builtin.fail:
-        msg: "hypervisor_type must be 'vmware' or 'hyperv', got: {{ hypervisor_type | default('undefined') }}"
-      when: hypervisor_type not in ['vmware', 'hyperv']
-
-- name: Extend the Windows filesystem to use the new disk space
-  hosts: guest_windows
-  gather_facts: false
-  tasks:
-    - name: Resize Windows partition/filesystem
+    - name: Extend the Windows filesystem to use the new disk space
       ansible.builtin.include_role:
         name: resize_windows_filesystem
+
+    - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+      ansible.builtin.set_stats:
+        data:
+          resizedisk_summary:
+            vm_name: "{{ vm_name }}"
+            hypervisor_type: "{{ resizedisk_hypervisor_type }}"
+            exec_method: "{{ resizedisk_exec_method }}"
+            drive_letter: "{{ windows_drive_letter }}"
+            requested_size_gb: "{{ disk_new_size_gb }}"
+            resulting_size_gb: "{{ windows_resize_result.SizeGB }}"
+            resulting_free_gb: "{{ windows_resize_result.FreeGB }}"
+            partition_resized: "{{ windows_resize_result.PartitionResized }}"
+        aggregate: false

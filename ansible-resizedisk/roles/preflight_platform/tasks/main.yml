@@ -1,0 +1,92 @@
+---
+# Confirms the target named by ServiceNow (vm_name) is actually a VM, and
+# identifies which hypervisor it lives on. Runs entirely delegated (no
+# connection to the guest itself is needed or attempted here).
+#
+# If the caller already knows the platform (ServiceNow CI class maps
+# 1:1 to vmware/hyperv, or a prior discovery step already resolved it),
+# pass hypervisor_type as an extra-var to skip the search and just
+# confirm presence on that one platform.
+
+- name: Assert vm_name is defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+    fail_msg: "vm_name must be supplied (e.g. -e vm_name=WINSRV01), typically the ServiceNow CI name."
+
+- name: Search vCenter for a VM with this name
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: resizedisk_vmware_search
+  ignore_errors: true
+  when:
+    - hypervisor_type in ['', 'vmware']
+    - vcenter_hostname is defined
+
+- name: Search each known Hyper-V host for a VM with this name
+  delegate_to: "{{ item }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "SilentlyContinue"
+    if (Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue) { "FOUND" } else { "NOTFOUND" }
+  loop: "{{ groups['hyperv_hypervisor'] | default([]) }}"
+  register: resizedisk_hyperv_search
+  changed_when: false
+  ignore_unreachable: true
+  ignore_errors: true
+  when: hypervisor_type in ['', 'hyperv']
+
+- name: Record whether the VM was found in vCenter
+  ansible.builtin.set_fact:
+    resizedisk_found_vmware: "{{ (resizedisk_vmware_search is defined) and (resizedisk_vmware_search is not skipped) and (resizedisk_vmware_search is succeeded) }}"
+
+- name: Identify the Hyper-V host reporting a match, if any
+  ansible.builtin.set_fact:
+    resizedisk_hyperv_matches: "{{ resizedisk_hyperv_search.results
+                                    | default([])
+                                    | selectattr('stdout', 'defined')
+                                    | selectattr('stdout', 'search', '^FOUND')
+                                    | map(attribute='item')
+                                    | list }}"
+
+- name: Fail on ambiguous placement (same name found on both platforms)
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' matches a VM in vCenter and on Hyper-V host(s)
+      {{ resizedisk_hyperv_matches | join(', ') }}. Refusing to guess -
+      pass hypervisor_type explicitly to disambiguate.
+  when:
+    - resizedisk_found_vmware
+    - resizedisk_hyperv_matches | length > 0
+
+- name: Set resolved hypervisor_type and hyperv_host from the vCenter match
+  ansible.builtin.set_fact:
+    resizedisk_hypervisor_type: vmware
+  when: resizedisk_found_vmware
+
+- name: Set resolved hypervisor_type and hyperv_host from the Hyper-V match
+  ansible.builtin.set_fact:
+    resizedisk_hypervisor_type: hyperv
+    resizedisk_hyperv_host: "{{ resizedisk_hyperv_matches[0] }}"
+  when: resizedisk_hyperv_matches | length > 0
+
+- name: Fail if the CI could not be confirmed as a VM on any managed hypervisor
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' was not found on vCenter ({{ vcenter_hostname | default('not configured') }})
+      nor on any Hyper-V host in the 'hyperv_hypervisor' group
+      ({{ groups['hyperv_hypervisor'] | default([]) | join(', ') }}).
+      It is either not a VM, not managed by this playbook, or misnamed - check the CMDB entry.
+  when: resizedisk_hypervisor_type is not defined
+
+- name: Report resolved platform
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' confirmed as a VM on {{ resizedisk_hypervisor_type }}
+      {{ '(' + resizedisk_hyperv_host + ')' if resizedisk_hypervisor_type == 'hyperv' else '' }}.

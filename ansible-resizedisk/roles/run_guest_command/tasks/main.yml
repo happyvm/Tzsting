@@ -1,0 +1,123 @@
+---
+# Runs a PowerShell script string inside the guest OS, regardless of which
+# channel preflight_connectivity picked, and normalizes the result into
+# run_guest_command_result.stdout.
+#
+# Expects: `script` (the PowerShell to run) and resizedisk_exec_method
+# (winrm | vmware_tools | powershell_direct) already set.
+
+- name: Assert a script was provided
+  ansible.builtin.assert:
+    that: script is defined
+    fail_msg: "run_guest_command requires a 'script' variable to be passed in."
+
+- name: Run via WinRM
+  when: resizedisk_exec_method == 'winrm'
+  delegate_to: resizedisk_target
+  ansible.windows.win_shell: "{{ script }}"
+  changed_when: false
+  register: run_guest_command_winrm
+
+- name: Run via VMware Tools guest operations (no network path to the guest needed)
+  when: resizedisk_exec_method == 'vmware_tools'
+  delegate_to: localhost
+  vars:
+    vmware_conn: &vmware_conn
+      hostname: "{{ vcenter_hostname }}"
+      username: "{{ vcenter_username }}"
+      password: "{{ vcenter_password }}"
+      datacenter: "{{ vcenter_datacenter }}"
+      validate_certs: "{{ vmware_validate_certs }}"
+    vmware_guest_conn: &vmware_guest_conn
+      vm_id: "{{ vm_name }}"
+      vm_username: "{{ guest_username }}"
+      vm_password: "{{ guest_password }}"
+  block:
+    - name: Generate a unique guest script/output filename for this invocation
+      ansible.builtin.set_fact:
+        run_guest_command_guest_script: "resizedisk_{{ 100000000 | random }}.ps1"
+        run_guest_command_guest_output: "resizedisk_{{ 100000000 | random }}.out"
+
+    - name: Write the script to a local temp file
+      ansible.builtin.tempfile:
+        suffix: .ps1
+      register: run_guest_command_local_script
+
+    - name: Populate the local temp file with the script content
+      ansible.builtin.copy:
+        dest: "{{ run_guest_command_local_script.path }}"
+        content: "{{ script }}"
+
+    - name: Copy the script into the guest via VMware Tools
+      community.vmware.vmware_guest_file_operation:
+        <<: [*vmware_conn, *vmware_guest_conn]
+        copy:
+          src: "{{ run_guest_command_local_script.path }}"
+          dest: "C:\\Windows\\Temp\\{{ run_guest_command_guest_script }}"
+          overwrite: true
+
+    - name: Execute the script inside the guest via VMware Tools
+      community.vmware.vmware_vm_shell:
+        <<: [*vmware_conn, *vmware_guest_conn]
+        vm_shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        vm_shell_args: >-
+          -NonInteractive -NoProfile -ExecutionPolicy Bypass
+          -File "C:\Windows\Temp\{{ run_guest_command_guest_script }}"
+          > "C:\Windows\Temp\{{ run_guest_command_guest_output }}" 2>&1
+        wait_for_process: true
+
+    - name: Fetch the captured output back from the guest
+      community.vmware.vmware_guest_file_operation:
+        <<: [*vmware_conn, *vmware_guest_conn]
+        fetch:
+          src: "C:\\Windows\\Temp\\{{ run_guest_command_guest_output }}"
+          dest: "{{ run_guest_command_local_script.path }}.out"
+
+    - name: Read the captured output
+      ansible.builtin.set_fact:
+        run_guest_command_vmwaretools_stdout: "{{ lookup('ansible.builtin.file', run_guest_command_local_script.path ~ '.out') }}"
+
+    - name: Clean up temporary files inside the guest
+      community.vmware.vmware_vm_shell:
+        <<: [*vmware_conn, *vmware_guest_conn]
+        vm_shell: "C:\\Windows\\System32\\cmd.exe"
+        vm_shell_args: >-
+          /c del "C:\Windows\Temp\{{ run_guest_command_guest_script }}"
+          "C:\Windows\Temp\{{ run_guest_command_guest_output }}"
+        wait_for_process: true
+      ignore_errors: true
+
+    - name: Clean up local temp files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ run_guest_command_local_script.path }}"
+        - "{{ run_guest_command_local_script.path }}.out"
+
+- name: Run via Hyper-V PowerShell Direct (VMBus, no network path to the guest needed)
+  when: resizedisk_exec_method == 'powershell_direct'
+  delegate_to: "{{ resizedisk_hyperv_host }}"
+  no_log: true
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $securePassword = ConvertTo-SecureString -String @'
+    {{ guest_password }}
+    '@ -AsPlainText -Force
+    $cred = New-Object System.Management.Automation.PSCredential('{{ guest_username }}', $securePassword)
+    $scriptBlock = [scriptblock]::Create(@'
+    {{ script }}
+    '@)
+    Invoke-Command -VMName '{{ vm_name }}' -Credential $cred -ScriptBlock $scriptBlock
+  changed_when: false
+  register: run_guest_command_psdirect
+
+- name: Normalize the command result across channels
+  ansible.builtin.set_fact:
+    run_guest_command_result:
+      stdout: >-
+        {{
+          (run_guest_command_winrm.stdout | default(''))
+          ~ (run_guest_command_vmwaretools_stdout | default(''))
+          ~ (run_guest_command_psdirect.stdout | default(''))
+        }}

@@ -1,6 +1,0 @@
----
-# Global defaults, overridable per-host in inventory.
-
-# Safety net: refuse to "resize" to something smaller or equal to the
-# current size (shrinking a live disk/partition is unsupported here).
-resizedisk_min_growth_gb: 1
