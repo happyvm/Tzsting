@@ -1,9 +1,11 @@
 # ansible-resizedisk
 
-Playbook Ansible pour agrandir le disque virtuel d'une VM Windows — que
-celle-ci soit hébergée sur **VMware** (vSphere/ESXi) ou **Hyper-V** — puis
-étendre automatiquement la partition/le système de fichiers Windows qui
-repose dessus.
+Playbook Ansible pour agrandir le disque virtuel d'une VM **Windows ou
+Linux** — que celle-ci soit hébergée sur **VMware** (vSphere/ESXi) ou
+**Hyper-V** — puis étendre automatiquement la partition/le système de
+fichiers (Windows : NTFS via `Resize-Partition` ; Linux : `growpart` +
+`resize2fs`/`xfs_growfs`/`btrfs`, avec prise en charge LVM) qui repose
+dessus.
 
 Conçu pour être déclenché par un **workflow ServiceNow** (Flow Designer /
 Orchestration, via un job template AWX/Ansible Automation Platform ou un
@@ -34,35 +36,55 @@ tout le reste par délégation, en 5 étapes :
    ci-dessous). Fait aussi le lookup du disque une seule fois
    (`vmware_target_disk` / `hyperv_vhd_info`), réutilisé tel quel par
    `resize_disk_vmware` / `resize_disk_hyperv` qui ne refont plus l'appel.
+   Résout également `resizedisk_guest_os` (`windows`/`linux`) :
+   auto-détecté côté VMware (`hw_guest_id`), à fournir explicitement via
+   `guest_os` côté Hyper-V (voir note plus bas).
 
 3. **`preflight_connectivity`** — détermine le canal pour parler au système
-   invité :
-   - teste WinRM (`win_ping`, avec `ignore_unreachable`) ;
-   - si WinRM ne répond pas :
-     - VM VMware → bascule sur les **opérations invité VMware Tools**
-       (`community.vmware.vmware_vm_shell` / `vmware_guest_file_operation`) :
-       aucun accès réseau à l'invité requis, tout transite par l'API
-       vCenter jusqu'à VMware Tools dans l'invité ;
-     - VM Hyper-V → bascule sur **PowerShell Direct** (canal **VMBus**,
-       `Invoke-Command -VMName`), exécuté localement sur l'hôte Hyper-V ;
-   - échoue si aucun canal n'est disponible (WinRM down + pas d'agent
-     invité fonctionnel).
-   - expose `resizedisk_exec_method` (`winrm` / `vmware_tools` / `powershell_direct`).
+   invité, selon `resizedisk_guest_os` :
+   - **Windows** : teste WinRM (`win_ping`, avec `ignore_unreachable`) ;
+     si WinRM ne répond pas, bascule sur les **opérations invité VMware
+     Tools** (VMware) ou **PowerShell Direct** (Hyper-V, canal **VMBus**,
+     `Invoke-Command -VMName`, exécuté localement sur l'hôte Hyper-V).
+   - **Linux** : teste SSH (module `ping`, avec `ignore_unreachable`) ;
+     si SSH ne répond pas :
+     - VM VMware → même repli VMware Tools que Windows (`vm_shell` avec
+       `/bin/bash` au lieu de `powershell.exe`) : aucun accès réseau à
+       l'invité requis, tout transite par l'API vCenter.
+     - VM Hyper-V → **pas de repli agentless** : PowerShell Direct est un
+       composant d'intégration propre à Windows, sans équivalent Linux
+       natif. SSH down sur un Linux Hyper-V = échec net.
+   - échoue si aucun canal n'est disponible, avec un message qui précise
+     lequel manque (WinRM/SSH, VMware Tools, ou l'absence de repli
+     Hyper-V+Linux).
+   - expose `resizedisk_exec_method` (`winrm` / `ssh` / `vmware_tools` / `powershell_direct`).
 
    Volontairement placée *après* `preflight_disk_constraints` : inutile de
-   payer le coût d'un timeout WinRM + repli VMware Tools/PowerShell Direct
-   pour une requête de toute façon vouée à l'échec côté disque.
+   payer le coût d'un timeout WinRM/SSH + repli pour une requête de toute
+   façon vouée à l'échec côté disque.
 
 4. **Agrandissement du disque côté hyperviseur** (`resize_disk_vmware` ou
    `resize_disk_hyperv` selon `resizedisk_hypervisor_type`) — API vCenter
    pour VMware, `Resize-VHD` délégué à l'hôte Hyper-V. Ne fait plus que
    l'action elle-même, les contrôles ayant déjà eu lieu à l'étape 2.
+   Strictement identique pour Windows et Linux : au niveau hyperviseur, le
+   disque n'a pas d'OS.
 
-5. **`resize_windows_filesystem`** — rescan du stockage, remise en ligne
-   du disque si besoin, puis `Resize-Partition` jusqu'à la taille max.
-   Exécuté via `run_guest_command`, un rôle générique qui envoie le même
-   script PowerShell par le canal choisi à l'étape 3 (WinRM direct,
-   VMware Tools, ou PowerShell Direct), en un seul aller-retour.
+5. **`resize_windows_filesystem`** (Windows) ou **`resize_linux_filesystem`**
+   (Linux), selon `resizedisk_guest_os` :
+   - **Windows** : rescan du stockage, remise en ligne du disque si
+     besoin, puis `Resize-Partition` jusqu'à la taille max.
+   - **Linux** : rescan SCSI (`/sys/class/scsi_host/*/scan`, fonctionne
+     pareil que le disque soit présenté en pvscsi/lsilogic VMware ou en
+     hv_storvsc Hyper-V), détection LVM vs partition simple via `lsblk`,
+     `growpart` sur la bonne partition (et, si LVM, `pvresize` +
+     `lvextend -l +100%FREE` sur tous les PV de la VG concernée), puis
+     resize du filesystem selon son type (`resize2fs`/`xfs_growfs`/`btrfs
+     filesystem resize`).
+
+   Les deux rôles s'exécutent via `run_guest_command`, un rôle générique
+   qui envoie le même script (PowerShell ou bash) par le canal choisi à
+   l'étape 3, en un seul aller-retour.
 
 Un résumé structuré (`resizedisk_summary`) est publié via
 `ansible.builtin.set_stats` — récupérable comme *artifact* de job
@@ -82,7 +104,7 @@ connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 |---|---|---|
 | VM éteinte / non démarrée | `hw_power_status != 'poweredOn'` | `$vm.State != 'Running'` |
 | VM = template | `hw_is_template = true` | — |
-| OS invité non-Windows | `hw_guest_id` ne commence pas par `win` | — (non détectable de façon fiable avant WinRM, voir note) |
+| `guest_os` manquant/invalide | auto-détecté depuis `hw_guest_id`, sauf override | **requis explicitement** (voir note) |
 | Consolidation de snapshot en attente | `guest_consolidation_needed = true` | — |
 | Snapshots / checkpoints présents | `vmware_guest_snapshot_info` → `guest_snapshots.snapshots` non vide | `Get-VMSnapshot` → count > 0 |
 | RDM (physique ou virtuel) / virtual FC (NPIV) | `backing_type != 'FlatVer2'` (RDM = `RawDiskMappingVer1`, y compris RDM sur FC virtuel) | — (voir passthrough) |
@@ -124,25 +146,33 @@ concernée par ce blocage.
 
 La VM doit être allumée : au-delà du disque lui-même, l'étape 5
 (extension du système de fichiers) a besoin d'un OS démarré pour être
-jointe par WinRM, VMware Tools ou PowerShell Direct - une VM éteinte est
-donc bloquée dès le preflight plutôt que de laisser échouer la sonde de
-connectivité avec un message moins parlant. Pour la même raison, le check
-"OS invité non-Windows" n'est fait que côté VMware (donnée déjà en cache,
-disponible avant même de savoir si WinRM répond) : côté Hyper-V, `Get-VM`
-n'expose pas nativement le nom de l'OS invité sans interroger la VM elle-même
-(WinRM/CIM), ce qui casserait l'ordre volontaire "disque avant connectivité".
+jointe par WinRM/SSH, VMware Tools ou PowerShell Direct - une VM éteinte
+est donc bloquée dès le preflight plutôt que de laisser échouer la sonde
+de connectivité avec un message moins parlant.
 
-**Cohérence disque agrandi / lettre visée.** Rien ne garantit, avant
-d'agrandir, que `windows_drive_letter` réside bien sur le disque identifié
-par `disk_controller_number`/`disk_unit_number` (VMware) ou
-`disk_number_hyperv` (Hyper-V) - une erreur de paramétrage ServiceNow
+**`guest_os` : auto-détecté côté VMware, obligatoire côté Hyper-V.**
+Côté VMware, `hw_guest_id` (déjà en cache depuis `preflight_platform`)
+suffit à distinguer Windows de Linux avant même de savoir si WinRM/SSH
+répond. Côté Hyper-V, `Get-VM` n'expose pas nativement l'OS invité sans
+déjà parler à la VM (WinRM/CIM) - ce qui casserait l'ordre volontaire
+"disque avant connectivité" - donc `guest_os` doit être fourni
+explicitement en extra-var pour toute VM Hyper-V. Dans les deux cas,
+passer `guest_os` explicitement court-circuite toujours la détection.
+
+**Cohérence disque agrandi / cible visée.** Rien ne garantit, avant
+d'agrandir, que `windows_drive_letter`/`linux_target` réside bien sur le
+disque identifié par `disk_controller_number`/`disk_unit_number` (VMware)
+ou `disk_number_hyperv` (Hyper-V) - une erreur de paramétrage ServiceNow
 grandirait silencieusement le mauvais disque. Plutôt que de tenter une
 corrélation d'identifiants fragile avant même de savoir parler à l'invité,
-`resize_windows_filesystem` vérifie le résultat réel côté invité après
-coup : si le disque a été agrandi (le preflight l'a déjà garanti) mais que
-la partition visée n'a gagné aucun espace, c'est un signal fort d'un
-mauvais paramétrage - le playbook échoue explicitement plutôt que de
-rapporter silencieusement "déjà à la taille max".
+`resize_windows_filesystem`/`resize_linux_filesystem` vérifient le
+résultat réel côté invité après coup : si le disque a été agrandi (le
+preflight l'a déjà garanti) mais que la partition/le filesystem visé n'a
+gagné aucun espace, c'est un signal fort d'un mauvais paramétrage - le
+playbook échoue explicitement plutôt que de rapporter silencieusement
+"déjà à la taille max". Côté Linux, ce même échec peut aussi signaler
+qu'un volume group LVM a des PV sur plusieurs disques dont un seul a été
+agrandi.
 
 > **Note** : les noms de champs `hw_power_status`, `hw_is_template`,
 > `hw_guest_id`/`hw_guest_full_name` et `guest_consolidation_needed`
@@ -162,12 +192,13 @@ ansible-resizedisk/
 ├── playbooks/resize_disk.yml            # playbook principal (hosts: localhost)
 └── roles/
     ├── preflight_platform/              # VM ? VMware ou Hyper-V ?
-    ├── preflight_disk_constraints/      # snapshot/RDM/passthrough/VHDX partagé... -> bloque tôt
-    ├── preflight_connectivity/          # WinRM, sinon VMware Tools / PowerShell Direct
+    ├── preflight_disk_constraints/      # snapshot/RDM/passthrough/VHDX partagé... -> bloque tôt + guest_os
+    ├── preflight_connectivity/          # WinRM/SSH, sinon VMware Tools / PowerShell Direct
     ├── resize_disk_vmware/              # resize via API vCenter
     ├── resize_disk_hyperv/              # resize via Resize-VHD sur l'hôte Hyper-V
-    ├── run_guest_command/               # exécution PowerShell multi-canal dans l'invité
-    └── resize_windows_filesystem/       # extension partition/FS dans l'invité
+    ├── run_guest_command/               # exécution PowerShell/bash multi-canal dans l'invité
+    ├── resize_windows_filesystem/       # extension partition NTFS dans l'invité Windows
+    └── resize_linux_filesystem/         # growpart + resize2fs/xfs_growfs/btrfs (+ LVM) dans l'invité Linux
 ```
 
 ## Prérequis
@@ -181,12 +212,21 @@ ansible-resizedisk/
   d'édition des disques des VM concernées
 - Compte Windows invité avec les droits d'administration nécessaires pour
   `Resize-Partition` / `Update-HostStorageCache`
-- **Fallback VMware Tools** : nécessite VMware Tools démarré dans
-  l'invité (sinon WinRM down + Tools down = aucun canal disponible, le
-  playbook échoue proprement).
-- **Fallback Hyper-V / PowerShell Direct** : nécessite Hyper-V PowerShell
-  sur l'hôte (`Invoke-Command -VMName`), disponible uniquement depuis
-  l'hôte Hyper-V lui-même — d'où la délégation vers `resizedisk_hyperv_host`.
+- Compte Linux invité root, ou avec sudo (`linux_become: true` +
+  éventuellement `linux_become_password`), et les paquets `growpart`
+  (`cloud-guest-utils` Debian/Ubuntu, `cloud-utils-growpart` RHEL/SUSE)
+  + `parted`/`partprobe`, `resize2fs` (ext*), `xfsprogs` (XFS) ou
+  `btrfs-progs` (Btrfs) selon le filesystem ; `lvm2` en plus si LVM est
+  utilisé. Aucun de ces paquets n'est installé automatiquement par le
+  playbook - échec explicite si l'outil requis manque.
+- **Fallback VMware Tools** (Windows et Linux) : nécessite VMware Tools/
+  `open-vm-tools` démarré dans l'invité (sinon WinRM/SSH down + Tools down
+  = aucun canal disponible, le playbook échoue proprement).
+- **Fallback Hyper-V / PowerShell Direct** (Windows uniquement) : nécessite
+  Hyper-V PowerShell sur l'hôte (`Invoke-Command -VMName`), disponible
+  uniquement depuis l'hôte Hyper-V lui-même — d'où la délégation vers
+  `resizedisk_hyperv_host`. **Pas d'équivalent pour un invité Linux** : sur
+  Hyper-V, SSH doit être joignable, il n'y a pas de repli agentless.
 - **Hyper-V, resize à chaud** : le disque doit être rattaché à un
   contrôleur SCSI (VM Generation 2, ou disque de données SCSI sur une
   Generation 1). Un disque IDE nécessite l'arrêt de la VM.
@@ -209,17 +249,32 @@ ansible-playbook playbooks/resize_disk.yml \
   --vault-password-file .vault_pass
 ```
 
+Exemple Linux (VM Hyper-V, donc `guest_os` obligatoire ; clé SSH plutôt
+que mot de passe ; compte non-root avec sudo) :
+
+```bash
+ansible-playbook playbooks/resize_disk.yml \
+  -e vm_name=LINSRV01 \
+  -e disk_new_size_gb=200 \
+  -e linux_target=/data \
+  -e guest_os=linux \
+  -e guest_username=ansible \
+  -e guest_ssh_private_key_file=~/.ssh/id_rsa \
+  -e linux_become=true \
+  --vault-password-file .vault_pass
+```
+
 ### Intégration ServiceNow
 
 Cas d'usage typique : un *Catalog Item* / *Change Request* ServiceNow
 déclenche, via **Ansible Automation Platform** (job template + webhook)
 ou un **MID Server** exécutant `ansible-playbook` directement, un appel
 avec les attributs de la CI en extra-vars (`vm_name`, `disk_new_size_gb`,
-`windows_drive_letter`) et les identifiants invité issus du Credential
-Store. Le résultat (`resizedisk_summary` via `set_stats`, ou le code de
-sortie du job) permet à ServiceNow de mettre à jour le ticket/tâche
-associé (succès, taille finale, canal d'exécution utilisé en cas de
-repli WinRM indisponible).
+`windows_drive_letter` ou `linux_target` selon l'OS) et les identifiants
+invité issus du Credential Store. Le résultat (`resizedisk_summary` via
+`set_stats`, ou le code de sortie du job) permet à ServiceNow de mettre à
+jour le ticket/tâche associé (succès, taille finale, canal d'exécution
+utilisé en cas de repli WinRM/SSH indisponible).
 
 ## Variables
 
@@ -229,15 +284,22 @@ repli WinRM indisponible).
 |---|---|
 | `vm_name` | Nom de la CI / VM, tel que connu de vCenter et/ou Hyper-V |
 | `disk_new_size_gb` | Taille cible en Go |
-| `windows_drive_letter` | Lettre de lecteur à étendre (ex. `C`) |
-| `guest_username` / `guest_password` | Identifiants admin de l'OS invité |
+| `guest_username` | Identifiant admin de l'OS invité |
+| `guest_password` | Mot de passe invité - requis pour Windows ; pour Linux, alternative à `guest_ssh_private_key_file` |
+| `windows_drive_letter` | Lettre de lecteur à étendre (ex. `C`) - **requis si l'invité est Windows** |
+| `linux_target` | Point de montage à étendre (ex. `/`, `/data`) - **requis si l'invité est Linux** (défaut `/` si omis) |
 
 ### Optionnelles
 
 | Variable | Défaut | Description |
 |---|---|---|
 | `hypervisor_type` | auto-détecté | `vmware` ou `hyperv`, pour sauter la recherche |
-| `target_ip` | `vm_name` | IP/FQDN pour joindre l'invité en WinRM |
+| `guest_os` | auto-détecté (VMware) | `windows` ou `linux` - **obligatoire pour une VM Hyper-V** (voir note plus haut) |
+| `target_ip` | `vm_name` | IP/FQDN pour joindre l'invité en WinRM/SSH |
+| `guest_ssh_private_key_file` | — | Linux : clé privée SSH, alternative à `guest_password` |
+| `linux_ssh_port` | `22` | port SSH |
+| `linux_become` | `false` | passer par sudo côté Linux si `guest_username` n'est pas root |
+| `linux_become_password` | — | mot de passe sudo, si nécessaire |
 | `disk_controller_number` / `disk_unit_number` | `0` / `0` | disque SCSI VMware à agrandir |
 | `disk_number_hyperv` | `0` | index du `VMHardDiskDrive` Hyper-V |
 | `resizedisk_min_growth_gb` | `1` | garde-fou anti-shrink/no-op |

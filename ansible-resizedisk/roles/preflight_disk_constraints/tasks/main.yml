@@ -68,16 +68,35 @@
       '{{ vm_name }}' has pending snapshot consolidation in vCenter. Resolve
       consolidation (right-click VM > Snapshots > Consolidate) before resizing.
 
-- name: Refuse to resize a non-Windows guest
+- name: Determine guest OS family (VMware - auto-detected unless guest_os is supplied)
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    resizedisk_guest_os: >-
+      {{ guest_os | default('windows' if (resizedisk_vmware_search.instance.hw_guest_id | lower is search('^win')) else 'linux') }}
+
+- name: Refuse to resize an unrecognized guest_os override
   when: resizedisk_hypervisor_type == 'vmware'
   ansible.builtin.assert:
     that:
-      - resizedisk_vmware_search.instance.hw_guest_id | lower is search('^win')
+      - resizedisk_guest_os in ['windows', 'linux']
+    fail_msg: "guest_os must be 'windows' or 'linux', got: {{ resizedisk_guest_os }}"
+
+- name: Determine guest OS family (Hyper-V - must be supplied explicitly)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - guest_os is defined
+      - guest_os in ['windows', 'linux']
     fail_msg: >-
-      '{{ vm_name }}' guest OS is {{ resizedisk_vmware_search.instance.hw_guest_full_name }}
-      ({{ resizedisk_vmware_search.instance.hw_guest_id }}), not Windows.
-      This playbook only knows how to extend a Windows filesystem -
-      refusing to proceed.
+      guest_os (windows|linux) must be supplied explicitly for Hyper-V VMs:
+      unlike vCenter, Get-VM doesn't reliably expose the guest OS family
+      without already talking to the guest, and preflight_connectivity
+      hasn't attempted that yet at this point in the run.
+
+- name: Set guest OS family (Hyper-V)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    resizedisk_guest_os: "{{ guest_os }}"
 
 - name: Look up the current size of the target disk
   when: resizedisk_hypervisor_type == 'vmware'

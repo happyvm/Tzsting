@@ -1,6 +1,6 @@
 ---
 # Grows a VM's virtual disk (VMware or Hyper-V, auto-detected) and then
-# extends the Windows partition/filesystem hosted on it. Designed to be
+# extends the Windows or Linux filesystem hosted on it. Designed to be
 # triggered from a ServiceNow workflow (e.g. via an AWX/Tower job
 # template, called from a Flow/Orchestration action or a MID Server) -
 # there is no static per-VM inventory: everything about the target VM is
@@ -8,14 +8,24 @@
 #
 # Required extra-vars:
 #   vm_name               CI / VM name, as known to vCenter and/or Hyper-V
-#   disk_new_size_gb       target size in GB
-#   windows_drive_letter   drive letter to extend (e.g. C)
-#   guest_username         guest OS admin credential (login)
-#   guest_password         guest OS admin credential (password)
+#   disk_new_size_gb      target size in GB
+#   guest_username        guest OS admin credential (login)
+#   guest_password        guest OS admin credential - Windows, or Linux
+#                          password auth (use guest_ssh_private_key_file
+#                          instead for Linux key-based auth)
+#   windows_drive_letter  drive letter to extend, e.g. C - required if the
+#                          guest is Windows
+#   linux_target           mountpoint to extend, e.g. / or /data - required
+#                          if the guest is Linux
 #
 # Optional extra-vars:
-#   hypervisor_type   vmware|hyperv - skip auto-detection if already known
-#   target_ip         IP/FQDN to reach the guest over WinRM (default: vm_name)
+#   hypervisor_type    vmware|hyperv - skip hypervisor auto-detection if already known
+#   guest_os           windows|linux - auto-detected on VMware from the guest
+#                      ID, but MUST be supplied explicitly on Hyper-V (Get-VM
+#                      can't tell us the guest OS before we've connected to it)
+#   target_ip          IP/FQDN to reach the guest over WinRM/SSH (default: vm_name)
+#   guest_ssh_private_key_file   Linux key-based auth, instead of guest_password
+#   linux_become / linux_become_password   sudo on Linux if guest_username isn't root
 #   disk_controller_number / disk_unit_number   VMware SCSI disk to grow (default 0/0)
 #   disk_number_hyperv                          Hyper-V VMHardDiskDrive index (default 0)
 #
@@ -29,8 +39,14 @@
 #     -e vm_name=WINSRV01 -e disk_new_size_gb=200 -e windows_drive_letter=C \
 #     -e guest_username=Administrator -e guest_password=*** \
 #     --vault-password-file .vault_pass
+#
+#   ansible-playbook playbooks/resize_disk.yml \
+#     -e vm_name=LINSRV01 -e disk_new_size_gb=200 -e linux_target=/data \
+#     -e guest_username=ansible -e guest_ssh_private_key_file=~/.ssh/id_rsa \
+#     -e linux_become=true \
+#     --vault-password-file .vault_pass
 
-- name: Resize a VM disk and its Windows filesystem
+- name: Resize a VM disk and its Windows or Linux filesystem
   hosts: localhost
   connection: local
   gather_facts: false
@@ -44,7 +60,7 @@
       ansible.builtin.include_role:
         name: preflight_disk_constraints
 
-    - name: Determine how to reach the guest OS (WinRM, or a VMBus/VMware Tools fallback)
+    - name: Determine how to reach the guest OS (WinRM/SSH, or a VMBus/VMware Tools fallback)
       ansible.builtin.include_role:
         name: preflight_connectivity
 
@@ -61,17 +77,28 @@
     - name: Extend the Windows filesystem to use the new disk space
       ansible.builtin.include_role:
         name: resize_windows_filesystem
+      when: resizedisk_guest_os == 'windows'
+
+    - name: Extend the Linux filesystem to use the new disk space
+      ansible.builtin.include_role:
+        name: resize_linux_filesystem
+      when: resizedisk_guest_os == 'linux'
 
     - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+      vars:
+        resizedisk_final_size_gb: "{{ windows_resize_result.SizeGB if resizedisk_guest_os == 'windows' else (linux_resize_result.SizeBytes | int / 1073741824) | round(2) }}"
+        resizedisk_final_free_gb: "{{ windows_resize_result.FreeGB if resizedisk_guest_os == 'windows' else (linux_resize_result.AvailBytes | int / 1073741824) | round(2) }}"
+        resizedisk_partition_resized: "{{ windows_resize_result.PartitionResized if resizedisk_guest_os == 'windows' else linux_resize_result.PartitionResized }}"
       ansible.builtin.set_stats:
         data:
           resizedisk_summary:
             vm_name: "{{ vm_name }}"
             hypervisor_type: "{{ resizedisk_hypervisor_type }}"
+            guest_os: "{{ resizedisk_guest_os }}"
             exec_method: "{{ resizedisk_exec_method }}"
-            drive_letter: "{{ windows_drive_letter }}"
+            target: "{{ windows_drive_letter if resizedisk_guest_os == 'windows' else linux_target }}"
             requested_size_gb: "{{ disk_new_size_gb }}"
-            resulting_size_gb: "{{ windows_resize_result.SizeGB }}"
-            resulting_free_gb: "{{ windows_resize_result.FreeGB }}"
-            partition_resized: "{{ windows_resize_result.PartitionResized }}"
+            resulting_size_gb: "{{ resizedisk_final_size_gb }}"
+            resulting_free_gb: "{{ resizedisk_final_free_gb }}"
+            partition_resized: "{{ resizedisk_partition_resized }}"
         aggregate: false
