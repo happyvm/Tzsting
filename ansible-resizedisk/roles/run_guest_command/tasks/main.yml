@@ -16,15 +16,16 @@
 - name: Run via WinRM
   when: resizedisk_exec_method == 'winrm'
   delegate_to: resizedisk_target
-  ansible.windows.win_shell: "{{ script }}"
+  ansible.windows.win_shell:
+    cmd: "{{ script }}"
   changed_when: false
   register: run_guest_command_winrm
 
 - name: Run via SSH
   when: resizedisk_exec_method == 'ssh'
   delegate_to: resizedisk_target
-  ansible.builtin.shell: "{{ script }}"
-  args:
+  ansible.builtin.shell:
+    cmd: "{{ script }}"
     executable: /bin/bash
   changed_when: false
   failed_when: false  # non-zero exit is expected on guest-side errors; the
@@ -152,16 +153,17 @@
   when: resizedisk_exec_method == 'powershell_direct'
   delegate_to: "{{ resizedisk_hyperv_host }}"
   no_log: true
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    $securePassword = ConvertTo-SecureString -String @'
-    {{ guest_password }}
-    '@ -AsPlainText -Force
-    $cred = New-Object System.Management.Automation.PSCredential('{{ guest_username }}', $securePassword)
-    $scriptBlock = [scriptblock]::Create(@'
-    {{ script }}
-    '@)
-    Invoke-Command -VMName '{{ vm_name }}' -Credential $cred -ScriptBlock $scriptBlock
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $securePassword = ConvertTo-SecureString -String @'
+      {{ guest_password }}
+      '@ -AsPlainText -Force
+      $cred = New-Object System.Management.Automation.PSCredential('{{ guest_username }}', $securePassword)
+      $scriptBlock = [scriptblock]::Create(@'
+      {{ script }}
+      '@)
+      Invoke-Command -VMName '{{ vm_name }}' -Credential $cred -ScriptBlock $scriptBlock
   changed_when: false
   register: run_guest_command_psdirect
 

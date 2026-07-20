@@ -300,49 +300,50 @@
 - name: Locate the VHD/VHDX backing the target disk and gather resize-eligibility facts
   when: resizedisk_hypervisor_type == 'hyperv'
   delegate_to: "{{ resizedisk_hyperv_host }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    $drive = Get-VM -Name '{{ vm_name }}' | Get-VMHardDiskDrive | Select-Object -Index {{ disk_number_hyperv }}
-    if (-not $drive) {
-        throw "No VMHardDiskDrive found at index {{ disk_number_hyperv }} for VM '{{ vm_name }}'"
-    }
-    $isPassthrough = [string]::IsNullOrEmpty($drive.Path)
-    $vhd = $null
-    $hostVolumeFreeBytes = $null
-    if (-not $isPassthrough) {
-        $vhd = Get-VHD -Path $drive.Path
-        $hostVolumeFreeBytes = (Get-Item $drive.Path).PSDrive.Free
-    }
-    $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
-    $replicationState = (Get-VMReplication -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue).State
-    $generation = (Get-VM -Name '{{ vm_name }}').Generation
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $drive = Get-VM -Name '{{ vm_name }}' | Get-VMHardDiskDrive | Select-Object -Index {{ disk_number_hyperv }}
+      if (-not $drive) {
+          throw "No VMHardDiskDrive found at index {{ disk_number_hyperv }} for VM '{{ vm_name }}'"
+      }
+      $isPassthrough = [string]::IsNullOrEmpty($drive.Path)
+      $vhd = $null
+      $hostVolumeFreeBytes = $null
+      if (-not $isPassthrough) {
+          $vhd = Get-VHD -Path $drive.Path
+          $hostVolumeFreeBytes = (Get-Item $drive.Path).PSDrive.Free
+      }
+      $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
+      $replicationState = (Get-VMReplication -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue).State
+      $generation = (Get-VM -Name '{{ vm_name }}').Generation
 
-    # Best-effort: only meaningful if the FailoverClusters module is
-    # present on this host (it's a separate Windows feature, not always
-    # installed even on Hyper-V hosts that do belong to a cluster). A
-    # cluster-made-highly-available VM shows up as a cluster group with
-    # the same name as the VM.
-    $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
-    $isClustered = $false
-    if ($clusterCheckAvailable) {
-        $isClustered = [bool](Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue)
-    }
+      # Best-effort: only meaningful if the FailoverClusters module is
+      # present on this host (it's a separate Windows feature, not always
+      # installed even on Hyper-V hosts that do belong to a cluster). A
+      # cluster-made-highly-available VM shows up as a cluster group with
+      # the same name as the VM.
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      if ($clusterCheckAvailable) {
+          $isClustered = [bool](Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue)
+      }
 
-    [PSCustomObject]@{
-        Path                  = $drive.Path
-        ControllerType        = $drive.ControllerType
-        Generation            = $generation
-        IsPassthrough         = $isPassthrough
-        SharedVhdx            = [bool]$drive.SupportPersistentReservations
-        CheckpointCount       = $checkpointCount
-        VhdType               = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
-        VhdFormat             = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
-        SizeBytes             = if ($vhd) { $vhd.Size } else { $null }
-        ReplicationState      = if ($replicationState) { $replicationState.ToString() } else { $null }
-        HostVolumeFreeBytes   = $hostVolumeFreeBytes
-        IsClustered           = $isClustered
-        ClusterCheckAvailable = $clusterCheckAvailable
-    } | ConvertTo-Json -Compress
+      [PSCustomObject]@{
+          Path                  = $drive.Path
+          ControllerType        = $drive.ControllerType
+          Generation            = $generation
+          IsPassthrough         = $isPassthrough
+          SharedVhdx            = [bool]$drive.SupportPersistentReservations
+          CheckpointCount       = $checkpointCount
+          VhdType               = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
+          VhdFormat             = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
+          SizeBytes             = if ($vhd) { $vhd.Size } else { $null }
+          ReplicationState      = if ($replicationState) { $replicationState.ToString() } else { $null }
+          HostVolumeFreeBytes   = $hostVolumeFreeBytes
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+      } | ConvertTo-Json -Compress
   changed_when: false
   register: hyperv_disk_lookup
 

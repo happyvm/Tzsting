@@ -32,10 +32,11 @@
 
 - name: Search each known Hyper-V host for a VM with this name
   delegate_to: "{{ item }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "SilentlyContinue"
-    $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
-    if ($vm) { "FOUND|$($vm.State)" } else { "NOTFOUND" }
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "SilentlyContinue"
+      $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+      if ($vm) { "FOUND|$($vm.State)" } else { "NOTFOUND" }
   loop: "{{ groups['hyperv_hypervisor'] | default([]) }}"
   register: resizedisk_hyperv_search
   changed_when: false

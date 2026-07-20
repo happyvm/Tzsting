@@ -67,7 +67,8 @@
       vars:
         resizedisk_lock_action: acquire
 
-    - block:
+    - name: Resize the disk and filesystem, releasing the lock afterwards either way
+      block:
         - name: Block early on anything unsafe to resize (snapshots, RDM/virtual FC, passthrough, shared VHDX, checkpoints...)
           ansible.builtin.include_role:
             name: preflight_disk_constraints

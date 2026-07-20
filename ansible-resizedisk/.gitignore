@@ -1,3 +1,4 @@
 inventory/hosts.yml
 *.retry
 .vault_pass
+.extracted/

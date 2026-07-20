@@ -264,10 +264,15 @@ agrandi.
 ansible-resizedisk/
 ├── ansible.cfg
 ├── requirements.yml                     # collections requises
+├── .ansible-lint                        # profil basic, avec nos écarts assumés documentés
+├── .yamllint                            # config yamllint (ligne max relevée à 200)
 ├── inventory/
 │   ├── hosts.yml.example                # parc d'hôtes Hyper-V à interroger
 │   └── group_vars/all.yml               # connexion vCenter + garde-fou anti-shrink
 ├── playbooks/resize_disk.yml            # playbook principal (hosts: localhost)
+├── scripts/
+│   ├── extract_embedded_scripts.py      # extrait le PS/bash embarqué en fichiers autonomes (pour CI)
+│   └── PSScriptAnalyzerSettings.psd1    # règle exclue documentée (mot de passe -> PSCredential)
 └── roles/
     ├── preflight_platform/              # VM ? VMware ou Hyper-V ?
     ├── resizedisk_lock/                 # verrou par VM (acquire/release), anti double-run
@@ -279,6 +284,49 @@ ansible-resizedisk/
     ├── resize_windows_filesystem/       # extension partition NTFS dans l'invité Windows
     └── resize_linux_filesystem/         # growpart + resize2fs/xfs_growfs/btrfs (+ LVM) dans l'invité Linux
 ```
+
+## Intégration continue
+
+Deux workflows GitHub Actions couvrent ce projet :
+
+- **`.github/workflows/ansible-resizedisk-ci.yml`** (déclenché sur les
+  changements sous `ansible-resizedisk/`) :
+  - `yamllint` et `ansible-lint` (profil `basic`, deux écarts assumés
+    documentés dans `.ansible-lint` : préfixage cross-role volontaire des
+    variables, et `ignore_errors` sur des nettoyages best-effort) ;
+  - `ansible-playbook --syntax-check`.
+- **`.github/workflows/powershell-quality.yml`** (existant au niveau du
+  repo, étendu ici) : le PowerShell de ce projet est embarqué comme
+  littéral YAML templaté Jinja, invisible pour un scan `-Recurse` classique
+  qui ne regarde que les fichiers `.ps1`. `scripts/extract_embedded_scripts.py`
+  l'extrait d'abord vers des fichiers autonomes (les `{{ ... }}` Jinja sont
+  remplacés par un nombre, ce qui reste syntaxiquement valide dans tous
+  les contextes utilisés ici - chaîne citée ou littéral numérique), puis
+  `PSScriptAnalyzer` tourne dessus avec `scripts/PSScriptAnalyzerSettings.psd1`
+  (une seule règle exclue, documentée : conversion d'un mot de passe reçu
+  en clair vers `PSCredential`, inévitable ici). Le bash de
+  `resize_linux_filesystem` est extrait et passé à `shellcheck` dans le
+  premier workflow.
+
+Ces deux étapes d'extraction ont été précieuses en pratique : le script
+de `extract_embedded_scripts.py` a servi à valider réellement (parse +
+`PSScriptAnalyzer` + `shellcheck`) l'ensemble du code embarqué de ce
+projet pendant son développement - et a permis de trouver un vrai bug
+(voir note ci-dessous), pas seulement une relecture manuelle.
+
+> **Note technique** : tous les `win_shell`/`shell` de ce projet utilisent
+> la forme explicite `cmd: |` plutôt que la forme "free-form"
+> (`win_shell: |` directement). La forme free-form déclenche un vrai bug
+> de parsing Ansible ("unbalanced jinja2 block or quotes") sur certains de
+> nos scripts PowerShell (accolades de blocs de code mêlées à des `{{ }}`
+> Jinja) quand le rôle est chargé via l'ancienne syntaxe `roles:` plutôt
+> que `include_role` - c'est exactement ce que fait `ansible-lint` pour
+> valider un rôle isolément, ce qui a permis de le détecter. Notre
+> playbook utilise `include_role` partout et n'était donc jamais touché en
+> pratique, mais la forme `cmd:` est de toute façon la pratique recommandée
+> (`ansible-lint` a une règle dédiée, `no-free-form`) et évite la classe de
+> bug entièrement plutôt que de compter sur le fait de ne jamais changer de
+> mécanisme d'inclusion de rôle.
 
 ## Prérequis
 

@@ -89,38 +89,39 @@
 - name: (Hyper-V) Acquire or release the lock file on the owning host
   when: resizedisk_hypervisor_type == 'hyperv'
   delegate_to: "{{ resizedisk_hyperv_host }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    $lockDir = "C:\ProgramData\resizedisk"
-    $lockPath = Join-Path $lockDir "{{ vm_name }}.lock"
-    if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $lockDir = "C:\ProgramData\resizedisk"
+      $lockPath = Join-Path $lockDir "{{ vm_name }}.lock"
+      if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
 
-    if ('{{ resizedisk_lock_action }}' -eq 'release') {
-        Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
-        "RELEASED"
-        exit 0
-    }
+      if ('{{ resizedisk_lock_action }}' -eq 'release') {
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+          "RELEASED"
+          exit 0
+      }
 
-    if (Test-Path $lockPath) {
-        $ageSeconds = [int]((Get-Date).ToUniversalTime() - (Get-Item $lockPath).LastWriteTimeUtc).TotalSeconds
-        if ($ageSeconds -lt {{ resizedisk_lock_timeout_seconds }}) {
-            $holder = Get-Content $lockPath -Raw -ErrorAction SilentlyContinue
-            "LOCKED:$ageSeconds`:$holder"
-            exit 0
-        }
-        Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue  # stale, break it
-    }
+      if (Test-Path $lockPath) {
+          $ageSeconds = [int]((Get-Date).ToUniversalTime() - (Get-Item $lockPath).LastWriteTimeUtc).TotalSeconds
+          if ($ageSeconds -lt {{ resizedisk_lock_timeout_seconds }}) {
+              $holder = Get-Content $lockPath -Raw -ErrorAction SilentlyContinue
+              "LOCKED:$ageSeconds`:$holder"
+              exit 0
+          }
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue  # stale, break it
+      }
 
-    try {
-        $fs = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
-        $writer = New-Object System.IO.StreamWriter($fs)
-        $writer.Write("{{ resizedisk_lock_run_id }}")
-        $writer.Close()
-        $fs.Close()
-        "ACQUIRED"
-    } catch [System.IO.IOException] {
-        "LOCKED:race"
-    }
+      try {
+          $fs = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+          $writer = New-Object System.IO.StreamWriter($fs)
+          $writer.Write("{{ resizedisk_lock_run_id }}")
+          $writer.Close()
+          $fs.Close()
+          "ACQUIRED"
+      } catch [System.IO.IOException] {
+          "LOCKED:race"
+      }
   changed_when: false
   register: resizedisk_lock_hyperv_result
 

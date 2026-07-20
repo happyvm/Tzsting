@@ -27,9 +27,10 @@
 - name: Grow the virtual hard disk to the requested size
   when: resizedisk_disk_grow_needed
   delegate_to: "{{ resizedisk_hyperv_host }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    Resize-VHD -Path '{{ hyperv_vhd_info.Path }}' -SizeBytes {{ (disk_new_size_gb | int) * 1073741824 }}
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Resize-VHD -Path '{{ hyperv_vhd_info.Path }}' -SizeBytes {{ (disk_new_size_gb | int) * 1073741824 }}
   register: hyperv_resize_result
 
 - name: Report new disk size
