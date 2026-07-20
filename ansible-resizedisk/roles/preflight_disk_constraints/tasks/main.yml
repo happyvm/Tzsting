@@ -187,9 +187,11 @@
     }
     $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
     $replicationState = (Get-VMReplication -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue).State
+    $generation = (Get-VM -Name '{{ vm_name }}').Generation
     [PSCustomObject]@{
         Path                = $drive.Path
         ControllerType      = $drive.ControllerType
+        Generation          = $generation
         IsPassthrough       = $isPassthrough
         SharedVhdx          = [bool]$drive.SupportPersistentReservations
         CheckpointCount     = $checkpointCount
@@ -215,6 +217,19 @@
       The disk at index {{ disk_number_hyperv }} on '{{ vm_name }}' is a
       pass-through (physical) disk, not a VHD/VHDX. It must be grown at
       the storage/LUN level and rescanned in the guest, not resized here.
+
+- name: Refuse to hot-resize an IDE-attached disk (Generation 1 system disk)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.ControllerType != 'IDE'
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} on '{{ vm_name }}' (Generation
+      {{ hyperv_vhd_info.Generation }}) is attached to an IDE controller.
+      Generation 1 VMs boot from IDE, and Hyper-V does not support
+      hot-resizing an IDE-attached disk while the VM is running - shut the
+      VM down first, or run this outside change window with the required
+      downtime.
 
 - name: Refuse to resize a shared VHDX
   when: resizedisk_hypervisor_type == 'hyperv'

@@ -86,6 +86,7 @@ connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 | Snapshots / checkpoints présents | `vmware_guest_snapshot_info` → `guest_snapshots.snapshots` non vide | `Get-VMSnapshot` → count > 0 |
 | RDM (physique ou virtuel) / virtual FC (NPIV) | `backing_type != 'FlatVer2'` (RDM = `RawDiskMappingVer1`, y compris RDM sur FC virtuel) | — (voir passthrough) |
 | Disque physique en passthrough | — | `VMHardDiskDrive.Path` vide (`DiskNumber` utilisé à la place) |
+| Disque système sur contrôleur IDE (Generation 1) | — | `VMHardDiskDrive.ControllerType == 'IDE'` |
 | VHDX partagé (cluster invité) | — | `SupportPersistentReservations = true` |
 | Disque de différenciation | — | `Get-VHD.VhdType -eq 'Differencing'` |
 | Réplication active (DR) | — | `Get-VMReplication` → `State != 'Disabled'` |
@@ -95,6 +96,16 @@ Un RDM (physique, virtuel, ou présenté via un adaptateur Fibre Channel
 virtuel/NPIV) n'est de toute façon pas agrandissable via l'API vCenter :
 il faut agrandir le LUN côté baie de stockage puis rescanner. Ces
 disques sont donc simplement exclus, pas traités différemment.
+
+Sous Hyper-V, une VM **Generation 1** démarre toujours depuis un
+contrôleur **IDE**, et Hyper-V ne supporte pas le resize à chaud d'un
+disque attaché en IDE (contrairement au SCSI, `Resize-VHD` échoue tant
+que le fichier est verrouillé par une VM démarrée). Le disque système
+d'une Generation 1 est donc systématiquement bloqué tant que la VM
+tourne - seule option : éteindre la VM (hors fenêtre de ce playbook, qui
+suppose la VM allumée pour l'étape d'extension du système de fichiers).
+Une Generation 1 avec un disque de données en SCSI n'est, elle, pas
+concernée par ce blocage.
 
 La VM doit être allumée : au-delà du disque lui-même, l'étape 5
 (extension du système de fichiers) a besoin d'un OS démarré pour être

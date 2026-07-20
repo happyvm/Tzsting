@@ -5,11 +5,8 @@
 #
 # Assumes preflight_disk_constraints already ran: it looked up the disk
 # (hyperv_vhd_info) and rejected anything unsafe to grow (pass-through,
-# shared VHDX, checkpoints, differencing disk, shrink/no-op).
-#
-# Note: online resize of an attached VHDX requires the disk to be on a
-# SCSI controller (Generation 2 VM, or Generation 1 with SCSI-attached
-# data disk). IDE-attached disks must be resized with the VM powered off.
+# shared VHDX, checkpoints, differencing disk, IDE-attached/Generation 1
+# system disk, shrink/no-op).
 
 - name: Assert required variables/facts are defined
   ansible.builtin.assert:
