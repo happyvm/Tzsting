@@ -1,0 +1,11 @@
+---
+target_ip: "{{ vm_name }}"
+winrm_port: 5986
+winrm_transport: ntlm
+winrm_validate_certs: ignore
+winrm_check_timeout: 10
+
+linux_ssh_port: 22
+linux_ssh_strict_host_key_checking: "no"
+linux_ssh_check_timeout: 10
+linux_become: false

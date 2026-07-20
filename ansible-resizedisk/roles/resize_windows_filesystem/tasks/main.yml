@@ -1,0 +1,120 @@
+---
+# Extends the Windows partition/filesystem on windows_drive_letter to
+# fill whatever free space now follows it on the disk. Hypervisor-agnostic:
+# by the time this role runs, the underlying virtual disk has already been
+# grown by resize_disk_vmware or resize_disk_hyperv. Executed in the guest
+# through whichever channel preflight_connectivity resolved (WinRM,
+# VMware Tools, or Hyper-V PowerShell Direct), via run_guest_command - a
+# single round trip keeps this cheap on the fallback channels, which pay
+# a real cost per invocation (guest file copy/exec/fetch, or VMBus setup).
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - windows_drive_letter is defined
+    fail_msg: "windows_drive_letter must be set for resize_windows_filesystem."
+
+- name: Extend the Windows filesystem in a single guest round trip
+  ansible.builtin.include_role:
+    name: run_guest_command
+  vars:
+    # Branches internally, in PowerShell, between the modern Storage-module
+    # path (Get-Partition/Resize-Partition, Server 2012+) and a diskpart+WMI
+    # fallback for Server 2008/2008 R2 (WMF3.0-capable enough for WinRM, but
+    # predating the Storage module entirely). Detected from inside the guest
+    # rather than as a preflight fact: by the time this role runs,
+    # connectivity is already established, so there's no ordering problem
+    # like the guest_os detection has - and it keeps this a single script
+    # instead of adding another Ansible-level branch/variable.
+    script: |
+      $ErrorActionPreference = "Stop"
+      $driveLetter = '{{ windows_drive_letter }}'
+      $osVersion = [System.Environment]::OSVersion.Version
+      $isLegacy = ($osVersion.Major -eq 6 -and $osVersion.Minor -le 1)  # 6.0=2008, 6.1=2008 R2
+
+      if ($isLegacy) {
+          # No Storage module here: Get-Partition/Resize-Partition/
+          # Update-HostStorageCache don't exist before Server 2012.
+          # Win32_Volume (WMI, available since NT4) gives us reliable
+          # size/free-space reads before and after; diskpart is the only
+          # built-in way to actually extend a basic volume pre-2012, but
+          # its console output isn't parsed - success is determined the
+          # same way as everywhere else in this playbook: by comparing
+          # guest-observed size before/after.
+          $volumeBefore = Get-CimInstance -ClassName Win32_Volume -Filter "DriveLetter='$($driveLetter):'"
+          if (-not $volumeBefore) {
+              throw "No volume found for drive letter $driveLetter"
+          }
+          $sizeBefore = $volumeBefore.Capacity
+
+          $diskpartScript = "rescan`r`nselect volume $driveLetter`r`nextend`r`n"
+          $scriptPath = [System.IO.Path]::GetTempFileName()
+          Set-Content -Path $scriptPath -Value $diskpartScript -Encoding ASCII
+          $diskpartOutput = (diskpart /s $scriptPath 2>&1 | Out-String).Trim()
+          Remove-Item -Path $scriptPath -Force -ErrorAction SilentlyContinue
+
+          $volumeAfter = Get-CimInstance -ClassName Win32_Volume -Filter "DriveLetter='$($driveLetter):'"
+          $sizeAfter = $volumeAfter.Capacity
+
+          [PSCustomObject]@{
+              DiskWasOffline = $false  # not checked pre-2012: default SAN policy already brought new disks online automatically before Server 2012 changed that default
+              PartitionResized = ($sizeAfter -gt $sizeBefore)
+              SizeGB = [math]::Round($sizeAfter / 1GB, 2)
+              FreeGB = [math]::Round($volumeAfter.FreeSpace / 1GB, 2)
+              FileSystem = $volumeAfter.FileSystem
+              DiskpartOutput = $diskpartOutput
+          } | ConvertTo-Json -Compress
+      } else {
+          Update-HostStorageCache
+
+          $disk = Get-Partition -DriveLetter $driveLetter | Get-Disk
+          $wasOffline = $disk.IsOffline
+          if ($wasOffline) {
+              Set-Disk -Number $disk.Number -IsOffline $false
+          }
+
+          $partition = Get-Partition -DriveLetter $driveLetter
+          $supported = Get-PartitionSupportedSize -DriveLetter $driveLetter
+          $currentSize = $partition.Size
+          $maxSize = $supported.SizeMax
+          $resized = $false
+
+          if (($maxSize - $currentSize) -gt {{ windows_resize_threshold_bytes }}) {
+              Resize-Partition -DriveLetter $driveLetter -Size $maxSize
+              $resized = $true
+          }
+
+          $volume = Get-Volume -DriveLetter $driveLetter
+          [PSCustomObject]@{
+              DiskWasOffline = $wasOffline
+              PartitionResized = $resized
+              SizeGB = [math]::Round($volume.Size / 1GB, 2)
+              FreeGB = [math]::Round($volume.SizeRemaining / 1GB, 2)
+              FileSystem = $volume.FileSystem
+          } | ConvertTo-Json -Compress
+      }
+
+- name: Parse the guest result
+  ansible.builtin.set_fact:
+    windows_resize_result: "{{ run_guest_command_result.stdout | from_json }}"
+
+- name: Fail if the partition gained no space despite the disk having been grown
+  ansible.builtin.assert:
+    that:
+      - windows_resize_result.PartitionResized
+    fail_msg: >-
+      The virtual disk was grown at the hypervisor layer, but drive
+      {{ windows_drive_letter }} on {{ vm_name }} had no extra space to
+      claim ({{ windows_resize_result.SizeGB }}GB, unchanged). This usually
+      means windows_drive_letter isn't actually on the disk identified by
+      disk_controller_number/disk_unit_number (VMware) or disk_number_hyperv
+      (Hyper-V) - or another partition immediately follows it on the same
+      disk. Double-check which physical disk hosts that drive letter inside
+      the guest before retrying.
+
+- name: Report resulting volume size
+  ansible.builtin.debug:
+    msg: >-
+      Drive {{ windows_drive_letter }} on {{ vm_name }}: {{ windows_resize_result.SizeGB }}GB total,
+      {{ windows_resize_result.FreeGB }}GB free
+      ({{ 'partition extended' if windows_resize_result.PartitionResized else 'already at max size, no resize needed' }}).

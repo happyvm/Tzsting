@@ -1,0 +1,196 @@
+---
+# Determines how we'll talk to the guest OS to extend its filesystem.
+# Branches on resizedisk_guest_os (windows | linux), resolved by
+# preflight_disk_constraints:
+#
+# Windows:
+#   1. WinRM directly, if reachable (fastest, preferred).
+#   2. VMware Tools guest operations (via vCenter), if the VM is on
+#      VMware and WinRM is down - no network path to the guest needed.
+#   3. Hyper-V PowerShell Direct over VMBus, if the VM is on Hyper-V and
+#      WinRM is down - also no network path to the guest needed, but
+#      requires being executed locally on the owning Hyper-V host.
+#
+# Linux:
+#   1. SSH directly, if reachable.
+#   2. VMware Tools guest operations, if the VM is on VMware and SSH is
+#      down - same no-network-path benefit as the Windows case.
+#   3. Hyper-V has no agentless fallback for Linux guests: PowerShell
+#      Direct is a Windows-only integration component. SSH down on a
+#      Hyper-V Linux guest is a hard stop.
+#
+# Requires resizedisk_hypervisor_type (and resizedisk_hyperv_host, for
+# Hyper-V) already resolved by preflight_platform, and resizedisk_guest_os
+# already resolved by preflight_disk_constraints.
+
+- name: Assert guest OS credentials are supplied
+  ansible.builtin.assert:
+    that:
+      - guest_username is defined
+      - (guest_password is defined) or (guest_ssh_private_key_file is defined)
+    fail_msg: >-
+      guest_username must be supplied, along with guest_password
+      (Windows, or Linux password auth) or guest_ssh_private_key_file
+      (Linux key-based auth).
+
+# --- Windows -----------------------------------------------------------------
+
+- name: Register the guest as a dynamic in-memory inventory host (Windows)
+  when: resizedisk_guest_os == 'windows'
+  ansible.builtin.add_host:
+    name: resizedisk_target
+    ansible_host: "{{ target_ip }}"
+    ansible_connection: winrm
+    ansible_user: "{{ guest_username }}"
+    ansible_password: "{{ guest_password }}"
+    ansible_port: "{{ winrm_port }}"
+    ansible_winrm_transport: "{{ winrm_transport }}"
+    ansible_winrm_server_cert_validation: "{{ winrm_validate_certs }}"
+    ansible_winrm_connection_timeout: "{{ winrm_check_timeout }}"
+    ansible_winrm_read_timeout_sec: "{{ winrm_check_timeout | int + 5 }}"
+
+- name: Probe WinRM reachability on the guest
+  when: resizedisk_guest_os == 'windows'
+  delegate_to: resizedisk_target
+  ansible.windows.win_ping:
+  register: resizedisk_winrm_probe
+  ignore_unreachable: true
+  ignore_errors: true
+
+- name: Record WinRM availability
+  when: resizedisk_guest_os == 'windows'
+  ansible.builtin.set_fact:
+    resizedisk_winrm_available: "{{ resizedisk_winrm_probe is succeeded }}"
+
+- name: Use WinRM as the execution channel
+  ansible.builtin.set_fact:
+    resizedisk_exec_method: winrm
+  when:
+    - resizedisk_guest_os == 'windows'
+    - resizedisk_winrm_available
+
+- name: WinRM unreachable on VMware guest - probe VMware Tools guest operations
+  delegate_to: localhost
+  community.vmware.vmware_vm_shell:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    vm_id: "{{ vm_name }}"
+    vm_username: "{{ guest_username }}"
+    vm_password: "{{ guest_password }}"
+    vm_shell: "C:\\Windows\\System32\\cmd.exe"
+    vm_shell_args: "/c exit 0"
+    wait_for_process: true
+  register: resizedisk_vmwaretools_probe
+  ignore_errors: true
+  when:
+    - resizedisk_guest_os == 'windows'
+    - not resizedisk_winrm_available
+    - resizedisk_hypervisor_type == 'vmware'
+
+- name: Use VMware Tools guest operations as the execution channel (Windows)
+  ansible.builtin.set_fact:
+    resizedisk_exec_method: vmware_tools
+  when:
+    - resizedisk_guest_os == 'windows'
+    - not resizedisk_winrm_available
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_vmwaretools_probe is succeeded
+
+- name: WinRM unreachable on Hyper-V guest - fall back to PowerShell Direct (VMBus)
+  ansible.builtin.set_fact:
+    resizedisk_exec_method: powershell_direct
+  when:
+    - resizedisk_guest_os == 'windows'
+    - not resizedisk_winrm_available
+    - resizedisk_hypervisor_type == 'hyperv'
+
+# --- Linux ---------------------------------------------------------------
+
+- name: Register the guest as a dynamic in-memory inventory host (Linux)
+  when: resizedisk_guest_os == 'linux'
+  ansible.builtin.add_host:
+    name: resizedisk_target
+    ansible_host: "{{ target_ip }}"
+    ansible_connection: ssh
+    ansible_user: "{{ guest_username }}"
+    ansible_password: "{{ guest_password | default(omit) }}"
+    ansible_ssh_private_key_file: "{{ guest_ssh_private_key_file | default(omit) }}"
+    ansible_port: "{{ linux_ssh_port }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking={{ linux_ssh_strict_host_key_checking }} -o ConnectTimeout={{ linux_ssh_check_timeout }}"
+    ansible_become: "{{ linux_become }}"
+    ansible_become_password: "{{ linux_become_password | default(omit) }}"
+    ansible_python_interpreter: "{{ linux_python_interpreter | default(omit) }}"
+
+- name: Probe SSH reachability on the guest
+  when: resizedisk_guest_os == 'linux'
+  delegate_to: resizedisk_target
+  ansible.builtin.ping:
+  register: resizedisk_ssh_probe
+  ignore_unreachable: true
+  ignore_errors: true
+
+- name: Record SSH availability
+  when: resizedisk_guest_os == 'linux'
+  ansible.builtin.set_fact:
+    resizedisk_ssh_available: "{{ resizedisk_ssh_probe is succeeded }}"
+
+- name: Use SSH as the execution channel
+  ansible.builtin.set_fact:
+    resizedisk_exec_method: ssh
+  when:
+    - resizedisk_guest_os == 'linux'
+    - resizedisk_ssh_available
+
+- name: SSH unreachable on VMware Linux guest - probe VMware Tools guest operations
+  delegate_to: localhost
+  community.vmware.vmware_vm_shell:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    vm_id: "{{ vm_name }}"
+    vm_username: "{{ guest_username }}"
+    vm_password: "{{ guest_password | default('') }}"
+    vm_shell: "/bin/true"
+    wait_for_process: true
+  register: resizedisk_vmwaretools_probe_linux
+  ignore_errors: true
+  when:
+    - resizedisk_guest_os == 'linux'
+    - not resizedisk_ssh_available
+    - resizedisk_hypervisor_type == 'vmware'
+
+- name: Use VMware Tools guest operations as the execution channel (Linux)
+  ansible.builtin.set_fact:
+    resizedisk_exec_method: vmware_tools
+  when:
+    - resizedisk_guest_os == 'linux'
+    - not resizedisk_ssh_available
+    - resizedisk_hypervisor_type == 'vmware'
+    - resizedisk_vmwaretools_probe_linux is succeeded
+
+# Hyper-V + Linux + SSH down: deliberately no fallback branch here.
+# PowerShell Direct is a Windows-only integration component; there is no
+# equivalent agentless channel to a Linux guest over VMBus. Falls through
+# to the generic "no execution channel" failure below.
+
+- name: Fail if no execution channel could be established
+  ansible.builtin.fail:
+    msg: >-
+      {{ 'WinRM' if resizedisk_guest_os == 'windows' else 'SSH' }} is
+      unreachable on {{ target_ip }} and no fallback channel is available
+      ({{
+        'VMware Tools is not responding inside the guest' if resizedisk_hypervisor_type == 'vmware'
+        else ('Hyper-V host ' ~ (resizedisk_hyperv_host | default('?')) ~ ' is unreachable' if resizedisk_guest_os == 'windows'
+              else 'Hyper-V has no agentless fallback for Linux guests (PowerShell Direct is Windows-only) - SSH must be reachable')
+      }}).
+      Cannot proceed.
+  when: resizedisk_exec_method is not defined
+
+- name: Report execution channel
+  ansible.builtin.debug:
+    msg: "Execution channel for {{ vm_name }} ({{ resizedisk_guest_os }}): {{ resizedisk_exec_method }}"

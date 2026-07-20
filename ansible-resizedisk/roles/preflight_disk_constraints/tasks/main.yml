@@ -1,0 +1,374 @@
+---
+# Fails fast, before any connectivity probing or actual resize, if the
+# target disk isn't safe to grow. Runs right after preflight_platform
+# (needs resizedisk_hypervisor_type / resizedisk_hyperv_host) and before
+# preflight_connectivity, so a doomed request never pays for a WinRM
+# timeout + VMware Tools/PowerShell Direct fallback probe first.
+#
+# Also does the current-disk lookup once: vmware_target_disk / hyperv_vhd_info
+# set here are reused by resize_disk_vmware / resize_disk_hyperv, which no
+# longer repeat the lookup.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - disk_new_size_gb is defined
+      - resizedisk_hypervisor_type is defined
+    fail_msg: >-
+      vm_name, disk_new_size_gb and resizedisk_hypervisor_type must all be
+      set (resizedisk_hypervisor_type is normally resolved by preflight_platform).
+
+- name: Refuse to resize beyond the configured maximum size
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) <= (resizedisk_max_size_gb | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB exceeds the configured
+      maximum of {{ resizedisk_max_size_gb }}GB (resizedisk_max_size_gb).
+      This is a policy guardrail against a mistyped size - raise the limit
+      explicitly (-e resizedisk_max_size_gb=...) if this one is intentional.
+
+# --- VMware ------------------------------------------------------------------
+# vSphere refuses (or silently breaks consolidation for) a hot-grow of a
+# VMDK that has snapshots, and vmware_guest_disk cannot resize anything
+# that isn't a plain VMDK: RDM (physical or virtual compatibility mode,
+# which is also how RDM-over-virtual-FC/NPIV LUNs surface here) reports a
+# non-FlatVer2 backing_type and must be grown on the storage array side
+# instead.
+#
+# The power/template/consolidation checks below reuse resizedisk_vmware_search
+# (already fetched by preflight_platform to confirm the VM exists) - no
+# extra vCenter call needed.
+
+- name: Refuse to resize a VM that isn't powered on
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - resizedisk_vmware_search.instance.hw_power_status == 'poweredOn'
+    fail_msg: >-
+      '{{ vm_name }}' is not powered on in vCenter (state:
+      {{ resizedisk_vmware_search.instance.hw_power_status }}). The guest
+      filesystem step needs the OS running to extend the volume afterwards -
+      power it on first.
+
+- name: Refuse to resize a VM template
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - not resizedisk_vmware_search.instance.hw_is_template
+    fail_msg: "'{{ vm_name }}' is a VM template in vCenter, not a running VM - refusing to resize."
+
+- name: Refuse to resize while snapshot consolidation is pending
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - not (resizedisk_vmware_search.instance.guest_consolidation_needed | default(false))
+    fail_msg: >-
+      '{{ vm_name }}' has pending snapshot consolidation in vCenter. Resolve
+      consolidation (right-click VM > Snapshots > Consolidate) before resizing.
+
+- name: Determine guest OS family (VMware - auto-detected unless guest_os is supplied)
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    resizedisk_guest_os: >-
+      {{ guest_os | default('windows' if (resizedisk_vmware_search.instance.hw_guest_id | lower is search('^win')) else 'linux') }}
+
+- name: Refuse to resize an unrecognized guest_os override
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - resizedisk_guest_os in ['windows', 'linux']
+    fail_msg: "guest_os must be 'windows' or 'linux', got: {{ resizedisk_guest_os }}"
+
+- name: Determine guest OS family (Hyper-V - must be supplied explicitly)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - guest_os is defined
+      - guest_os in ['windows', 'linux']
+    fail_msg: >-
+      guest_os (windows|linux) must be supplied explicitly for Hyper-V VMs:
+      unlike vCenter, Get-VM doesn't reliably expose the guest OS family
+      without already talking to the guest, and preflight_connectivity
+      hasn't attempted that yet at this point in the run.
+
+- name: Set guest OS family (Hyper-V)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    resizedisk_guest_os: "{{ guest_os }}"
+
+- name: Look up the current size of the target disk
+  when: resizedisk_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_disk_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: vmware_disk_info
+
+- name: Determine the disk(s) matching the requested controller/unit number
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    vmware_matching_disks: "{{ vmware_disk_info.guest_disk_info.values()
+                                | selectattr('controller_number', 'equalto', disk_controller_number)
+                                | selectattr('unit_number', 'equalto', disk_unit_number)
+                                | list }}"
+
+- name: Refuse to proceed if no disk matches the requested controller/unit number
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - vmware_matching_disks | length > 0
+    fail_msg: >-
+      No disk found on '{{ vm_name }}' at controller {{ disk_controller_number }},
+      unit {{ disk_unit_number }}. Disks actually present: {{
+      vmware_disk_info.guest_disk_info.values()
+      | map(attribute='label') | join(', ') }}. Check disk_controller_number/disk_unit_number.
+
+- name: Record the target disk
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    vmware_target_disk: "{{ vmware_matching_disks[0] }}"
+
+- name: Check for existing snapshots on the VM
+  when: resizedisk_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: vmware_snapshot_info
+
+- name: Refuse to resize while snapshots exist
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - (vmware_snapshot_info.guest_snapshots.snapshots | default([])) | length == 0
+    fail_msg: >-
+      '{{ vm_name }}' has {{ vmware_snapshot_info.guest_snapshots.snapshots | default([]) | length }}
+      snapshot(s) ({{ vmware_snapshot_info.guest_snapshots.snapshots | default([]) | map(attribute='name') | join(', ') }}).
+      Resizing a disk with snapshots present is unsupported - consolidate/remove
+      them first.
+
+- name: Refuse to resize a non-VMDK-backed disk (RDM / virtual FC / other passthrough)
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - vmware_target_disk.backing_type == 'FlatVer2'
+    fail_msg: >-
+      Disk (controller {{ disk_controller_number }}, unit {{ disk_unit_number }})
+      on '{{ vm_name }}' is backed by {{ vmware_target_disk.backing_type }},
+      not a standard VMDK. RDM disks (physical or virtual compatibility
+      mode, including RDM over virtual Fibre Channel/NPIV) cannot be
+      resized through the vCenter API - grow the LUN on the storage array
+      and rescan instead.
+
+- name: Refuse to shrink or no-op the disk (VMware)
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) >= ((vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(0, 'ceil') | int) + (resizedisk_min_growth_gb | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB is not at least
+      {{ resizedisk_min_growth_gb }}GB larger than the current disk size
+      ({{ (vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(2) }}GB). Refusing to shrink/no-op.
+
+- name: Check free space on the datastore backing the target disk
+  when: resizedisk_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_datastore_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vmware_target_disk.backing_datastore }}"
+  register: vmware_datastore_info
+
+- name: Refuse to resize if the datastore is inaccessible
+  when: resizedisk_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - vmware_datastore_info.datastores[0].accessible
+    fail_msg: >-
+      Datastore '{{ vmware_target_disk.backing_datastore }}' is reported
+      inaccessible by vCenter (APD/PDL, host connectivity issue...) -
+      refusing to attempt a resize against it.
+
+- name: Refuse to resize if the datastore doesn't have enough free space
+  when: resizedisk_hypervisor_type == 'vmware'
+  vars:
+    vmware_growth_bytes: "{{ ((disk_new_size_gb | int) * 1073741824) - (vmware_target_disk.capacity_in_kb | int * 1024) }}"
+    vmware_datastore_free_bytes: "{{ vmware_datastore_info.datastores[0].freeSpace | int }}"
+  ansible.builtin.assert:
+    that:
+      - vmware_datastore_free_bytes >= (vmware_growth_bytes | int) + ((resizedisk_datastore_free_margin_gb | int) * 1073741824)
+    fail_msg: >-
+      Datastore '{{ vmware_target_disk.backing_datastore }}' only has
+      {{ (vmware_datastore_free_bytes | int / 1073741824) | round(2) }}GB free,
+      not enough to grow the disk by {{ (vmware_growth_bytes | int / 1073741824) | round(2) }}GB
+      plus the {{ resizedisk_datastore_free_margin_gb }}GB safety margin.
+
+# --- Hyper-V -------------------------------------------------------------
+# Resize-VHD only operates on VHD/VHDX files: it cannot touch a physical
+# disk attached in pass-through mode, a shared VHDX used for guest
+# clustering (SupportPersistentReservations), or a disk that's part of a
+# checkpoint/differencing chain (resizing the wrong member of the chain
+# silently produces an inconsistent disk). Hyper-V Replica also tracks
+# writes against the disk's current size, so growing it out from under an
+# active replication relationship breaks replication.
+
+- name: Refuse to resize a VM that isn't running
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - resizedisk_hyperv_power_state == 'Running'
+    fail_msg: >-
+      '{{ vm_name }}' is not running on Hyper-V (state:
+      {{ resizedisk_hyperv_power_state }}). The guest filesystem step needs
+      the OS running to extend the volume afterwards - power it on first.
+
+- name: Locate the VHD/VHDX backing the target disk and gather resize-eligibility facts
+  when: resizedisk_hypervisor_type == 'hyperv'
+  delegate_to: "{{ resizedisk_hyperv_host }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $drive = Get-VM -Name '{{ vm_name }}' | Get-VMHardDiskDrive | Select-Object -Index {{ disk_number_hyperv }}
+    if (-not $drive) {
+        throw "No VMHardDiskDrive found at index {{ disk_number_hyperv }} for VM '{{ vm_name }}'"
+    }
+    $isPassthrough = [string]::IsNullOrEmpty($drive.Path)
+    $vhd = $null
+    $hostVolumeFreeBytes = $null
+    if (-not $isPassthrough) {
+        $vhd = Get-VHD -Path $drive.Path
+        $hostVolumeFreeBytes = (Get-Item $drive.Path).PSDrive.Free
+    }
+    $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
+    $replicationState = (Get-VMReplication -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue).State
+    $generation = (Get-VM -Name '{{ vm_name }}').Generation
+    [PSCustomObject]@{
+        Path                = $drive.Path
+        ControllerType      = $drive.ControllerType
+        Generation          = $generation
+        IsPassthrough       = $isPassthrough
+        SharedVhdx          = [bool]$drive.SupportPersistentReservations
+        CheckpointCount     = $checkpointCount
+        VhdType             = if ($vhd) { $vhd.VhdType.ToString() } else { $null }
+        VhdFormat           = if ($vhd) { $vhd.VhdFormat.ToString() } else { $null }
+        SizeBytes           = if ($vhd) { $vhd.Size } else { $null }
+        ReplicationState    = if ($replicationState) { $replicationState.ToString() } else { $null }
+        HostVolumeFreeBytes = $hostVolumeFreeBytes
+    } | ConvertTo-Json -Compress
+  changed_when: false
+  register: hyperv_disk_lookup
+
+- name: Parse current disk info
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    hyperv_vhd_info: "{{ hyperv_disk_lookup.stdout | from_json }}"
+
+- name: Refuse to resize a pass-through (physical) disk
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - not hyperv_vhd_info.IsPassthrough
+    fail_msg: >-
+      The disk at index {{ disk_number_hyperv }} on '{{ vm_name }}' is a
+      pass-through (physical) disk, not a VHD/VHDX. It must be grown at
+      the storage/LUN level and rescanned in the guest, not resized here.
+
+- name: Refuse to hot-resize an IDE-attached disk (Generation 1 system disk)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.ControllerType != 'IDE'
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} on '{{ vm_name }}' (Generation
+      {{ hyperv_vhd_info.Generation }}) is attached to an IDE controller.
+      Generation 1 VMs boot from IDE, and Hyper-V does not support
+      hot-resizing an IDE-attached disk while the VM is running - shut the
+      VM down first, or run this outside change window with the required
+      downtime.
+
+- name: Refuse to resize a shared VHDX
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - not hyperv_vhd_info.SharedVhdx
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} on '{{ vm_name }}' is a shared VHDX
+      (SupportPersistentReservations), used for guest clustering. Resize
+      requires coordinating all cluster nodes / removing sharing first -
+      refusing to proceed automatically.
+
+- name: Refuse to resize while checkpoints exist
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.CheckpointCount == 0
+    fail_msg: >-
+      '{{ vm_name }}' has {{ hyperv_vhd_info.CheckpointCount }} checkpoint(s).
+      Hyper-V does not support resizing a VHDX with checkpoints - remove or
+      merge them first.
+
+- name: Refuse to resize a differencing disk directly
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - hyperv_vhd_info.VhdType != 'Differencing'
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} on '{{ vm_name }}' is a differencing disk
+      (part of a parent/child chain). Resize the base disk after merging
+      the chain, not the differencing disk directly.
+
+- name: Refuse to grow a legacy VHD beyond its 2040GB format limit
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - not (hyperv_vhd_info.VhdFormat == 'VHD' and (disk_new_size_gb | int) > 2040)
+    fail_msg: >-
+      {{ hyperv_vhd_info.Path }} is a legacy VHD (not VHDX): its format
+      caps out at 2040GB, but {{ disk_new_size_gb }}GB was requested.
+      Convert it to VHDX first (Convert-VHD) if you need to grow past that.
+
+- name: Refuse to resize while Hyper-V Replica is active
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - (hyperv_vhd_info.ReplicationState | default('Disabled', true)) == 'Disabled'
+    fail_msg: >-
+      '{{ vm_name }}' has Hyper-V Replica enabled (state:
+      {{ hyperv_vhd_info.ReplicationState }}). Resizing the disk of a
+      replicated VM breaks replication unless it's paused/removed first -
+      refusing to proceed automatically.
+
+- name: Refuse to shrink or no-op the disk (Hyper-V)
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - (disk_new_size_gb | int) >= ((hyperv_vhd_info.SizeBytes | int / 1073741824) | round(0, 'ceil') | int) + (resizedisk_min_growth_gb | int)
+    fail_msg: >-
+      Requested size {{ disk_new_size_gb }}GB is not at least
+      {{ resizedisk_min_growth_gb }}GB larger than the current disk size
+      ({{ (hyperv_vhd_info.SizeBytes | int / 1073741824) | round(2) }}GB). Refusing to shrink/no-op.
+
+- name: Refuse to resize if the hosting volume doesn't have enough free space
+  when: resizedisk_hypervisor_type == 'hyperv'
+  vars:
+    hyperv_growth_bytes: "{{ ((disk_new_size_gb | int) * 1073741824) - (hyperv_vhd_info.SizeBytes | int) }}"
+  ansible.builtin.assert:
+    that:
+      - (hyperv_vhd_info.HostVolumeFreeBytes | int) >= (hyperv_growth_bytes | int) + ((resizedisk_host_free_margin_gb | int) * 1073741824)
+    fail_msg: >-
+      The volume hosting {{ hyperv_vhd_info.Path }} on {{ resizedisk_hyperv_host }}
+      only has {{ (hyperv_vhd_info.HostVolumeFreeBytes | int / 1073741824) | round(2) }}GB free,
+      not enough to grow the disk by {{ (hyperv_growth_bytes | int / 1073741824) | round(2) }}GB
+      plus the {{ resizedisk_host_free_margin_gb }}GB safety margin.

@@ -1,0 +1,135 @@
+---
+# Extends the Linux filesystem mounted at linux_target to fill whatever
+# free space now follows it on the disk. Hypervisor-agnostic (same SCSI
+# rescan works for VMware pvscsi/lsilogic and Hyper-V's hv_storvsc), and
+# handles both a plain partition and an LVM logical volume, in a single
+# guest round trip via run_guest_command - same reasoning as
+# resize_windows_filesystem: the fallback channels pay a real per-call
+# cost. Requires growpart (cloud-guest-utils / cloud-utils-growpart) and,
+# for LVM, pvresize/lvextend - fails with a clear message if missing
+# rather than trying to install anything.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - linux_target is defined
+    fail_msg: "linux_target must be set for resize_linux_filesystem (a mountpoint, e.g. / or /data)."
+
+- name: Extend the Linux filesystem in a single guest round trip
+  ansible.builtin.include_role:
+    name: run_guest_command
+  vars:
+    script: |
+      set -uo pipefail
+      MOUNTPOINT='{{ linux_target }}'
+
+      fail() { echo "RESIZEDISK_ERROR: $1"; exit 1; }
+      for req in lsblk findmnt df; do
+        command -v "$req" >/dev/null 2>&1 || fail "required tool '$req' not found in guest"
+      done
+
+      SOURCE=$(findmnt -n -o SOURCE --target "$MOUNTPOINT" 2>/dev/null)
+      [ -n "$SOURCE" ] || fail "no mounted filesystem found at $MOUNTPOINT"
+      FSTYPE=$(findmnt -n -o FSTYPE --target "$MOUNTPOINT" 2>/dev/null)
+
+      # Trigger a SCSI bus rescan so the kernel sees the new virtual disk
+      # size (works the same whether the disk is presented via VMware's
+      # pvscsi/lsilogic or Hyper-V's hv_storvsc - both are SCSI to Linux).
+      for host in /sys/class/scsi_host/host*/scan; do
+        [ -w "$host" ] && echo "- - -" > "$host" 2>/dev/null
+      done
+      true
+
+      grow_partition() {
+        # $1 = partition device (e.g. /dev/sda1)
+        command -v growpart >/dev/null 2>&1 || fail "growpart not found in guest (cloud-guest-utils / cloud-utils-growpart package)"
+        local part="$1"
+        local pkname partnum disk
+        pkname=$(lsblk -no PKNAME "$part" 2>/dev/null)
+        [ -n "$pkname" ] || fail "could not determine parent disk of $part"
+        disk="/dev/$pkname"
+        partnum=$(cat "/sys/class/block/$(basename "$part")/partition" 2>/dev/null)
+        [ -n "$partnum" ] || fail "could not determine partition number of $part"
+        command -v partprobe >/dev/null 2>&1 && partprobe "$disk" >/dev/null 2>&1
+        growpart "$disk" "$partnum" >/dev/null 2>&1
+        true
+      }
+
+      RESIZE_TARGET="$SOURCE"
+      TYPE=$(lsblk -no TYPE "$SOURCE" 2>/dev/null | head -1)
+
+      if [ "$TYPE" = "lvm" ]; then
+        command -v pvresize >/dev/null 2>&1 || fail "LVM in use but pvresize not found in guest"
+        command -v lvextend >/dev/null 2>&1 || fail "LVM in use but lvextend not found in guest"
+        VG=$(lvs --noheadings -o vg_name "$SOURCE" 2>/dev/null | xargs)
+        [ -n "$VG" ] || fail "could not determine the volume group of $SOURCE"
+        for pv in $(pvs --noheadings -o pv_name -S "vg_name=$VG" 2>/dev/null); do
+          if [ "$(lsblk -no TYPE "$pv" 2>/dev/null | head -1)" = "part" ]; then
+            grow_partition "$pv"
+          fi
+          pvresize "$pv" >/dev/null 2>&1
+        done
+        lvextend -l +100%FREE "$SOURCE" >/dev/null 2>&1
+        true
+      else
+        grow_partition "$SOURCE"
+      fi
+
+      SIZE_BEFORE=$(df -B1 --output=size "$MOUNTPOINT" 2>/dev/null | tail -1 | tr -d ' ')
+
+      case "$FSTYPE" in
+        ext2|ext3|ext4)
+          command -v resize2fs >/dev/null 2>&1 || fail "resize2fs not found in guest"
+          resize2fs "$RESIZE_TARGET" >/dev/null 2>&1 || fail "resize2fs failed on $RESIZE_TARGET"
+          ;;
+        xfs)
+          command -v xfs_growfs >/dev/null 2>&1 || fail "xfs_growfs not found in guest (xfsprogs package)"
+          xfs_growfs "$MOUNTPOINT" >/dev/null 2>&1 || fail "xfs_growfs failed on $MOUNTPOINT"
+          ;;
+        btrfs)
+          command -v btrfs >/dev/null 2>&1 || fail "btrfs not found in guest (btrfs-progs package)"
+          btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || fail "btrfs resize failed on $MOUNTPOINT"
+          ;;
+        *)
+          fail "unsupported filesystem type '$FSTYPE' on $MOUNTPOINT"
+          ;;
+      esac
+
+      SIZE_AFTER=$(df -B1 --output=size "$MOUNTPOINT" 2>/dev/null | tail -1 | tr -d ' ')
+      AVAIL_AFTER=$(df -B1 --output=avail "$MOUNTPOINT" 2>/dev/null | tail -1 | tr -d ' ')
+      RESIZED=false
+      [ "${SIZE_AFTER:-0}" -gt "${SIZE_BEFORE:-0}" ] && RESIZED=true
+
+      printf '{"FileSystem":"%s","SizeBytes":%s,"AvailBytes":%s,"PartitionResized":%s}\n' \
+        "$FSTYPE" "${SIZE_AFTER:-0}" "${AVAIL_AFTER:-0}" "$RESIZED"
+
+- name: Fail on a guest-side error
+  ansible.builtin.assert:
+    that:
+      - "'RESIZEDISK_ERROR' not in run_guest_command_result.stdout"
+    fail_msg: "{{ run_guest_command_result.stdout }}"
+
+- name: Parse the guest result
+  ansible.builtin.set_fact:
+    linux_resize_result: "{{ run_guest_command_result.stdout | trim | from_json }}"
+
+- name: Fail if the filesystem gained no space despite the disk having been grown
+  ansible.builtin.assert:
+    that:
+      - linux_resize_result.PartitionResized
+    fail_msg: >-
+      The virtual disk was grown at the hypervisor layer, but
+      {{ linux_target }} on {{ vm_name }} had no extra space to claim
+      ({{ (linux_resize_result.SizeBytes | int / 1073741824) | round(2) }}GB,
+      unchanged). This usually means linux_target isn't actually on the disk
+      identified by disk_controller_number/disk_unit_number (VMware) or
+      disk_number_hyperv (Hyper-V) - or, for LVM, that the volume group has
+      other physical volumes not backed by that disk. Double-check the
+      block device layout inside the guest before retrying.
+
+- name: Report resulting filesystem size
+  ansible.builtin.debug:
+    msg: >-
+      {{ linux_target }} on {{ vm_name }}: {{ (linux_resize_result.SizeBytes | int / 1073741824) | round(2) }}GB total,
+      {{ (linux_resize_result.AvailBytes | int / 1073741824) | round(2) }}GB free
+      (filesystem: {{ linux_resize_result.FileSystem }}).

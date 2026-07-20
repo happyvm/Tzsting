@@ -1,0 +1,46 @@
+---
+# Grows a VM's virtual disk on VMware (vSphere/ESXi) via the vCenter API.
+# Runs delegated to localhost: the module talks to vCenter over HTTPS,
+# it does not need to touch the guest OS.
+#
+# Assumes preflight_disk_constraints already ran: it looked up the disk
+# (vmware_target_disk) and rejected anything unsafe to grow (snapshots,
+# RDM/virtual FC, shrink/no-op).
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname is defined
+      - vcenter_username is defined
+      - vcenter_password is defined
+      - vcenter_datacenter is defined
+      - vm_name is defined
+      - disk_new_size_gb is defined
+      - vmware_target_disk is defined
+    fail_msg: >-
+      vcenter_hostname, vcenter_username, vcenter_password, vcenter_datacenter,
+      vm_name and disk_new_size_gb must all be set for resize_disk_vmware, and
+      vmware_target_disk must have been resolved by preflight_disk_constraints.
+
+- name: Grow the virtual disk to the requested size
+  delegate_to: localhost
+  community.vmware.vmware_guest_disk:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    disk:
+      - size_gb: "{{ disk_new_size_gb }}"
+        state: present
+        controller_type: "{{ disk_controller_type }}"
+        controller_number: "{{ disk_controller_number }}"
+        unit_number: "{{ disk_unit_number }}"
+  register: vmware_resize_result
+
+- name: Report new disk size
+  ansible.builtin.debug:
+    msg: >-
+      Disk (controller {{ disk_controller_number }}, unit {{ disk_unit_number }})
+      on {{ vm_name }} resized to {{ disk_new_size_gb }}GB.

@@ -1,0 +1,33 @@
+---
+# Grows a VM's virtual hard disk (VHD/VHDX) on Hyper-V.
+# Runs delegated to the Hyper-V host itself (WinRM): Hyper-V has no
+# remote API comparable to vCenter's, disk management is local PowerShell.
+#
+# Assumes preflight_disk_constraints already ran: it looked up the disk
+# (hyperv_vhd_info) and rejected anything unsafe to grow (pass-through,
+# shared VHDX, checkpoints, differencing disk, IDE-attached/Generation 1
+# system disk, shrink/no-op).
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - resizedisk_hyperv_host is defined
+      - vm_name is defined
+      - disk_new_size_gb is defined
+      - hyperv_vhd_info is defined
+    fail_msg: >-
+      resizedisk_hyperv_host, vm_name and disk_new_size_gb must all be set for
+      resize_disk_hyperv, and hyperv_vhd_info must have been resolved by
+      preflight_disk_constraints.
+
+- name: Grow the virtual hard disk to the requested size
+  delegate_to: "{{ resizedisk_hyperv_host }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    Resize-VHD -Path '{{ hyperv_vhd_info.Path }}' -SizeBytes {{ (disk_new_size_gb | int) * 1073741824 }}
+  register: hyperv_resize_result
+
+- name: Report new disk size
+  ansible.builtin.debug:
+    msg: >-
+      Disk {{ hyperv_vhd_info.Path }} on {{ vm_name }} resized to {{ disk_new_size_gb }}GB.

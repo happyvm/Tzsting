@@ -1,0 +1,40 @@
+---
+# Environment-wide defaults. Override per-environment (e.g. group_vars/all.yml
+# per inventory, or -e on the CLI / AWX survey) as needed. Secrets
+# (vcenter_password, vault_* below) belong in ansible-vault or the AWX
+# credential store, never committed in clear text.
+
+# --- Safety net -------------------------------------------------------------
+# Refuse to "resize" to something smaller or equal to the current size
+# (shrinking a live disk/partition is unsupported here).
+resizedisk_min_growth_gb: 1
+
+# Extra headroom required, on top of the requested growth, on the
+# datastore (VMware) / host volume (Hyper-V) backing the disk. Prevents
+# filling the underlying storage to 0 bytes free.
+resizedisk_datastore_free_margin_gb: 10
+resizedisk_host_free_margin_gb: 10
+
+# Policy guardrail against a mistyped size coming from ServiceNow (e.g. a
+# stray extra digit). Raise per-run (-e resizedisk_max_size_gb=...) for a
+# legitimately large disk.
+resizedisk_max_size_gb: 2000
+
+# --- vCenter connection (single vCenter managing the VMware estate) --------
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false
+
+# --- Default target disk ----------------------------------------------------
+# Which disk to grow when a VM has more than one. Override per-run
+# (-e disk_unit_number=1, etc.) when it's not the OS disk. Defined at
+# this (inventory) level rather than as role defaults so the same values
+# are visible to preflight_disk_constraints, resize_disk_vmware and
+# resize_disk_hyperv alike - they run as separate role inclusions and
+# don't share each other's role-scoped defaults.
+disk_controller_type: paravirtual   # paravirtual | lsilogic | lsilogicsas | buslogic
+disk_controller_number: 0
+disk_unit_number: 0
+disk_number_hyperv: 0
