@@ -26,6 +26,11 @@
 #   target_ip          IP/FQDN to reach the guest over WinRM/SSH (default: vm_name)
 #   guest_ssh_private_key_file   Linux key-based auth, instead of guest_password
 #   linux_become / linux_become_password   sudo on Linux if guest_username isn't root
+#   linux_python_interpreter   path to python3 on the guest, e.g. /usr/bin/python3 -
+#                              required on RHEL/CentOS 7 (default python is 2.7,
+#                              too old for modern ansible-core) and on RHEL/CentOS 6
+#                              if python3 was manually provisioned there (its default
+#                              python 2.6 cannot run Ansible modules at all)
 #   disk_controller_number / disk_unit_number   VMware SCSI disk to grow (default 0/0)
 #   disk_number_hyperv                          Hyper-V VMHardDiskDrive index (default 0)
 #

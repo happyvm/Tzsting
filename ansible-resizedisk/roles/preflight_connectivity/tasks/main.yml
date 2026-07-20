@@ -122,6 +122,7 @@
     ansible_ssh_common_args: "-o StrictHostKeyChecking={{ linux_ssh_strict_host_key_checking }} -o ConnectTimeout={{ linux_ssh_check_timeout }}"
     ansible_become: "{{ linux_become }}"
     ansible_become_password: "{{ linux_become_password | default(omit) }}"
+    ansible_python_interpreter: "{{ linux_python_interpreter | default(omit) }}"
 
 - name: Probe SSH reachability on the guest
   when: resizedisk_guest_os == 'linux'

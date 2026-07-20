@@ -18,36 +18,81 @@
   ansible.builtin.include_role:
     name: run_guest_command
   vars:
+    # Branches internally, in PowerShell, between the modern Storage-module
+    # path (Get-Partition/Resize-Partition, Server 2012+) and a diskpart+WMI
+    # fallback for Server 2008/2008 R2 (WMF3.0-capable enough for WinRM, but
+    # predating the Storage module entirely). Detected from inside the guest
+    # rather than as a preflight fact: by the time this role runs,
+    # connectivity is already established, so there's no ordering problem
+    # like the guest_os detection has - and it keeps this a single script
+    # instead of adding another Ansible-level branch/variable.
     script: |
       $ErrorActionPreference = "Stop"
+      $driveLetter = '{{ windows_drive_letter }}'
+      $osVersion = [System.Environment]::OSVersion.Version
+      $isLegacy = ($osVersion.Major -eq 6 -and $osVersion.Minor -le 1)  # 6.0=2008, 6.1=2008 R2
 
-      Update-HostStorageCache
+      if ($isLegacy) {
+          # No Storage module here: Get-Partition/Resize-Partition/
+          # Update-HostStorageCache don't exist before Server 2012.
+          # Win32_Volume (WMI, available since NT4) gives us reliable
+          # size/free-space reads before and after; diskpart is the only
+          # built-in way to actually extend a basic volume pre-2012, but
+          # its console output isn't parsed - success is determined the
+          # same way as everywhere else in this playbook: by comparing
+          # guest-observed size before/after.
+          $volumeBefore = Get-CimInstance -ClassName Win32_Volume -Filter "DriveLetter='$($driveLetter):'"
+          if (-not $volumeBefore) {
+              throw "No volume found for drive letter $driveLetter"
+          }
+          $sizeBefore = $volumeBefore.Capacity
 
-      $disk = Get-Partition -DriveLetter '{{ windows_drive_letter }}' | Get-Disk
-      $wasOffline = $disk.IsOffline
-      if ($wasOffline) {
-          Set-Disk -Number $disk.Number -IsOffline $false
+          $diskpartScript = "rescan`r`nselect volume $driveLetter`r`nextend`r`n"
+          $scriptPath = [System.IO.Path]::GetTempFileName()
+          Set-Content -Path $scriptPath -Value $diskpartScript -Encoding ASCII
+          $diskpartOutput = (diskpart /s $scriptPath 2>&1 | Out-String).Trim()
+          Remove-Item -Path $scriptPath -Force -ErrorAction SilentlyContinue
+
+          $volumeAfter = Get-CimInstance -ClassName Win32_Volume -Filter "DriveLetter='$($driveLetter):'"
+          $sizeAfter = $volumeAfter.Capacity
+
+          [PSCustomObject]@{
+              DiskWasOffline = $false  # not checked pre-2012: default SAN policy already brought new disks online automatically before Server 2012 changed that default
+              PartitionResized = ($sizeAfter -gt $sizeBefore)
+              SizeGB = [math]::Round($sizeAfter / 1GB, 2)
+              FreeGB = [math]::Round($volumeAfter.FreeSpace / 1GB, 2)
+              FileSystem = $volumeAfter.FileSystem
+              DiskpartOutput = $diskpartOutput
+          } | ConvertTo-Json -Compress
+      } else {
+          Update-HostStorageCache
+
+          $disk = Get-Partition -DriveLetter $driveLetter | Get-Disk
+          $wasOffline = $disk.IsOffline
+          if ($wasOffline) {
+              Set-Disk -Number $disk.Number -IsOffline $false
+          }
+
+          $partition = Get-Partition -DriveLetter $driveLetter
+          $supported = Get-PartitionSupportedSize -DriveLetter $driveLetter
+          $currentSize = $partition.Size
+          $maxSize = $supported.SizeMax
+          $resized = $false
+
+          if (($maxSize - $currentSize) -gt {{ windows_resize_threshold_bytes }}) {
+              Resize-Partition -DriveLetter $driveLetter -Size $maxSize
+              $resized = $true
+          }
+
+          $volume = Get-Volume -DriveLetter $driveLetter
+          [PSCustomObject]@{
+              DiskWasOffline = $wasOffline
+              PartitionResized = $resized
+              SizeGB = [math]::Round($volume.Size / 1GB, 2)
+              FreeGB = [math]::Round($volume.SizeRemaining / 1GB, 2)
+              FileSystem = $volume.FileSystem
+          } | ConvertTo-Json -Compress
       }
-
-      $partition = Get-Partition -DriveLetter '{{ windows_drive_letter }}'
-      $supported = Get-PartitionSupportedSize -DriveLetter '{{ windows_drive_letter }}'
-      $currentSize = $partition.Size
-      $maxSize = $supported.SizeMax
-      $resized = $false
-
-      if (($maxSize - $currentSize) -gt {{ windows_resize_threshold_bytes }}) {
-          Resize-Partition -DriveLetter '{{ windows_drive_letter }}' -Size $maxSize
-          $resized = $true
-      }
-
-      $volume = Get-Volume -DriveLetter '{{ windows_drive_letter }}'
-      [PSCustomObject]@{
-          DiskWasOffline = $wasOffline
-          PartitionResized = $resized
-          SizeGB = [math]::Round($volume.Size / 1GB, 2)
-          FreeGB = [math]::Round($volume.SizeRemaining / 1GB, 2)
-          FileSystem = $volume.FileSystem
-      } | ConvertTo-Json -Compress
 
 - name: Parse the guest result
   ansible.builtin.set_fact:

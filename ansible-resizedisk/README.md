@@ -180,6 +180,25 @@ agrandi.
 > `preflight_platform`, donc sans coût supplémentaire) - à valider contre
 > la version de la collection réellement installée.
 
+## Versions supportées
+
+### Windows
+
+| Version | Statut | Détail |
+|---|---|---|
+| Server 2003 / 2003 R2 | ❌ **Non supporté** | Le plancher WinRM/PowerShell d'Ansible est PowerShell 3.0, dont le plancher OS est Windows 7 SP1 / Server 2008 SP1 (WMF 3.0). Server 2003 ne peut pas monter au-delà de PowerShell 2.0 - Ansible ne peut tout simplement pas s'y connecter, aucune architecture basée sur `ansible.windows` ne peut contourner ça. |
+| Server 2008 (non-R2) / 2008 R2 | ⚠️ Supporté via un chemin dédié | Joignable en WinRM (nécessite WMF 3.0+ installé au préalable sur la cible - prérequis hors du playbook). Le module Storage (`Get-Partition`/`Resize-Partition`/`Update-HostStorageCache`) n'existe qu'à partir de Server 2012 : `resize_windows_filesystem` détecte la version d'OS *depuis l'intérieur du script* (`[System.Environment]::OSVersion.Version`) et bascule sur un chemin `diskpart /s` + lecture WMI (`Win32_Volume`) pour ces deux versions. Simplification assumée : la remise en ligne d'un disque offline n'est pas gérée sur ce chemin (la politique SAN par défaut mettait les nouveaux disques en ligne automatiquement avant que Server 2012 ne change ce défaut). |
+| Server 2012/2012R2/2016/2019/2022/2025 | ✅ Supporté (chemin principal) | Module Storage natif. |
+
+### Linux (RHEL/CentOS)
+
+| Version | Statut | Détail |
+|---|---|---|
+| 5 | ❌ **Non supporté** | Python 2.4 par défaut. Ansible moderne (ansible-core 2.16+) exige Python 3.7+ sur la cible pour exécuter un module - `ansible.builtin.shell` (utilisé partout ici) en fait partie. Le seul contournement serait de tout réécrire en `ansible.builtin.raw` (SSH pur, sans Python), perdant la quasi-totalité des garde-fous de ce playbook - non fait, EOL depuis 2017. |
+| 6 | ⚠️ Best-effort | Python 2.6 par défaut : même mur que RHEL5, sauf si Python 3 a été **provisionné manuellement au préalable** sur la cible (hors du playbook). Dans ce cas, pointer `linux_python_interpreter` dessus suffit à rendre la cible joignable ; `growpart` reste à vérifier (paquet EPEL uniquement sur RHEL6, pas dans les dépôts de base). |
+| 7 | ⚠️ Supporté avec prérequis | Python 2.7 par défaut, insuffisant pour ansible-core récent. Installer `python3` (disponible en dépôt de base depuis RHEL 7.7) et fournir `linux_python_interpreter=/usr/bin/python3` - sans ça, l'exécution échoue net dès la connectivité, avant même d'atteindre `preflight_connectivity`. |
+| 8/9/10 | ✅ Supporté (chemin principal) | Python 3 par défaut, aucun prérequis. |
+
 ## Arborescence
 
 ```
@@ -300,6 +319,7 @@ utilisé en cas de repli WinRM/SSH indisponible).
 | `linux_ssh_port` | `22` | port SSH |
 | `linux_become` | `false` | passer par sudo côté Linux si `guest_username` n'est pas root |
 | `linux_become_password` | — | mot de passe sudo, si nécessaire |
+| `linux_python_interpreter` | auto-détecté | chemin vers `python3` sur l'invité - requis sur RHEL/CentOS 7 (et 6 si Python 3 y a été provisionné manuellement), voir "Versions supportées" |
 | `disk_controller_number` / `disk_unit_number` | `0` / `0` | disque SCSI VMware à agrandir |
 | `disk_number_hyperv` | `0` | index du `VMHardDiskDrive` Hyper-V |
 | `resizedisk_min_growth_gb` | `1` | garde-fou anti-shrink/no-op |
