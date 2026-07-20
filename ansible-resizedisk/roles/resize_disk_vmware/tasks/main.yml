@@ -2,8 +2,12 @@
 # Grows a VM's virtual disk on VMware (vSphere/ESXi) via the vCenter API.
 # Runs delegated to localhost: the module talks to vCenter over HTTPS,
 # it does not need to touch the guest OS.
+#
+# Assumes preflight_disk_constraints already ran: it looked up the disk
+# (vmware_target_disk) and rejected anything unsafe to grow (snapshots,
+# RDM/virtual FC, shrink/no-op).
 
-- name: Assert required variables are defined
+- name: Assert required variables/facts are defined
   ansible.builtin.assert:
     that:
       - vcenter_hostname is defined
@@ -12,77 +16,11 @@
       - vcenter_datacenter is defined
       - vm_name is defined
       - disk_new_size_gb is defined
+      - vmware_target_disk is defined
     fail_msg: >-
       vcenter_hostname, vcenter_username, vcenter_password, vcenter_datacenter,
-      vm_name and disk_new_size_gb must all be set for resize_disk_vmware.
-
-- name: Look up the current size of the target disk
-  delegate_to: localhost
-  community.vmware.vmware_guest_disk_info:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    validate_certs: "{{ vmware_validate_certs }}"
-    name: "{{ vm_name }}"
-  register: vmware_disk_info
-
-- name: Determine the disk matching the requested controller/unit number
-  ansible.builtin.set_fact:
-    vmware_target_disk: "{{ vmware_disk_info.guest_disk_info.values()
-                             | selectattr('controller_number', 'equalto', disk_controller_number)
-                             | selectattr('unit_number', 'equalto', disk_unit_number)
-                             | first }}"
-
-# --- Resize-blocking conditions -------------------------------------------
-# vSphere refuses (or silently breaks consolidation for) a hot-grow of a
-# VMDK that has snapshots, and vmware_guest_disk cannot resize anything
-# that isn't a plain VMDK: RDM (physical or virtual compatibility mode,
-# which is also how RDM-over-virtual-FC/NPIV LUNs surface here) reports a
-# non-FlatVer2 backing_type and must be grown on the storage array side
-# instead.
-
-- name: Check for existing snapshots on the VM
-  delegate_to: localhost
-  community.vmware.vmware_guest_snapshot_info:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    validate_certs: "{{ vmware_validate_certs }}"
-    name: "{{ vm_name }}"
-  register: vmware_snapshot_info
-
-- name: Refuse to resize while snapshots exist
-  ansible.builtin.assert:
-    that:
-      - (vmware_snapshot_info.guest_snapshots.snapshots | default([])) | length == 0
-    fail_msg: >-
-      '{{ vm_name }}' has {{ vmware_snapshot_info.guest_snapshots.snapshots | default([]) | length }}
-      snapshot(s) ({{ vmware_snapshot_info.guest_snapshots.snapshots | default([]) | map(attribute='name') | join(', ') }}).
-      Resizing a disk with snapshots present is unsupported - consolidate/remove
-      them first.
-
-- name: Refuse to resize a non-VMDK-backed disk (RDM / virtual FC / other passthrough)
-  ansible.builtin.assert:
-    that:
-      - vmware_target_disk.backing_type == 'FlatVer2'
-    fail_msg: >-
-      Disk (controller {{ disk_controller_number }}, unit {{ disk_unit_number }})
-      on '{{ vm_name }}' is backed by {{ vmware_target_disk.backing_type }},
-      not a standard VMDK. RDM disks (physical or virtual compatibility
-      mode, including RDM over virtual Fibre Channel/NPIV) cannot be
-      resized through the vCenter API - grow the LUN on the storage array
-      and rescan instead.
-
-- name: Refuse to shrink or no-op the disk
-  ansible.builtin.assert:
-    that:
-      - (disk_new_size_gb | int) >= ((vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(0, 'ceil') | int) + (resizedisk_min_growth_gb | int)
-    fail_msg: >-
-      Requested size {{ disk_new_size_gb }}GB is not at least
-      {{ resizedisk_min_growth_gb }}GB larger than the current disk size
-      ({{ (vmware_target_disk.capacity_in_kb | int / 1024 / 1024) | round(2) }}GB). Refusing to shrink/no-op.
+      vm_name and disk_new_size_gb must all be set for resize_disk_vmware, and
+      vmware_target_disk must have been resolved by preflight_disk_constraints.
 
 - name: Grow the virtual disk to the requested size
   delegate_to: localhost

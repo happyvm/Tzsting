@@ -13,7 +13,7 @@ extra-vars résolues depuis la CI/le RITM/le change request.
 ## Fonctionnement
 
 Le playbook s'exécute en une seule play (`hosts: localhost`) qui orchestre
-tout le reste par délégation, en 4 étapes :
+tout le reste par délégation, en 5 étapes :
 
 1. **`preflight_platform`** — valide que la cible est bien une VM et
    détecte l'hyperviseur :
@@ -28,7 +28,14 @@ tout le reste par délégation, en 4 étapes :
    - Peut être court-circuité en passant `hypervisor_type` en extra-var
      si le workflow ServiceNow connaît déjà la plateforme (ex. classe CMDB).
 
-2. **`preflight_connectivity`** — détermine le canal pour parler au système
+2. **`preflight_disk_constraints`** — bloque tôt, avant toute sonde de
+   connectivité et toute action, si le disque n'est pas sûr à agrandir
+   (snapshots, RDM/virtual FC, passthrough, VHDX partagé... voir tableau
+   ci-dessous). Fait aussi le lookup du disque une seule fois
+   (`vmware_target_disk` / `hyperv_vhd_info`), réutilisé tel quel par
+   `resize_disk_vmware` / `resize_disk_hyperv` qui ne refont plus l'appel.
+
+3. **`preflight_connectivity`** — détermine le canal pour parler au système
    invité :
    - teste WinRM (`win_ping`, avec `ignore_unreachable`) ;
    - si WinRM ne répond pas :
@@ -42,15 +49,19 @@ tout le reste par délégation, en 4 étapes :
      invité fonctionnel).
    - expose `resizedisk_exec_method` (`winrm` / `vmware_tools` / `powershell_direct`).
 
-3. **Agrandissement du disque côté hyperviseur** (`resize_disk_vmware` ou
-   `resize_disk_hyperv` selon `resizedisk_hypervisor_type`) — inchangé par
-   rapport à la logique précédente : API vCenter pour VMware,
-   `Resize-VHD` délégué à l'hôte Hyper-V.
+   Volontairement placée *après* `preflight_disk_constraints` : inutile de
+   payer le coût d'un timeout WinRM + repli VMware Tools/PowerShell Direct
+   pour une requête de toute façon vouée à l'échec côté disque.
 
-4. **`resize_windows_filesystem`** — rescan du stockage, remise en ligne
+4. **Agrandissement du disque côté hyperviseur** (`resize_disk_vmware` ou
+   `resize_disk_hyperv` selon `resizedisk_hypervisor_type`) — API vCenter
+   pour VMware, `Resize-VHD` délégué à l'hôte Hyper-V. Ne fait plus que
+   l'action elle-même, les contrôles ayant déjà eu lieu à l'étape 2.
+
+5. **`resize_windows_filesystem`** — rescan du stockage, remise en ligne
    du disque si besoin, puis `Resize-Partition` jusqu'à la taille max.
    Exécuté via `run_guest_command`, un rôle générique qui envoie le même
-   script PowerShell par le canal choisi à l'étape 2 (WinRM direct,
+   script PowerShell par le canal choisi à l'étape 3 (WinRM direct,
    VMware Tools, ou PowerShell Direct), en un seul aller-retour.
 
 Un résumé structuré (`resizedisk_summary`) est publié via
@@ -62,10 +73,10 @@ de ne rien faire** : si la taille demandée n'est pas au moins
 `resizedisk_min_growth_gb` (par défaut 1 Go) au-dessus de la taille
 actuelle, la tâche échoue explicitement.
 
-### Conditions bloquantes vérifiées avant tout resize
+### Conditions bloquantes vérifiées en preflight
 
-`resize_disk_vmware` et `resize_disk_hyperv` échouent explicitement
-(sans rien modifier) si l'une de ces conditions est détectée :
+`preflight_disk_constraints` échoue explicitement (avant toute sonde de
+connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 
 | Condition | VMware | Hyper-V |
 |---|---|---|
@@ -92,6 +103,7 @@ ansible-resizedisk/
 ├── playbooks/resize_disk.yml            # playbook principal (hosts: localhost)
 └── roles/
     ├── preflight_platform/              # VM ? VMware ou Hyper-V ?
+    ├── preflight_disk_constraints/      # snapshot/RDM/passthrough/VHDX partagé... -> bloque tôt
     ├── preflight_connectivity/          # WinRM, sinon VMware Tools / PowerShell Direct
     ├── resize_disk_vmware/              # resize via API vCenter
     ├── resize_disk_hyperv/              # resize via Resize-VHD sur l'hôte Hyper-V
@@ -176,7 +188,14 @@ repli WinRM indisponible).
 | Variable | Description |
 |---|---|
 | `vcenter_hostname` / `vcenter_username` / `vcenter_password` / `vcenter_datacenter` | connexion API vCenter (une seule, pour tout le parc VMware) |
+| `disk_controller_type` / `disk_controller_number` / `disk_unit_number` / `disk_number_hyperv` | défauts du disque ciblé (voir tableau "Optionnelles" ci-dessus) |
 | groupe `hyperv_hypervisor` (inventaire) | parc des hôtes Hyper-V à interroger pour localiser une VM |
+
+Ces variables vivent à ce niveau (plutôt qu'en `defaults/` de rôle) car
+`preflight_disk_constraints`, `resize_disk_vmware` et `resize_disk_hyperv`
+sont des rôles distincts inclus séparément : ils ne partagent pas leurs
+`defaults/` respectifs, seulement les variables de portée plus large
+(extra-vars, group_vars, facts).
 
 Voir `inventory/hosts.yml.example` et `playbooks/resize_disk.yml` (en-tête)
 pour le détail complet.

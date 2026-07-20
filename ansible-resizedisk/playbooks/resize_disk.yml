@@ -40,6 +40,10 @@
       ansible.builtin.include_role:
         name: preflight_platform
 
+    - name: Block early on anything unsafe to resize (snapshots, RDM/virtual FC, passthrough, shared VHDX, checkpoints...)
+      ansible.builtin.include_role:
+        name: preflight_disk_constraints
+
     - name: Determine how to reach the guest OS (WinRM, or a VMBus/VMware Tools fallback)
       ansible.builtin.include_role:
         name: preflight_connectivity

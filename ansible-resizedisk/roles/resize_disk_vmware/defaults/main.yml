@@ -1,5 +1,0 @@
----
-disk_controller_type: paravirtual   # paravirtual | lsilogic | lsilogicsas | buslogic
-disk_controller_number: 0
-disk_unit_number: 0
-vmware_validate_certs: false
