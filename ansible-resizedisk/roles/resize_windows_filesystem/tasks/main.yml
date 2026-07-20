@@ -53,6 +53,20 @@
   ansible.builtin.set_fact:
     windows_resize_result: "{{ run_guest_command_result.stdout | from_json }}"
 
+- name: Fail if the partition gained no space despite the disk having been grown
+  ansible.builtin.assert:
+    that:
+      - windows_resize_result.PartitionResized
+    fail_msg: >-
+      The virtual disk was grown at the hypervisor layer, but drive
+      {{ windows_drive_letter }} on {{ vm_name }} had no extra space to
+      claim ({{ windows_resize_result.SizeGB }}GB, unchanged). This usually
+      means windows_drive_letter isn't actually on the disk identified by
+      disk_controller_number/disk_unit_number (VMware) or disk_number_hyperv
+      (Hyper-V) - or another partition immediately follows it on the same
+      disk. Double-check which physical disk hosts that drive letter inside
+      the guest before retrying.
+
 - name: Report resulting volume size
   ansible.builtin.debug:
     msg: >-

@@ -82,15 +82,30 @@ connectivité, sans rien modifier) si l'une de ces conditions est détectée :
 |---|---|---|
 | VM éteinte / non démarrée | `hw_power_status != 'poweredOn'` | `$vm.State != 'Running'` |
 | VM = template | `hw_is_template = true` | — |
+| OS invité non-Windows | `hw_guest_id` ne commence pas par `win` | — (non détectable de façon fiable avant WinRM, voir note) |
 | Consolidation de snapshot en attente | `guest_consolidation_needed = true` | — |
 | Snapshots / checkpoints présents | `vmware_guest_snapshot_info` → `guest_snapshots.snapshots` non vide | `Get-VMSnapshot` → count > 0 |
 | RDM (physique ou virtuel) / virtual FC (NPIV) | `backing_type != 'FlatVer2'` (RDM = `RawDiskMappingVer1`, y compris RDM sur FC virtuel) | — (voir passthrough) |
+| Disque introuvable (mauvais controller/unit/index) | liste des disques existants renvoyée dans le message d'erreur | déjà géré : `Get-VMHardDiskDrive` lève une exception explicite |
 | Disque physique en passthrough | — | `VMHardDiskDrive.Path` vide (`DiskNumber` utilisé à la place) |
 | Disque système sur contrôleur IDE (Generation 1) | — | `VMHardDiskDrive.ControllerType == 'IDE'` |
+| VHD legacy au-delà de 2040GB | — | `Get-VHD.VhdFormat -eq 'VHD'` et taille demandée > 2040GB |
 | VHDX partagé (cluster invité) | — | `SupportPersistentReservations = true` |
 | Disque de différenciation | — | `Get-VHD.VhdType -eq 'Differencing'` |
 | Réplication active (DR) | — | `Get-VMReplication` → `State != 'Disabled'` |
+| Datastore/volume inaccessible | `accessible = false` sur le datastore | — |
 | Espace libre insuffisant sur le stockage sous-jacent | `freeSpace` du datastore < croissance demandée + `resizedisk_datastore_free_margin_gb` | `PSDrive.Free` du volume hôte < croissance demandée + `resizedisk_host_free_margin_gb` |
+| Taille demandée au-delà du plafond de politique | `disk_new_size_gb > resizedisk_max_size_gb` (les deux plateformes) | idem |
+| Partition qui ne gagne aucun espace malgré le disque agrandi | vérifié après coup dans `resize_windows_filesystem` (voir note) | idem |
+
+**Disque multi-writer (VMware) - non implémenté.** Ce flag (utilisé pour
+Oracle RAC ou d'autres clusters partageant un même VMDK) n'est exposé en
+lecture par aucun module de `community.vmware` ni de `vmware.vmware`
+installés ici - seul le module de *convergence* `vmware.vmware.vm` le
+connaît (`backing.sharing`), et s'en servir en lecture seule risquerait
+de déclencher une modification involontaire du disque. Vérification
+manuelle recommandée pour les VM concernées (clusters applicatifs
+partageant un disque) tant qu'aucun module dédié ne l'expose proprement.
 
 Un RDM (physique, virtuel, ou présenté via un adaptateur Fibre Channel
 virtuel/NPIV) n'est de toute façon pas agrandissable via l'API vCenter :
@@ -111,12 +126,29 @@ La VM doit être allumée : au-delà du disque lui-même, l'étape 5
 (extension du système de fichiers) a besoin d'un OS démarré pour être
 jointe par WinRM, VMware Tools ou PowerShell Direct - une VM éteinte est
 donc bloquée dès le preflight plutôt que de laisser échouer la sonde de
-connectivité avec un message moins parlant.
+connectivité avec un message moins parlant. Pour la même raison, le check
+"OS invité non-Windows" n'est fait que côté VMware (donnée déjà en cache,
+disponible avant même de savoir si WinRM répond) : côté Hyper-V, `Get-VM`
+n'expose pas nativement le nom de l'OS invité sans interroger la VM elle-même
+(WinRM/CIM), ce qui casserait l'ordre volontaire "disque avant connectivité".
 
-> **Note** : les noms de champs `hw_power_status`, `hw_is_template` et
-> `guest_consolidation_needed` proviennent de `community.vmware.vmware_guest_info`
-> (déjà appelé par `preflight_platform`, donc sans coût supplémentaire) -
-> à valider contre la version de la collection réellement installée.
+**Cohérence disque agrandi / lettre visée.** Rien ne garantit, avant
+d'agrandir, que `windows_drive_letter` réside bien sur le disque identifié
+par `disk_controller_number`/`disk_unit_number` (VMware) ou
+`disk_number_hyperv` (Hyper-V) - une erreur de paramétrage ServiceNow
+grandirait silencieusement le mauvais disque. Plutôt que de tenter une
+corrélation d'identifiants fragile avant même de savoir parler à l'invité,
+`resize_windows_filesystem` vérifie le résultat réel côté invité après
+coup : si le disque a été agrandi (le preflight l'a déjà garanti) mais que
+la partition visée n'a gagné aucun espace, c'est un signal fort d'un
+mauvais paramétrage - le playbook échoue explicitement plutôt que de
+rapporter silencieusement "déjà à la taille max".
+
+> **Note** : les noms de champs `hw_power_status`, `hw_is_template`,
+> `hw_guest_id`/`hw_guest_full_name` et `guest_consolidation_needed`
+> proviennent de `community.vmware.vmware_guest_info` (déjà appelé par
+> `preflight_platform`, donc sans coût supplémentaire) - à valider contre
+> la version de la collection réellement installée.
 
 ## Arborescence
 
@@ -211,6 +243,7 @@ repli WinRM indisponible).
 | `resizedisk_min_growth_gb` | `1` | garde-fou anti-shrink/no-op |
 | `resizedisk_datastore_free_margin_gb` | `10` | marge de sécurité exigée sur le datastore VMware, en plus de la croissance demandée |
 | `resizedisk_host_free_margin_gb` | `10` | marge de sécurité exigée sur le volume hôte Hyper-V, en plus de la croissance demandée |
+| `resizedisk_max_size_gb` | `2000` | plafond de politique anti-saisie-erronée ; à relever explicitement pour un disque légitimement plus gros |
 
 ### Par environnement (`inventory/group_vars/all.yml`)
 
