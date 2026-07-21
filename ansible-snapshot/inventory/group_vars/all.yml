@@ -1,0 +1,88 @@
+---
+# Environment-wide defaults. Override per-environment (e.g. group_vars/all.yml
+# per inventory, or -e on the CLI / AWX survey) as needed. Secrets
+# (vcenter_password, vault_* below) belong in ansible-vault or the AWX
+# credential store, never committed in clear text.
+
+# --- Safety net -------------------------------------------------------------
+# Refuse a clustered (highly-available) Hyper-V VM by default - a failover
+# mid-operation (create/remove/revert) can leave the checkpoint chain and
+# the disk state disagreeing about what actually happened. Set true
+# per-run (-e snapshot_allow_clustered_vm=true) once an operator has
+# coordinated with the cluster.
+snapshot_allow_clustered_vm: false
+
+# Soft policy caps on how many snapshots a VM is allowed to accumulate
+# before snapshot_create refuses (raise per-run with
+# -e snapshot_vmware_max_count=... / snapshot_hyperv_max_count=...).
+# VMware: 2-3 is Broadcom's own performance guidance (32 is the hard
+# technical ceiling). Hyper-V: 50 is the hard technical ceiling per VM
+# (64 when SCVMM-managed on some Windows Server versions) - default to
+# that ceiling since Hyper-V checkpoint chains degrade less predictably
+# than a fixed "recommended" number.
+snapshot_vmware_max_count: 3
+snapshot_hyperv_max_count: 50
+
+# Extra headroom required on the datastore backing the VM before a new
+# VMware snapshot is created (its delta disks grow as the VM writes
+# data). No Hyper-V equivalent here: AVHDX differencing disks land on
+# whatever volume already hosts the VHD(X), sized the same as the parent
+# disk's own free-space checks would apply.
+snapshot_datastore_free_margin_gb: 10
+
+# Take an extra, auto-named checkpoint/snapshot of the VM's current state
+# immediately before reverting to another one. Neither platform's API
+# does this automatically (Hyper-V Manager's GUI-only "Create Checkpoint
+# and Apply" has no PowerShell/API equivalent; a straight
+# Restore-VMSnapshot/state=revert call discards the current state for
+# good). Set false per-run to skip it (e.g. scripted rollback chains that
+# manage their own safety net).
+snapshot_revert_safety_checkpoint: true
+
+# --- vCenter connection (single vCenter managing the VMware estate) --------
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false
+
+# --- SCVMM (optional) -------------------------------------------------------
+# Set scvmm_server to an inventory_hostname in the scvmm_management group
+# (see inventory/hosts.yml.example) to enable auto-detection of
+# SCVMM-managed Hyper-V VMs - create/remove/revert then route through
+# New-/Remove-/Restore-SCVMCheckpoint instead of the native Hyper-V
+# cmdlets, so SCVMM's database doesn't drift out of sync with the actual
+# checkpoint list. Leave empty ("") to disable detection entirely (the
+# native Hyper-V cmdlets are always used) - the previous, still fully
+# supported, behavior.
+scvmm_server: ""
+scvmm_username: "{{ vault_scvmm_username | default('') }}"
+scvmm_password: "{{ vault_scvmm_password | default('') }}"
+
+# --- Default target disk (VMware datastore free-space check only) ----------
+# Which disk's datastore to check for free space before a VMware
+# snapshot. Same defaults/meaning as ansible-resizedisk. Not used on
+# Hyper-V (see snapshot_datastore_free_margin_gb above).
+disk_controller_number: 0
+disk_unit_number: 0
+
+# --- snapshot_create defaults ------------------------------------------------
+# Defined here (not as role defaults) so the same values are visible to
+# preflight_snapshot_create_constraints and snapshot_create_vmware/_scvmm
+# alike - they run as separate role inclusions (include_role) and don't
+# share each other's role-scoped defaults, same reasoning as
+# disk_controller_number above.
+snapshot_description: ""
+snapshot_include_memory: false
+snapshot_quiesce: false
+
+# --- snapshot_remove defaults -------------------------------------------------
+snapshot_remove_children: false
+
+# --- Disambiguation (snapshot_remove / snapshot_revert) ---------------------
+# Only needed if two snapshots ever legitimately end up with the same
+# name (snapshot_create itself refuses to create a duplicate, but a
+# snapshot taken outside this project - directly in vCenter/Hyper-V
+# Manager - could still collide). Leave unset to match by snapshot_name
+# alone.
+snapshot_id: ""

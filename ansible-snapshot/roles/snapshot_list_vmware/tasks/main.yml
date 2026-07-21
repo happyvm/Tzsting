@@ -1,0 +1,29 @@
+---
+# Lists every snapshot currently attached to a VMware VM, normalized into
+# snapshot_list_result (a flat list of dicts) and snapshot_list_current_id
+# (the snapshot the VM is presently running off, if any) - the common
+# shape snapshot_list_hyperv also produces, so callers (the list playbook,
+# and the remove/revert constraint roles below) don't need to branch on
+# hypervisor_type themselves.
+
+- name: Assert vm_name is defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+
+- name: Fetch the VM's snapshot tree from vCenter
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: snapshot_list_vmware_raw
+
+- name: Normalize into snapshot_list_result
+  ansible.builtin.set_fact:
+    snapshot_list_result: "{{ snapshot_list_vmware_raw.guest_snapshots.snapshots | default([]) }}"
+    snapshot_list_current_id: "{{ snapshot_list_vmware_raw.guest_snapshots.current_snapshot.id | default(omit) }}"

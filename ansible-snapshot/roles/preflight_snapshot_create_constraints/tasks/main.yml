@@ -1,0 +1,328 @@
+---
+# Blocks a new snapshot/checkpoint whenever creating it would be
+# technically impossible, silently misleading (e.g. "quiesced" requested
+# but not actually achievable), or against policy (too many already,
+# a clustered VM without sign-off, degraded S2D storage underneath).
+
+- name: Assert snapshot_name is defined and safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - snapshot_name is defined
+      - snapshot_name | length > 0
+      - snapshot_name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      snapshot_name must be supplied (e.g. -e snapshot_name='pre-patch'),
+      and may only contain letters, digits, spaces, dot, underscore and
+      hyphen (1-80 chars) - see vm_name's fail_msg in preflight_platform
+      for why. This also rules out '*'/'?' wildcard characters, which
+      matters later: Hyper-V's Remove-VMSnapshot -Name treats them as
+      wildcards and could otherwise delete more than one checkpoint.
+
+- name: Assert snapshot_description is safe to interpolate into PowerShell, if given
+  when: (snapshot_description | default('')) | length > 0
+  ansible.builtin.assert:
+    that:
+      - snapshot_description is regex('^[A-Za-z0-9 ._,()/-]{1,200}$')
+    fail_msg: >-
+      snapshot_description may only contain letters, digits, spaces, and
+      . , ( ) / _ - (1-200 chars). VMware takes it as a plain module
+      parameter (no injection risk there), but the SCVMM path
+      (New-SCVMCheckpoint -Description) interpolates it into a
+      single-quoted PowerShell string on the SCVMM server - same
+      injection concern as snapshot_name, so it's validated the same way
+      regardless of which platform ends up handling this run.
+
+- name: List existing snapshots (VMware)
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.include_role:
+    name: snapshot_list_vmware
+
+- name: List existing snapshots (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.include_role:
+    name: snapshot_list_hyperv
+
+- name: Refuse to create a snapshot whose name already exists on this VM
+  ansible.builtin.assert:
+    that:
+      - snapshot_list_result | selectattr('name', 'equalto', snapshot_name) | list | length == 0
+    fail_msg: >-
+      '{{ vm_name }}' already has a snapshot/checkpoint named
+      '{{ snapshot_name }}'. Both VMware and Hyper-V allow duplicate
+      names, but this project's own remove/revert logic needs names to
+      be unique to safely identify a target - pick a different name (or
+      remove/rename the existing one first).
+
+# --- VMware --------------------------------------------------------------
+
+- name: Refuse to snapshot a template
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - not snapshot_vmware_search.instance.hw_is_template
+    fail_msg: "'{{ vm_name }}' is a template, not a deployable VM."
+
+- name: Refuse a memory-included snapshot on a powered-off VM
+  when:
+    - snapshot_hypervisor_type == 'vmware'
+    - snapshot_include_memory | bool
+  ansible.builtin.assert:
+    that:
+      - snapshot_vmware_search.instance.hw_power_status == 'poweredOn'
+    fail_msg: >-
+      snapshot_include_memory=true was requested but '{{ vm_name }}' is
+      not powered on ({{ snapshot_vmware_search.instance.hw_power_status }}).
+      There is no running memory state to capture - either power the VM
+      on first, or drop snapshot_include_memory for a disk-only snapshot.
+
+- name: Refuse a quiesced snapshot without a running VM and VMware Tools
+  when:
+    - snapshot_hypervisor_type == 'vmware'
+    - snapshot_quiesce | bool
+  ansible.builtin.assert:
+    that:
+      - snapshot_vmware_search.instance.hw_power_status == 'poweredOn'
+      - snapshot_vmware_search.instance.guest_tools_status == 'guestToolsRunning'
+    fail_msg: >-
+      snapshot_quiesce=true was requested but '{{ vm_name }}' is either
+      not powered on ({{ snapshot_vmware_search.instance.hw_power_status }})
+      or VMware Tools isn't running
+      ({{ snapshot_vmware_search.instance.guest_tools_status | default('unknown') }}).
+      Quiescing needs a running guest with Tools active to freeze the
+      filesystem - without it vSphere silently takes a crash-consistent
+      snapshot instead, which isn't what was asked for.
+
+- name: Refuse to create another snapshot past the configured policy cap
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - snapshot_list_result | length < (snapshot_vmware_max_count | int)
+    fail_msg: >-
+      '{{ vm_name }}' already has {{ snapshot_list_result | length }}
+      snapshot(s), at or above the configured policy cap of
+      {{ snapshot_vmware_max_count }}. Broadcom's own guidance is to keep
+      2-3 active snapshots for performance - consolidate/remove old ones,
+      or raise the cap deliberately with
+      -e snapshot_vmware_max_count=... if this is a legitimate exception.
+
+- name: Locate the datastore backing the VM's disk 0 (delta files land here)
+  when: snapshot_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_disk_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: snapshot_vmware_disk_info
+
+- name: Determine the disk(s) matching the requested controller/unit number
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    snapshot_vmware_matching_disks: "{{ snapshot_vmware_disk_info.guest_disk_info.values()
+                                         | selectattr('controller_number', 'equalto', disk_controller_number)
+                                         | selectattr('unit_number', 'equalto', disk_unit_number)
+                                         | list }}"
+
+- name: Refuse to proceed if no disk matches the requested controller/unit number
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - snapshot_vmware_matching_disks | length > 0
+    fail_msg: >-
+      No disk found on '{{ vm_name }}' at controller {{ disk_controller_number }},
+      unit {{ disk_unit_number }}. Disks actually present: {{
+      snapshot_vmware_disk_info.guest_disk_info.values()
+      | map(attribute='label') | join(', ') }}. Check disk_controller_number/disk_unit_number.
+
+- name: Identify the target disk's backing datastore
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    snapshot_vmware_disk: "{{ snapshot_vmware_matching_disks[0] }}"
+
+- name: Check free space on the datastore backing the VM's disk
+  when: snapshot_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_datastore_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ snapshot_vmware_disk.backing_datastore }}"
+  register: snapshot_vmware_datastore_info
+
+- name: Refuse to create a snapshot if the datastore is low on free space
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - (snapshot_vmware_datastore_info.datastores[0].freeSpace | int) >= ((snapshot_datastore_free_margin_gb | int) * 1073741824)
+    fail_msg: >-
+      Datastore '{{ snapshot_vmware_disk.backing_datastore }}' only has
+      {{ (snapshot_vmware_datastore_info.datastores[0].freeSpace | int / 1073741824) | round(2) }}GB
+      free, below the {{ snapshot_datastore_free_margin_gb }}GB safety
+      margin. A new snapshot's delta disks grow as the VM writes data -
+      free up space first, or lower the margin deliberately with
+      -e snapshot_datastore_free_margin_gb=... if this is a legitimate
+      exception.
+
+# --- Hyper-V ---------------------------------------------------------------
+
+- name: Gather VM-wide checkpoint-eligibility facts
+  when: snapshot_hypervisor_type == 'hyperv'
+  delegate_to: "{{ snapshot_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $vm = Get-VM -Name '{{ vm_name }}'
+      $drives = @(Get-VMHardDiskDrive -VM $vm)
+      $hasPassthrough = [bool]($drives | Where-Object { [string]::IsNullOrEmpty($_.Path) })
+      $hasSharedVhdx = [bool]($drives | Where-Object { $_.SupportPersistentReservations })
+      $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
+
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+
+      $unhealthyStoragePools = @(Get-StoragePool -ErrorAction SilentlyContinue |
+          Where-Object { -not $_.IsPrimordial -and $_.HealthStatus -ne 'Healthy' } |
+          ForEach-Object { $_.FriendlyName })
+      $unhealthyPhysicalDisks = @(Get-PhysicalDisk -ErrorAction SilentlyContinue |
+          Where-Object { $_.HealthStatus -ne 'Healthy' } |
+          ForEach-Object { $_.FriendlyName })
+
+      [PSCustomObject]@{
+          HasPassthroughDisk     = $hasPassthrough
+          HasSharedVhdx          = $hasSharedVhdx
+          CheckpointCount        = $checkpointCount
+          CheckpointType         = $vm.CheckpointType.ToString()
+          IsClustered            = $isClustered
+          ClusterCheckAvailable  = $clusterCheckAvailable
+          ClusterOwnerNode       = $clusterOwnerNode
+          UnhealthyStoragePools  = $unhealthyStoragePools
+          UnhealthyPhysicalDisks = $unhealthyPhysicalDisks
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: snapshot_hyperv_lookup
+
+- name: Parse checkpoint-eligibility facts
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    snapshot_hyperv_info: "{{ snapshot_hyperv_lookup.stdout | from_json }}"
+
+- name: Refuse to checkpoint a VM with a pass-through disk attached
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - not snapshot_hyperv_info.HasPassthroughDisk
+    fail_msg: >-
+      '{{ vm_name }}' has one or more pass-through (physical) disks
+      attached. Hyper-V does not support checkpoints on a VM with any
+      pass-through disk attached - this is VM-wide, not something that
+      can be excluded per-disk. Convert the disk to a VHD/VHDX first if a
+      checkpoint is really needed.
+
+- name: Refuse to checkpoint a VM with a shared VHDX used as a CSV
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - not snapshot_hyperv_info.HasSharedVhdx
+    fail_msg: >-
+      '{{ vm_name }}' has a shared VHDX (SupportPersistentReservations),
+      used for guest clustering. Hyper-V does not support checkpoints on
+      a VM using shared VHDX as a Cluster Shared Volume for guest
+      clustering - remove sharing first if a checkpoint is really needed.
+
+- name: Refuse to checkpoint a VM with checkpoints disabled
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - snapshot_hyperv_info.CheckpointType != 'Disabled'
+    fail_msg: >-
+      '{{ vm_name }}' has checkpoints disabled (Set-VM -CheckpointType
+      Disabled). This is a deliberate per-VM setting - an operator must
+      change it (Set-VM -CheckpointType Standard/Production) before a
+      checkpoint can be taken; this playbook does not change it for you,
+      since that's a persistent change outstanding beyond this one run.
+
+- name: Refuse a quiesce request that the VM's CheckpointType can't honor
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_quiesce | bool
+  ansible.builtin.assert:
+    that:
+      - snapshot_hyperv_info.CheckpointType in ['Production', 'ProductionOnly']
+    fail_msg: >-
+      snapshot_quiesce=true was requested but '{{ vm_name }}'s
+      CheckpointType is '{{ snapshot_hyperv_info.CheckpointType }}', not
+      Production/ProductionOnly. Application-consistent (VSS) checkpoints
+      only happen when the VM's CheckpointType is set to Production -
+      have an operator run Set-VM -CheckpointType Production first (a
+      persistent VM setting, deliberately not changed automatically
+      here), or drop snapshot_quiesce for a Standard checkpoint.
+
+- name: Refuse to create another checkpoint past the configured policy cap
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - snapshot_hyperv_info.CheckpointCount < (snapshot_hyperv_max_count | int)
+    fail_msg: >-
+      '{{ vm_name }}' already has {{ snapshot_hyperv_info.CheckpointCount }}
+      checkpoint(s), at or above the configured cap of
+      {{ snapshot_hyperv_max_count }} (Hyper-V's own hard ceiling is 50 per
+      VM). Remove old checkpoints, or raise the cap deliberately with
+      -e snapshot_hyperv_max_count=... if this is a legitimate exception.
+
+# Best-effort: only meaningful when the FailoverClusters module is present
+# on snapshot_hyperv_host. Mirrors ansible-resizedisk's owner-node check -
+# see its comment for the full reasoning (a mismatch means the VM likely
+# just failed over, so snapshot_hyperv_host may already be stale).
+- name: Refuse to checkpoint a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_hyperv_info.IsClustered
+    - snapshot_hyperv_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - snapshot_hyperv_info.ClusterOwnerNode == snapshot_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ snapshot_hyperv_info.ClusterOwnerNode }}, not {{ snapshot_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to checkpoint a clustered (highly-available) VM without an explicit override
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_hyperv_info.ClusterCheckAvailable
+    - snapshot_hyperv_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - snapshot_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ snapshot_hyperv_info.ClusterOwnerNode }}). It can
+      fail over to another node mid-operation. Coordinate with the
+      cluster first, then pass -e snapshot_allow_clustered_vm=true to
+      proceed.
+
+- name: Refuse to checkpoint if underlying S2D/pooled storage is unhealthy
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - (snapshot_hyperv_info.UnhealthyStoragePools | length > 0) or (snapshot_hyperv_info.UnhealthyPhysicalDisks | length > 0)
+  ansible.builtin.fail:
+    msg: >-
+      Storage on {{ snapshot_hyperv_host }} is unhealthy - pool(s):
+      {{ snapshot_hyperv_info.UnhealthyStoragePools | join(', ') if snapshot_hyperv_info.UnhealthyStoragePools | length > 0 else 'none' }};
+      physical disk(s): {{ snapshot_hyperv_info.UnhealthyPhysicalDisks | join(', ') if snapshot_hyperv_info.UnhealthyPhysicalDisks | length > 0 else 'none' }}.
+      A checkpoint adds AVHDX differencing-disk writes on top of a
+      degraded S2D/Storage Spaces pool - resolve the storage health issue
+      first.

@@ -1,0 +1,49 @@
+---
+# Lists every checkpoint currently attached to a Hyper-V VM, normalized
+# into snapshot_list_result (a flat list of dicts) and
+# snapshot_list_current_id (the checkpoint the VM is presently running
+# off, if any) - the same shape snapshot_list_vmware produces.
+#
+# Always queries the native Hyper-V cmdlets directly, even when
+# snapshot_managed_by_scvmm is true: listing is non-mutating, so there's
+# no risk of SCVMM's database drifting out of sync the way there is for
+# create/remove/revert, and Get-VMSnapshot doesn't need SCVMM's
+# management layer to return an accurate answer.
+
+- name: Assert vm_name and the resolved Hyper-V host are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+      - snapshot_hyperv_host is defined
+
+- name: Fetch the VM's checkpoint tree from the Hyper-V host
+  delegate_to: "{{ snapshot_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $vm = Get-VM -Name '{{ vm_name }}'
+      $snaps = @(Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | ForEach-Object {
+          [pscustomobject]@{
+              id                = $_.Id.ToString()
+              name              = $_.Name
+              description       = $null
+              parent_snapshot_id = if ($_.ParentSnapshotId) { $_.ParentSnapshotId.ToString() } else { $null }
+              snapshot_type     = $_.SnapshotType.ToString()
+              creation_time     = $_.CreationTime.ToString("o")
+          }
+      })
+      $result = [pscustomobject]@{
+          snapshots  = $snaps
+          current_id = if ($vm.ParentSnapshotId) { $vm.ParentSnapshotId.ToString() } else { $null }
+      }
+      $result | ConvertTo-Json -Compress -Depth 5
+  changed_when: false
+  register: snapshot_list_hyperv_raw
+
+- name: Normalize into snapshot_list_result
+  vars:
+    snapshot_list_hyperv_parsed: "{{ snapshot_list_hyperv_raw.stdout | trim | from_json }}"
+  ansible.builtin.set_fact:
+    snapshot_list_result: "{{ snapshot_list_hyperv_parsed.snapshots | default([]) }}"
+    snapshot_list_current_id: "{{ snapshot_list_hyperv_parsed.current_id | default(omit) }}"

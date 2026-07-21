@@ -1,0 +1,7 @@
+---
+# How long a lock is honored before it's considered abandoned by a crashed
+# run and can be broken by a new one. Snapshot operations are fast
+# (seconds to a few minutes) compared to a disk resize, but a
+# checkpoint-with-children removal can trigger a slow online AVHDX merge -
+# 30 minutes comfortably covers that with margin.
+snapshot_lock_timeout_seconds: 1800

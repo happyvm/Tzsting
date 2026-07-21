@@ -1,0 +1,23 @@
+---
+- name: Assert required facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - snapshot_revert_target is defined
+
+- name: Revert the VMware VM to the snapshot
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: revert
+    snapshot_id: "{{ snapshot_revert_target.id }}"
+  register: snapshot_revert_result
+
+- name: Report the revert
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' reverted to snapshot '{{ snapshot_revert_target.name }}' (id {{ snapshot_revert_target.id }})."

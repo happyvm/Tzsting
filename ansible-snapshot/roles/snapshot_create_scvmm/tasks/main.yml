@@ -1,0 +1,35 @@
+---
+# Creates the checkpoint via SCVMM (New-SCVMCheckpoint) instead of the
+# native Checkpoint-VM on the Hyper-V host directly - used instead of
+# snapshot_create_hyperv whenever snapshot_managed_by_scvmm is true, so
+# SCVMM's database doesn't drift out of sync with the actual checkpoint
+# list (an out-of-band Checkpoint-VM leaves SCVMM unaware of it until a
+# "Refresh Virtual Machine" job happens to run).
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+      - vm_name is defined
+      - snapshot_name is defined
+
+- name: Create the checkpoint via SCVMM
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ vm_name }}' not found in SCVMM"
+      }
+
+      New-SCVMCheckpoint -VM $vm -Name '{{ snapshot_name }}' -Description '{{ snapshot_description }}' | Out-Null
+  register: snapshot_create_result
+
+- name: Report the new checkpoint
+  ansible.builtin.debug:
+    msg: "Checkpoint '{{ snapshot_name }}' created on '{{ vm_name }}' via SCVMM."

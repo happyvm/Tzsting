@@ -1,0 +1,51 @@
+---
+# Lists every snapshot/checkpoint on a VM (VMware or Hyper-V,
+# auto-detected). Read-only - doesn't take the per-VM lock the mutating
+# playbooks do, and always queries the native Hyper-V cmdlets directly
+# even for an SCVMM-managed VM (see snapshot_list_hyperv's header comment
+# for why that's still accurate).
+#
+# Required extra-vars:
+#   vm_name   CI / VM name, as known to vCenter and/or Hyper-V
+#
+# Optional extra-vars:
+#   hypervisor_type   vmware|hyperv - skip hypervisor auto-detection
+#
+# Usage:
+#   ansible-playbook playbooks/snapshot_list.yml -e vm_name=WINSRV01
+
+- name: List VM snapshots/checkpoints
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: List snapshots on VMware
+      ansible.builtin.include_role:
+        name: snapshot_list_vmware
+      when: snapshot_hypervisor_type == 'vmware'
+
+    - name: List checkpoints on Hyper-V
+      ansible.builtin.include_role:
+        name: snapshot_list_hyperv
+      when: snapshot_hypervisor_type == 'hyperv'
+
+    - name: Report the snapshot list
+      ansible.builtin.debug:
+        msg: >-
+          {{ snapshot_list_result | length }} snapshot(s) on '{{ vm_name }}':
+          {{ snapshot_list_result | map(attribute='name') | list }}
+
+    - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+      ansible.builtin.set_stats:
+        data:
+          snapshot_summary:
+            vm_name: "{{ vm_name }}"
+            hypervisor_type: "{{ snapshot_hypervisor_type }}"
+            snapshots: "{{ snapshot_list_result }}"
+            current_snapshot_id: "{{ snapshot_list_current_id | default('') }}"
+        aggregate: false

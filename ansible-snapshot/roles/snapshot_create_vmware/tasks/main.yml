@@ -1,0 +1,28 @@
+---
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - snapshot_name is defined
+
+- name: Create the VMware snapshot
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: present
+    snapshot_name: "{{ snapshot_name }}"
+    description: "{{ snapshot_description }}"
+    quiesce: "{{ snapshot_quiesce | bool }}"
+    memory_dump: "{{ snapshot_include_memory | bool }}"
+  register: snapshot_create_result
+
+- name: Report the new snapshot
+  ansible.builtin.debug:
+    msg: >-
+      Snapshot '{{ snapshot_name }}' created on '{{ vm_name }}'
+      (quiesce={{ snapshot_quiesce | bool }}, memory={{ snapshot_include_memory | bool }}).

@@ -1,0 +1,90 @@
+---
+# Removes a snapshot/checkpoint from a VM (VMware or Hyper-V,
+# auto-detected). Designed to be triggered from a ServiceNow workflow -
+# see playbooks/snapshot_create.yml for the general integration pattern.
+#
+# Required extra-vars:
+#   vm_name   CI / VM name, as known to vCenter and/or Hyper-V
+#
+# One of the following is required to identify the target snapshot:
+#   snapshot_name   matched by exact name - the playbook refuses to
+#                   guess if more than one snapshot shares the name
+#   snapshot_id     VMware: the numeric snapshot id. Hyper-V: the
+#                   checkpoint's GUID. Use this to disambiguate when
+#                   snapshot_name alone matches more than one snapshot
+#                   (both platforms technically allow duplicate names,
+#                   even though snapshot_create refuses to create one).
+#
+# Optional extra-vars:
+#   hypervisor_type          vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm         true|false - skip SCVMM auto-detection
+#   snapshot_remove_children VMware: remove_children module param.
+#                            Hyper-V: -IncludeAllChildSnapshots. Default
+#                            false on both - any children are reparented
+#                            rather than removed with their parent.
+#   snapshot_allow_clustered_vm   true to proceed on a highly-available
+#                                 Hyper-V VM once failover has been
+#                                 coordinated manually (default: refuse)
+#
+# Usage:
+#   ansible-playbook playbooks/snapshot_remove.yml \
+#     -e vm_name=WINSRV01 -e snapshot_name=pre-patch \
+#     --vault-password-file .vault_pass
+
+- name: Remove a VM snapshot/checkpoint
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: snapshot_lock
+      vars:
+        snapshot_lock_action: acquire
+
+    - name: Remove the snapshot, releasing the lock afterwards either way
+      block:
+        - name: Resolve exactly which snapshot to remove, block on a clustered VM without sign-off
+          ansible.builtin.include_role:
+            name: preflight_snapshot_remove_constraints
+
+        - name: Remove the snapshot on VMware
+          ansible.builtin.include_role:
+            name: snapshot_remove_vmware
+          when: snapshot_hypervisor_type == 'vmware'
+
+        - name: Remove the checkpoint on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: snapshot_remove_scvmm
+          when:
+            - snapshot_hypervisor_type == 'hyperv'
+            - snapshot_managed_by_scvmm
+
+        - name: Remove the checkpoint on Hyper-V directly
+          ansible.builtin.include_role:
+            name: snapshot_remove_hyperv
+          when:
+            - snapshot_hypervisor_type == 'hyperv'
+            - not snapshot_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              snapshot_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ snapshot_hypervisor_type }}"
+                managed_by_scvmm: "{{ snapshot_managed_by_scvmm }}"
+                removed_snapshot: "{{ snapshot_remove_target.name }}"
+                removed_snapshot_id: "{{ snapshot_remove_target.id }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: snapshot_lock
+          vars:
+            snapshot_lock_action: release

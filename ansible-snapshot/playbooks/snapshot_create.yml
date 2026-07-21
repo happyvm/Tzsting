@@ -1,0 +1,104 @@
+---
+# Creates a snapshot/checkpoint of a VM (VMware or Hyper-V, auto-detected)
+# and, on Hyper-V, routes through SCVMM instead of the native cmdlets if
+# the VM is SCVMM-managed. Designed to be triggered from a ServiceNow
+# workflow (e.g. via an AWX/Tower job template) - there is no static
+# per-VM inventory: everything about the target VM is passed as
+# extra-vars, resolved from the CMDB CI record / change request.
+#
+# Required extra-vars:
+#   vm_name          CI / VM name, as known to vCenter and/or Hyper-V
+#   snapshot_name    name for the new snapshot/checkpoint (letters,
+#                    digits, space, dot, underscore, hyphen only)
+#
+# Optional extra-vars:
+#   hypervisor_type          vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm         true|false - skip SCVMM auto-detection
+#   snapshot_description     VMware only - Hyper-V checkpoints have no
+#                             description field, silently ignored there
+#   snapshot_include_memory  VMware only - capture running memory state
+#                             (needs the VM powered on). Hyper-V always
+#                             includes memory state automatically when
+#                             the VM is running, there's no separate flag.
+#   snapshot_quiesce         VMware: quiesce the guest filesystem via
+#                             VMware Tools (needs a running VM with Tools
+#                             active). Hyper-V: not a flag here - it's
+#                             governed by the VM's own CheckpointType
+#                             (Set-VM -CheckpointType Production), which
+#                             this playbook checks but deliberately does
+#                             not change for you (see
+#                             preflight_snapshot_create_constraints).
+#   snapshot_allow_clustered_vm   true to proceed on a highly-available
+#                                 Hyper-V VM once failover has been
+#                                 coordinated manually (default: refuse)
+#   snapshot_vmware_max_count / snapshot_hyperv_max_count
+#     policy caps on existing snapshot count (see group_vars/all.yml)
+#
+# vCenter connection, the Hyper-V host fleet, and optionally an SCVMM
+# management server are expected to be defined once for the whole
+# environment - see group_vars/all.yml and inventory/hosts.yml.example.
+#
+# Usage:
+#   ansible-playbook playbooks/snapshot_create.yml \
+#     -e vm_name=WINSRV01 -e snapshot_name=pre-patch \
+#     -e snapshot_description="Before July patch Tuesday" \
+#     --vault-password-file .vault_pass
+
+- name: Create a VM snapshot/checkpoint
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: snapshot_lock
+      vars:
+        snapshot_lock_action: acquire
+
+    - name: Create the snapshot, releasing the lock afterwards either way
+      block:
+        - name: Block early on anything unsafe to snapshot (too many already, degraded storage, clustered VM without sign-off...)
+          ansible.builtin.include_role:
+            name: preflight_snapshot_create_constraints
+
+        - name: Create the snapshot on VMware
+          ansible.builtin.include_role:
+            name: snapshot_create_vmware
+          when: snapshot_hypervisor_type == 'vmware'
+
+        - name: Create the checkpoint on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: snapshot_create_scvmm
+          when:
+            - snapshot_hypervisor_type == 'hyperv'
+            - snapshot_managed_by_scvmm
+
+        - name: Create the checkpoint on Hyper-V directly
+          ansible.builtin.include_role:
+            name: snapshot_create_hyperv
+          when:
+            - snapshot_hypervisor_type == 'hyperv'
+            - not snapshot_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              snapshot_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ snapshot_hypervisor_type }}"
+                managed_by_scvmm: "{{ snapshot_managed_by_scvmm }}"
+                snapshot_name: "{{ snapshot_name }}"
+                quiesced: "{{ snapshot_quiesce | bool }}"
+                memory_included: "{{ snapshot_include_memory | bool }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: snapshot_lock
+          vars:
+            snapshot_lock_action: release

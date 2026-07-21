@@ -1,0 +1,134 @@
+---
+# Reverts a VM (VMware or Hyper-V, auto-detected) to an existing
+# snapshot/checkpoint. This is the most destructive of the four
+# playbooks in this project: it discards all changes made to the VM
+# since the target snapshot was taken. Unless disabled, it first takes
+# an automatic, separately-named safety checkpoint of the VM's *current*
+# state - neither platform's API protects against this on its own (see
+# snapshot_revert_safety_checkpoint in group_vars/all.yml).
+#
+# Required extra-vars:
+#   vm_name   CI / VM name, as known to vCenter and/or Hyper-V
+#
+# One of the following is required to identify the target snapshot:
+#   snapshot_name   matched by exact name - the playbook refuses to
+#                   guess if more than one snapshot shares the name
+#   snapshot_id     VMware: the numeric snapshot id. Hyper-V: the
+#                   checkpoint's GUID. Use this to disambiguate when
+#                   snapshot_name alone matches more than one snapshot.
+#
+# Optional extra-vars:
+#   hypervisor_type   vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm  true|false - skip SCVMM auto-detection
+#   snapshot_revert_safety_checkpoint   false to skip the automatic
+#     pre-revert safety checkpoint (default true)
+#   snapshot_allow_clustered_vm   true to proceed on a highly-available
+#                                 Hyper-V VM once failover has been
+#                                 coordinated manually (default: refuse)
+#
+# Usage:
+#   ansible-playbook playbooks/snapshot_revert.yml \
+#     -e vm_name=WINSRV01 -e snapshot_name=pre-patch \
+#     --vault-password-file .vault_pass
+
+- name: Revert a VM to a snapshot/checkpoint
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: snapshot_lock
+      vars:
+        snapshot_lock_action: acquire
+
+    - name: Revert the VM, releasing the lock afterwards either way
+      block:
+        - name: Resolve exactly which snapshot to revert to, block on a clustered VM without sign-off
+          ansible.builtin.include_role:
+            name: preflight_snapshot_revert_constraints
+
+        - name: Validate the pre-revert safety checkpoint is itself safe to take
+          ansible.builtin.include_role:
+            name: preflight_snapshot_create_constraints
+          vars:
+            snapshot_name: "{{ snapshot_revert_safety_name }}"
+            snapshot_description: "Automatic safety checkpoint before reverting '{{ vm_name }}' to '{{ snapshot_revert_target.name }}'"
+            snapshot_include_memory: false
+            snapshot_quiesce: false
+          when: snapshot_revert_safety_checkpoint | bool
+
+        - name: Take the pre-revert safety checkpoint (VMware)
+          ansible.builtin.include_role:
+            name: snapshot_create_vmware
+          vars:
+            snapshot_name: "{{ snapshot_revert_safety_name }}"
+            snapshot_description: "Automatic safety checkpoint before reverting '{{ vm_name }}' to '{{ snapshot_revert_target.name }}'"
+            snapshot_include_memory: false
+            snapshot_quiesce: false
+          when:
+            - snapshot_revert_safety_checkpoint | bool
+            - snapshot_hypervisor_type == 'vmware'
+
+        - name: Take the pre-revert safety checkpoint (Hyper-V via SCVMM)
+          ansible.builtin.include_role:
+            name: snapshot_create_scvmm
+          vars:
+            snapshot_name: "{{ snapshot_revert_safety_name }}"
+            snapshot_description: "Automatic safety checkpoint before reverting '{{ vm_name }}' to '{{ snapshot_revert_target.name }}'"
+          when:
+            - snapshot_revert_safety_checkpoint | bool
+            - snapshot_hypervisor_type == 'hyperv'
+            - snapshot_managed_by_scvmm
+
+        - name: Take the pre-revert safety checkpoint (Hyper-V directly)
+          ansible.builtin.include_role:
+            name: snapshot_create_hyperv
+          vars:
+            snapshot_name: "{{ snapshot_revert_safety_name }}"
+          when:
+            - snapshot_revert_safety_checkpoint | bool
+            - snapshot_hypervisor_type == 'hyperv'
+            - not snapshot_managed_by_scvmm
+
+        - name: Revert the VM on VMware
+          ansible.builtin.include_role:
+            name: snapshot_revert_vmware
+          when: snapshot_hypervisor_type == 'vmware'
+
+        - name: Revert the VM on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: snapshot_revert_scvmm
+          when:
+            - snapshot_hypervisor_type == 'hyperv'
+            - snapshot_managed_by_scvmm
+
+        - name: Revert the VM on Hyper-V directly
+          ansible.builtin.include_role:
+            name: snapshot_revert_hyperv
+          when:
+            - snapshot_hypervisor_type == 'hyperv'
+            - not snapshot_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              snapshot_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ snapshot_hypervisor_type }}"
+                managed_by_scvmm: "{{ snapshot_managed_by_scvmm }}"
+                reverted_to: "{{ snapshot_revert_target.name }}"
+                reverted_to_id: "{{ snapshot_revert_target.id }}"
+                safety_checkpoint: "{{ snapshot_revert_safety_name if snapshot_revert_safety_checkpoint | bool else '' }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: snapshot_lock
+          vars:
+            snapshot_lock_action: release

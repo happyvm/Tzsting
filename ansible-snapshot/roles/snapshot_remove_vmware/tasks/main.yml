@@ -1,0 +1,24 @@
+---
+- name: Assert required facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - snapshot_remove_target is defined
+
+- name: Remove the VMware snapshot
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: absent
+    snapshot_id: "{{ snapshot_remove_target.id }}"
+    remove_children: "{{ snapshot_remove_children | bool }}"
+  register: snapshot_remove_result
+
+- name: Report the removed snapshot
+  ansible.builtin.debug:
+    msg: "Snapshot '{{ snapshot_remove_target.name }}' (id {{ snapshot_remove_target.id }}) removed from '{{ vm_name }}'."

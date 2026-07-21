@@ -56,3 +56,16 @@ jobs:
             throw "PSScriptAnalyzer found $($issues.Count) issue(s) in ansible-resizedisk's embedded PowerShell."
           }
 
+      - name: Extract embedded PowerShell from ansible-snapshot
+        run: python3 ansible-snapshot/scripts/extract_embedded_scripts.py powershell
+
+      - name: Run PSScriptAnalyzer on ansible-snapshot's embedded PowerShell
+        shell: pwsh
+        run: |
+          $issues = Invoke-ScriptAnalyzer -Path ansible-snapshot/.extracted/powershell -Recurse -Severity Error, Warning `
+            -Settings ansible-snapshot/scripts/PSScriptAnalyzerSettings.psd1
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found $($issues.Count) issue(s) in ansible-snapshot's embedded PowerShell."
+          }
+
