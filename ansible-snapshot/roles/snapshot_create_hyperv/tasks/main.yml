@@ -1,0 +1,21 @@
+---
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - snapshot_name is defined
+      - snapshot_hyperv_host is defined
+
+- name: Create the Hyper-V checkpoint
+  delegate_to: "{{ snapshot_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Checkpoint-VM -Name '{{ vm_name }}' -SnapshotName '{{ snapshot_name }}'
+  register: snapshot_create_result
+
+- name: Report the new checkpoint
+  ansible.builtin.debug:
+    msg: >-
+      Checkpoint '{{ snapshot_name }}' created on '{{ vm_name }}'
+      (CheckpointType={{ snapshot_hyperv_info.CheckpointType | default('unknown') }}).

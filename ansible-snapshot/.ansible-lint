@@ -1,0 +1,23 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `snapshot_` prefix (plus
+  # a few genuinely role-local helper vars) instead of a per-role prefix
+  # on every fact/register - most of the state here
+  # (snapshot_hypervisor_type, snapshot_managed_by_scvmm,
+  # snapshot_list_result...) is intentionally read across several roles
+  # that are included separately in the same play, so a per-role prefix
+  # would be actively misleading about where a variable is meant to be
+  # read from.
+  - var-naming[no-role-prefix]
+  # The ignore_errors uses in this project are deliberate best-effort
+  # cleanup/release steps (releasing the VMware lock annotation, cleaning
+  # up a probe) where any failure should be silently swallowed, not
+  # reinterpreted via failed_when - that's a different rule (redefining
+  # what counts as a failure), not what's wanted here.
+  - ignore-errors
+
+exclude_paths:
+  - .extracted/
+  - inventory/hosts.yml

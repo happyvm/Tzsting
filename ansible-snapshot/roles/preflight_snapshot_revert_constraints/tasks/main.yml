@@ -1,0 +1,165 @@
+---
+# Resolves exactly which snapshot/checkpoint snapshot_revert is about to
+# restore to, refusing to guess if the name is ambiguous, blocks revert
+# on a clustered VM whose owner node has drifted since preflight_platform
+# ran, and - unless disabled - names the safety checkpoint that'll be
+# taken of the VM's *current* state immediately before the revert
+# actually happens (see snapshot_revert_safety_checkpoint in
+# group_vars/all.yml for why: neither platform's API protects against a
+# revert on its own).
+
+- name: Assert either snapshot_name or snapshot_id is given
+  ansible.builtin.assert:
+    that:
+      - (snapshot_name | default('')) | length > 0 or (snapshot_id | default('')) | length > 0
+    fail_msg: "Supply snapshot_name and/or snapshot_id to identify which snapshot to revert to."
+
+- name: Assert snapshot_name is safe to interpolate into PowerShell, if given
+  when: (snapshot_name | default('')) | length > 0
+  ansible.builtin.assert:
+    that:
+      - snapshot_name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      snapshot_name may only contain letters, digits, spaces, dot,
+      underscore and hyphen (1-80 chars) - see vm_name's fail_msg in
+      preflight_platform for why.
+
+- name: List existing snapshots (VMware)
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.include_role:
+    name: snapshot_list_vmware
+
+- name: List existing snapshots (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.include_role:
+    name: snapshot_list_hyperv
+
+- name: Resolve the matching snapshot(s)
+  # See preflight_snapshot_remove_constraints for why snapshot_id is cast
+  # to int for VMware before comparing (Jinja has no list comprehension,
+  # and selectattr('id', 'equalto', ...) is type-strict).
+  ansible.builtin.set_fact:
+    snapshot_revert_matches: >-
+      {{ snapshot_list_result
+         | selectattr('id', 'equalto', snapshot_id | int if snapshot_hypervisor_type == 'vmware' else snapshot_id) | list
+         if (snapshot_id | default('')) | length > 0
+         else snapshot_list_result | selectattr('name', 'equalto', snapshot_name) | list }}
+
+- name: Refuse to proceed if no snapshot matches
+  ansible.builtin.assert:
+    that:
+      - snapshot_revert_matches | length > 0
+    fail_msg: >-
+      No snapshot on '{{ vm_name }}' matches
+      {{ 'id ' + (snapshot_id | string) if (snapshot_id | default('')) | length > 0 else "name '" + snapshot_name + "'" }}.
+      Existing snapshot(s): {{ snapshot_list_result | map(attribute='name') | list | join(', ') if snapshot_list_result | length > 0 else 'none' }}.
+
+- name: Refuse to guess between multiple matching snapshots
+  ansible.builtin.assert:
+    that:
+      - snapshot_revert_matches | length == 1
+    fail_msg: >-
+      {{ snapshot_revert_matches | length }} snapshots on '{{ vm_name }}'
+      match name '{{ snapshot_name }}' - refusing to guess which one to
+      revert to. Disambiguate with -e snapshot_id=... (ids:
+      {{ snapshot_revert_matches | map(attribute='id') | join(', ') }}).
+
+- name: Record the resolved target snapshot
+  ansible.builtin.set_fact:
+    snapshot_revert_target: "{{ snapshot_revert_matches[0] }}"
+
+# See the matching comment in preflight_snapshot_remove_constraints for
+# why these two are validated even though they came from our own
+# snapshot_list_{vmware,hyperv} query rather than directly from user input.
+- name: Assert the resolved snapshot id looks like a GUID (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - snapshot_revert_target.id is regex('^[0-9a-fA-F-]{36}$')
+    fail_msg: "Unexpected non-GUID snapshot id '{{ snapshot_revert_target.id }}' from Get-VMSnapshot - refusing to interpolate it."
+
+- name: Assert the resolved snapshot name is safe to interpolate into PowerShell (Hyper-V/SCVMM)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - snapshot_revert_target.name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      Snapshot '{{ snapshot_revert_target.name }}' has a name outside
+      this project's safe charset (probably created by other tooling) -
+      refusing to interpolate it into PowerShell for the SCVMM revert
+      path. Rename it first, or revert directly outside this project.
+
+- name: Refuse to revert to the snapshot the VM is already running from
+  when: snapshot_list_current_id is defined
+  ansible.builtin.assert:
+    that:
+      - (snapshot_revert_target.id | string) != (snapshot_list_current_id | string)
+    fail_msg: >-
+      '{{ vm_name }}' is already running from snapshot
+      '{{ snapshot_revert_target.name }}' - nothing to revert.
+
+# Best-effort cluster placement check (Hyper-V only) - see
+# ansible-resizedisk's matching comment for the full reasoning behind
+# blocking on a stale owner node rather than warning.
+- name: Check cluster placement (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  delegate_to: "{{ snapshot_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+      [PSCustomObject]@{
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+          ClusterOwnerNode      = $clusterOwnerNode
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: snapshot_hyperv_cluster_lookup
+
+- name: Parse cluster placement facts
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    snapshot_hyperv_cluster_info: "{{ snapshot_hyperv_cluster_lookup.stdout | from_json }}"
+
+- name: Refuse to act on a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_hyperv_cluster_info.IsClustered
+    - snapshot_hyperv_cluster_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - snapshot_hyperv_cluster_info.ClusterOwnerNode == snapshot_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ snapshot_hyperv_cluster_info.ClusterOwnerNode }}, not {{ snapshot_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to act on a clustered (highly-available) VM without an explicit override
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_hyperv_cluster_info.ClusterCheckAvailable
+    - snapshot_hyperv_cluster_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - snapshot_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ snapshot_hyperv_cluster_info.ClusterOwnerNode }}). It
+      can fail over to another node mid-operation. Coordinate with the
+      cluster first, then pass -e snapshot_allow_clustered_vm=true to
+      proceed.
+
+- name: Name the pre-revert safety checkpoint
+  when: snapshot_revert_safety_checkpoint | bool
+  ansible.builtin.set_fact:
+    snapshot_revert_safety_name: "pre-revert-{{ lookup('pipe', 'date -u +%Y%m%d%H%M%S') }}"

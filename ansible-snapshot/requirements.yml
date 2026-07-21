@@ -1,0 +1,14 @@
+---
+collections:
+  # vmware_guest_snapshot/vmware_guest_snapshot_info are deprecated in favor
+  # of vmware.vmware.vm_snapshot(_info), but that replacement module has no
+  # state=revert (create/delete only, as of vmware.vmware 2.8.0) - this
+  # project needs revert, so it stays on community.vmware's snapshot modules
+  # and pins below the version where they're actually removed. Re-evaluate
+  # this pin once vmware.vmware grows revert support upstream.
+  - name: community.vmware
+    version: ">=3.0.0,<8.0.0"
+  - name: ansible.windows
+    version: ">=2.0.0"
+  - name: community.windows
+    version: ">=2.0.0"

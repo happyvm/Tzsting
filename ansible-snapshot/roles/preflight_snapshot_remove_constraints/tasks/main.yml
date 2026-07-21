@@ -1,0 +1,176 @@
+---
+# Resolves exactly which snapshot/checkpoint snapshot_remove is about to
+# delete, refusing to guess if the name is ambiguous (both platforms
+# technically allow duplicate names, even though snapshot_create refuses
+# to create one - a snapshot taken outside this project could still
+# collide), and blocks removal on a clustered VM whose owner node has
+# drifted since preflight_platform ran.
+
+- name: Assert either snapshot_name or snapshot_id is given
+  ansible.builtin.assert:
+    that:
+      - (snapshot_name | default('')) | length > 0 or (snapshot_id | default('')) | length > 0
+    fail_msg: "Supply snapshot_name and/or snapshot_id to identify which snapshot to remove."
+
+- name: Assert snapshot_name is safe to interpolate into PowerShell, if given
+  when: (snapshot_name | default('')) | length > 0
+  ansible.builtin.assert:
+    that:
+      - snapshot_name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      snapshot_name may only contain letters, digits, spaces, dot,
+      underscore and hyphen (1-80 chars) - see vm_name's fail_msg in
+      preflight_platform for why.
+
+- name: List existing snapshots (VMware)
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.include_role:
+    name: snapshot_list_vmware
+
+- name: List existing snapshots (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.include_role:
+    name: snapshot_list_hyperv
+
+- name: Resolve the matching snapshot(s)
+  # selectattr('id', 'equalto', ...) is type-strict: VMware's id is an
+  # int, Hyper-V's is a GUID string, and snapshot_id always arrives as a
+  # string from -e - cast it to match VMware's int ids before comparing
+  # (Hyper-V's id needs no cast, it's already a string on both sides).
+  # Jinja templates have no Python-style list comprehension, so this
+  # (rather than a [... for ... in ...] expression) is the correct fix.
+  ansible.builtin.set_fact:
+    snapshot_remove_matches: >-
+      {{ snapshot_list_result
+         | selectattr('id', 'equalto', snapshot_id | int if snapshot_hypervisor_type == 'vmware' else snapshot_id) | list
+         if (snapshot_id | default('')) | length > 0
+         else snapshot_list_result | selectattr('name', 'equalto', snapshot_name) | list }}
+
+- name: Refuse to proceed if no snapshot matches
+  ansible.builtin.assert:
+    that:
+      - snapshot_remove_matches | length > 0
+    fail_msg: >-
+      No snapshot on '{{ vm_name }}' matches
+      {{ 'id ' + (snapshot_id | string) if (snapshot_id | default('')) | length > 0 else "name '" + snapshot_name + "'" }}.
+      Existing snapshot(s): {{ snapshot_list_result | map(attribute='name') | list | join(', ') if snapshot_list_result | length > 0 else 'none' }}.
+
+- name: Refuse to guess between multiple matching snapshots
+  ansible.builtin.assert:
+    that:
+      - snapshot_remove_matches | length == 1
+    fail_msg: >-
+      {{ snapshot_remove_matches | length }} snapshots on '{{ vm_name }}'
+      match name '{{ snapshot_name }}' - refusing to guess which one to
+      remove. Disambiguate with -e snapshot_id=... (ids:
+      {{ snapshot_remove_matches | map(attribute='id') | join(', ') }}).
+
+- name: Record the resolved target snapshot
+  ansible.builtin.set_fact:
+    snapshot_remove_target: "{{ snapshot_remove_matches[0] }}"
+
+# snapshot_remove_target.id came from our own snapshot_list_hyperv query
+# moments ago (Get-VMSnapshot's own Id.ToString() output), not directly
+# from user input, but the actual removal script below still
+# interpolates it into a PowerShell string (targeting by Id rather than
+# Name, precisely to sidestep re-interpolating a snapshot name that could
+# in principle have been created by other tooling outside this project's
+# own name validation) - confirm it's actually GUID-shaped before that
+# happens, belt and suspenders.
+- name: Assert the resolved snapshot id looks like a GUID (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - snapshot_remove_target.id is regex('^[0-9a-fA-F-]{36}$')
+    fail_msg: "Unexpected non-GUID snapshot id '{{ snapshot_remove_target.id }}' from Get-VMSnapshot - refusing to interpolate it."
+
+# snapshot_remove_scvmm matches by Name rather than Id (SCVMM's
+# VMCheckpoint.ID isn't confirmed to always mirror the underlying
+# Hyper-V checkpoint GUID) - same interpolation concern as above, same
+# fix: validate the shape before it goes anywhere near a PowerShell
+# string, even though it only reached this point either through this
+# project's own charset-validated snapshot_create or by already existing
+# on the VM as reported by Hyper-V/SCVMM itself.
+- name: Assert the resolved snapshot name is safe to interpolate into PowerShell (Hyper-V/SCVMM)
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - snapshot_remove_target.name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      Snapshot '{{ snapshot_remove_target.name }}' has a name outside
+      this project's safe charset (probably created by other tooling) -
+      refusing to interpolate it into PowerShell for the SCVMM removal
+      path. Rename it first, or remove it directly outside this project.
+
+- name: Note if the target snapshot has children that will be reparented
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - not (snapshot_remove_children | bool)
+    - snapshot_list_result | selectattr('parent_snapshot_id', 'defined') | selectattr('parent_snapshot_id', 'equalto', snapshot_remove_target.id) | list | length > 0
+  ansible.builtin.debug:
+    msg: >-
+      '{{ snapshot_remove_target.name }}' has child checkpoint(s) that
+      aren't being removed with it (snapshot_remove_children=false) -
+      Hyper-V will merge its AVHDX into its parent and reparent the
+      children, which can take a while for a large differencing chain.
+
+# Best-effort cluster placement check (Hyper-V only) - see
+# ansible-resizedisk's matching comment for the full reasoning behind
+# blocking on a stale owner node rather than warning.
+- name: Check cluster placement (Hyper-V)
+  when: snapshot_hypervisor_type == 'hyperv'
+  delegate_to: "{{ snapshot_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+      [PSCustomObject]@{
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+          ClusterOwnerNode      = $clusterOwnerNode
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: snapshot_hyperv_cluster_lookup
+
+- name: Parse cluster placement facts
+  when: snapshot_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    snapshot_hyperv_cluster_info: "{{ snapshot_hyperv_cluster_lookup.stdout | from_json }}"
+
+- name: Refuse to act on a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_hyperv_cluster_info.IsClustered
+    - snapshot_hyperv_cluster_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - snapshot_hyperv_cluster_info.ClusterOwnerNode == snapshot_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ snapshot_hyperv_cluster_info.ClusterOwnerNode }}, not {{ snapshot_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to act on a clustered (highly-available) VM without an explicit override
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_hyperv_cluster_info.ClusterCheckAvailable
+    - snapshot_hyperv_cluster_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - snapshot_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ snapshot_hyperv_cluster_info.ClusterOwnerNode }}). It
+      can fail over to another node mid-operation. Coordinate with the
+      cluster first, then pass -e snapshot_allow_clustered_vm=true to
+      proceed.

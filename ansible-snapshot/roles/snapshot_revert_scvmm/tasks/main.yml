@@ -1,0 +1,33 @@
+---
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+      - vm_name is defined
+      - snapshot_revert_target is defined
+
+- name: Revert the VM to the checkpoint via SCVMM
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ vm_name }}' not found in SCVMM"
+      }
+
+      $checkpoint = Get-SCVMCheckpoint -VM $vm | Where-Object { $_.Name -eq '{{ snapshot_revert_target.name }}' }
+      if (-not $checkpoint) {
+          throw "Checkpoint '{{ snapshot_revert_target.name }}' no longer exists on '{{ vm_name }}' in SCVMM - removed by someone else since this run started?"
+      }
+
+      Restore-SCVMCheckpoint -VMCheckpoint $checkpoint | Out-Null
+  register: snapshot_revert_result
+
+- name: Report the revert
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' reverted to checkpoint '{{ snapshot_revert_target.name }}' via SCVMM."

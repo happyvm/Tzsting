@@ -1,0 +1,148 @@
+---
+# Best-effort per-VM lock so two ServiceNow-triggered runs against the
+# same vm_name (double submission, retry-while-still-running, a
+# create/remove/revert racing against each other...) don't race. Called
+# twice from each mutating playbook (create/remove/revert - snapshot_list
+# is read-only and doesn't lock): once with snapshot_lock_action=acquire
+# right after preflight_platform, and once with
+# snapshot_lock_action=release in an `always:` block wrapping everything
+# else, so the lock is freed on both success and failure.
+#
+# Deliberately its own namespace/marker (SNAPSHOT_LOCK / C:\ProgramData\
+# ansible-snapshot\) rather than sharing ansible-resizedisk's lock - the
+# two projects don't coordinate with each other. Running a disk resize
+# and a snapshot revert against the same VM at the same time is still the
+# operator's responsibility to avoid.
+#
+# The two platforms get genuinely different guarantees:
+#   - Hyper-V: a lock file created with FileMode.CreateNew on the owning
+#     Hyper-V host. This IS atomic (the OS refuses a second exclusive
+#     create), so this is a real mutual-exclusion lock, not just advisory.
+#   - VMware: a marker written into the VM's annotation field via a
+#     read-then-write vCenter API call. This has no compare-and-swap, so
+#     two runs starting within the same read-write window could both
+#     believe they acquired it - it narrows the race a lot (covers the
+#     common "double-clicked submit" case) but isn't airtight. There's no
+#     vCenter API available to this playbook that offers true atomic
+#     locking on an arbitrary VM field.
+
+- name: Assert snapshot_lock_action is valid
+  ansible.builtin.assert:
+    that:
+      - snapshot_lock_action in ['acquire', 'release']
+    fail_msg: "snapshot_lock_action must be 'acquire' or 'release'."
+
+- name: Determine a run identifier for the lock marker
+  ansible.builtin.set_fact:
+    snapshot_lock_run_id: "{{ snapshot_lock_run_id | default(lookup('pipe', 'date -u +%s') ~ '-' ~ (999999 | random)) }}"
+
+# --- VMware --------------------------------------------------------------
+
+- name: (VMware) Read the current annotation
+  when: snapshot_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: snapshot_lock_vmware_read
+
+- name: (VMware) Parse an existing lock marker, if any
+  when: snapshot_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    snapshot_lock_vmware_match: "{{ (snapshot_lock_vmware_read.instance.annotation | default(''))
+                                     | regex_search('SNAPSHOT_LOCK:(\\d+):(\\S+)', '\\1', '\\2') }}"
+    snapshot_lock_now_epoch: "{{ lookup('pipe', 'date -u +%s') }}"
+
+- name: (VMware) Refuse to acquire while a non-stale lock is held by another run
+  when:
+    - snapshot_hypervisor_type == 'vmware'
+    - snapshot_lock_action == 'acquire'
+    - snapshot_lock_vmware_match is not none
+    - (snapshot_lock_now_epoch | int) - (snapshot_lock_vmware_match[0] | int) < (snapshot_lock_timeout_seconds | int)
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' already has an active snapshot lock (run
+      {{ snapshot_lock_vmware_match[1] }}, acquired
+      {{ (snapshot_lock_now_epoch | int) - (snapshot_lock_vmware_match[0] | int) }}s ago).
+      Another snapshot operation looks to be in progress - wait for it to
+      finish, or investigate if it's stuck (locks self-expire after
+      {{ snapshot_lock_timeout_seconds }}s).
+
+- name: (VMware) Write the updated annotation (lock added or removed)
+  when: snapshot_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    annotation: >-
+      {{
+        (
+          (snapshot_lock_vmware_read.instance.annotation | default(''))
+          | regex_replace('\n?SNAPSHOT_LOCK:\d+:\S+', '')
+        )
+        ~ ('\nSNAPSHOT_LOCK:' ~ snapshot_lock_now_epoch ~ ':' ~ snapshot_lock_run_id if snapshot_lock_action == 'acquire' else '')
+      }}
+  ignore_errors: "{{ snapshot_lock_action == 'release' }}"  # best-effort on release: a failed cleanup just leaves a lock that self-expires
+
+# --- Hyper-V ---------------------------------------------------------------
+
+- name: (Hyper-V) Acquire or release the lock file on the owning host
+  when: snapshot_hypervisor_type == 'hyperv'
+  delegate_to: "{{ snapshot_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $lockDir = "C:\ProgramData\ansible-snapshot"
+      $lockPath = Join-Path $lockDir "{{ vm_name }}.lock"
+      if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
+
+      if ('{{ snapshot_lock_action }}' -eq 'release') {
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+          "RELEASED"
+          exit 0
+      }
+
+      if (Test-Path $lockPath) {
+          $ageSeconds = [int]((Get-Date).ToUniversalTime() - (Get-Item $lockPath).LastWriteTimeUtc).TotalSeconds
+          if ($ageSeconds -lt {{ snapshot_lock_timeout_seconds }}) {
+              $holder = Get-Content $lockPath -Raw -ErrorAction SilentlyContinue
+              "LOCKED:$ageSeconds`:$holder"
+              exit 0
+          }
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue  # stale, break it
+      }
+
+      try {
+          $fs = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+          $writer = New-Object System.IO.StreamWriter($fs)
+          $writer.Write("{{ snapshot_lock_run_id }}")
+          $writer.Close()
+          $fs.Close()
+          "ACQUIRED"
+      } catch [System.IO.IOException] {
+          "LOCKED:race"
+      }
+  changed_when: false
+  register: snapshot_lock_hyperv_result
+
+- name: (Hyper-V) Refuse to acquire while a lock is held by another run
+  when:
+    - snapshot_hypervisor_type == 'hyperv'
+    - snapshot_lock_action == 'acquire'
+    - snapshot_lock_hyperv_result.stdout is defined
+    - snapshot_lock_hyperv_result.stdout is search('^LOCKED')
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' already has an active snapshot lock on
+      {{ snapshot_hyperv_host }} ({{ snapshot_lock_hyperv_result.stdout | trim }}).
+      Another snapshot operation looks to be in progress - wait for it to
+      finish, or investigate if it's stuck (locks self-expire after
+      {{ snapshot_lock_timeout_seconds }}s).
