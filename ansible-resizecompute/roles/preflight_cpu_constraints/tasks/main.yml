@@ -221,3 +221,24 @@
       CPU change here requires powering it off, and it can fail over to
       another node during that window. Coordinate with the cluster
       first, then pass -e compute_allow_clustered_vm=true to proceed.
+
+# --- Restart scheduling ------------------------------------------------------
+
+- name: Require a scheduled restart window whenever a power-cycle is needed
+  when:
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_cpu_requires_powercycle
+  ansible.builtin.assert:
+    that:
+      - vm_restart_scheduled_at is defined
+      - vm_restart_scheduled_at | length > 0
+      - vm_restart_scheduled_at is regex('^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?$')
+    fail_msg: >-
+      This CPU change cannot be applied live and requires powering
+      '{{ vm_name }}' off - vm_restart_scheduled_at must be supplied
+      (e.g. -e vm_restart_scheduled_at=2026-07-25T22:00:00), the
+      restart window the ServiceNow request was approved for. This
+      playbook does not itself wait until that time (see README) - it's
+      a required confirmation that a window was actually chosen before
+      a power-cycle proceeds, and it's carried through to
+      compute_summary for the ticket/audit trail.

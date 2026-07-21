@@ -6,13 +6,18 @@ project in this series alongside `ansible-resizedisk` and
 `ansible-snapshot`, sharing their overall design (ServiceNow-triggered,
 no static per-VM inventory, hypervisor auto-detection, SCVMM awareness),
 but with a fundamentally different technical profile: CPU/memory
-hot-*add* exists on both platforms with real prerequisites, hot-*remove*
-essentially does not exist anywhere, and Hyper-V has no CPU hot-add at
-all. This project applies a change live whenever the platform genuinely
-allows it, and falls back to a coordinated power-cycle (graceful
-shutdown → change → power back on, only if it was running before)
-everywhere else — never a silent downgrade to "wait for a maintenance
-window", and never a guess at a capability that isn't actually there.
+hot-*add* exists on VMware with real prerequisites, hot-*remove*
+essentially does not exist anywhere, and Hyper-V has no hot-add at all
+for either resource - this project deliberately doesn't use Dynamic
+Memory yet either (see "Hot vs. cold path" below), so on Hyper-V/SCVMM
+every CPU **and** RAM change goes through a power-cycle. Applied live
+whenever the platform genuinely allows it (VMware only, for now), and a
+coordinated power-cycle (graceful shutdown → change → power back on,
+only if it was running before) everywhere else — never a silent
+downgrade to "wait for a maintenance window", and never a guess at a
+capability that isn't actually there. When a power-cycle turns out to be
+needed, the calling ServiceNow workflow has to supply the approved
+restart window (`vm_restart_scheduled_at`) - see below.
 
 Like `ansible-snapshot`, this never connects to the guest OS — every
 operation here is hypervisor-side.
@@ -78,8 +83,8 @@ building this, not assumed) — not a simplification:
 |---|---|---|---|
 | **CPU grow, live possible?** | Yes - CPU Hot Add, if already enabled on the VM and it's powered on | **Never** - no vCPU hot-add exists on Hyper-V | **Never** |
 | **CPU shrink, live possible?** | **Never** - vSphere has no CPU hot-*remove* | **Never** | **Never** |
-| **RAM grow, live possible?** | Yes - Memory Hot Add, if already enabled and powered on | Yes, but only the *ceiling* - raising `-MaximumBytes` on a VM that already has Dynamic Memory enabled and running (the guest claims the extra memory based on demand, not immediately, unlike VMware's hot-add) | **Never** - always cold, matching Microsoft's own documented `Set-SCVirtualMachine` examples (which power off the VM before every memory change shown, including enabling Dynamic Memory) |
-| **RAM shrink, live possible?** | **Never** - vSphere has no memory hot-*remove* | **Never** - lowering `-MaximumBytes`, raising `-MinimumBytes`, or changing `-StartupBytes` all require Dynamic Memory to be turned off first, which itself needs the VM off | **Never** |
+| **RAM grow, live possible?** | Yes - Memory Hot Add, if already enabled and powered on | **Never** - this project doesn't use Dynamic Memory for now (see below); a static-memory VM has no live path on Hyper-V | **Never** |
+| **RAM shrink, live possible?** | **Never** - vSphere has no memory hot-*remove* | **Never** | **Never** |
 
 Everything not marked "live possible" goes through the cold path
 automatically - there's no separate "refuse to shrink" rule anywhere in
@@ -115,35 +120,44 @@ not be.
 unconditionally requires the VM to be turned off, for both a grow and a
 shrink, confirmed against current Microsoft documentation - so every
 Hyper-V/SCVMM CPU change is a power-cycle, with no eligibility check
-needed at all (unlike RAM, where Dynamic Memory gives Hyper-V a genuine,
-if partial, live path).
+needed at all.
 
-**Hyper-V's live memory raise only moves the ceiling.** Unlike VMware's
-hot-add, which immediately gives the guest more usable memory,
-`Set-VMMemory -MaximumBytes` on a running Dynamic-Memory VM just raises
-how high the balloon driver is *allowed* to inflate to - the guest still
-claims it based on actual demand. `resize_ram` reports this distinction
-explicitly rather than implying an immediate change the way VMware's
-hot-add genuinely is one.
+**No Dynamic Memory for now - 1:1 static memory only.** Hyper-V's
+Dynamic Memory would in principle allow a live raise of the memory
+ceiling on a running VM (`Set-VMMemory -MaximumBytes`), the same way CPU
+Hot Add works on VMware - but only the ceiling: the guest claims that
+extra memory based on demand, not immediately, unlike VMware's hot-add
+which is a genuine, immediate change. This project deliberately doesn't
+use that mechanism yet, to keep the memory model simple and predictable
+(one requested value, one actual value, no ballooning behavior to reason
+about) while the rest of this project's design settles. Concretely,
+`resize_ram_hyperv`/`resize_ram_scvmm` always take the cold path and
+always finish with `-DynamicMemoryEnabled $false` plus Startup set to
+the target value - **if a VM already had Dynamic Memory enabled, this
+flattens it to static.** Revisit these two roles if/when Dynamic Memory
+support is added back; the rest of the architecture (preflight,
+grow/shrink detection, locking, restart scheduling) doesn't need to
+change to support it.
 
-**Hyper-V cold-path memory change preserves Dynamic Memory bounds.**
-When the target VM already has Dynamic Memory enabled and the change
-takes the cold path (a shrink, or a grow with the VM not running), the
-existing Minimum/Maximum bounds are **widened** (never narrowed) around
-the new Startup value - `Minimum = min(currentMinimum, target)`,
-`Maximum = max(currentMaximum, target)` - so `Set-VMMemory` never gets
-handed an inconsistent Min/Startup/Max combination. A static-memory VM
-just gets its Startup value changed directly.
+### Scheduling the restart
 
-**Known gap: SCVMM's cold-path memory change does not manage Dynamic
-Memory bounds.** `resize_ram_scvmm` calls `Set-SCVirtualMachine -MemoryMB`
-with a flat value only - unlike the native Hyper-V path above, it
-doesn't widen an existing Dynamic Memory Minimum/Maximum around the new
-target, because SCVMM's read-side property names for the current bounds
-weren't confirmed reliably enough to script against safely. An operator
-managing Dynamic Memory bounds on an SCVMM-managed VM should adjust them
-directly (SCVMM console, or `Set-SCVirtualMachine -DynamicMemory*`)
-rather than through this playbook, for now.
+Whenever a change turns out to need the cold path -
+`compute_cpu_requires_powercycle`/`compute_ram_requires_powercycle` is
+true - preflight requires `vm_restart_scheduled_at` (a date/time,
+e.g. `2026-07-25T22:00:00`) and fails if it's missing. This is meant to
+be collected on the ServiceNow request form itself (the requester picks
+their approved maintenance window), and is carried through to
+`compute_summary` for the ticket/audit trail.
+
+**This playbook does not itself wait until that time.** It has no
+built-in scheduler and doesn't pause/sleep for it - `vm_restart_scheduled_at`
+is a required confirmation that a window was actually chosen before a
+destructive power-cycle is allowed to proceed, not a mechanism that
+delays execution. Actually running the job *at* that time is the calling
+workflow's responsibility - typically an AWX/Tower job scheduled for
+that timestamp, or a ServiceNow Scheduled Job/Orchestration step that
+re-triggers the call once the window opens. Not required at all for a
+VMware change that turns out to be hot-add-eligible.
 
 ### Resize-blocking conditions checked in preflight
 
@@ -155,6 +169,7 @@ rather than through this playbook, for now.
 | Memory outside the policy floor/cap | `compute_ram_min_gb` / `compute_ram_max_gb` (default 1 / 512 GB) | same |
 | Clustered (highly-available) VM, owner node ≠ detected host | — | `Get-ClusterGroup -Name <vm>` → `OwnerNode` ≠ `compute_hyperv_host` - **hard failure, no override possible** (signals an in-progress failover) |
 | Clustered (highly-available) VM, cold-path change, no override | — | same, without `-e compute_allow_clustered_vm=true` - **not required for a live change**, since only the cold path power-cycles the VM and introduces failover risk |
+| Cold-path change, no restart window supplied | `vm_restart_scheduled_at` missing/malformed when a power-cycle is needed | same |
 
 Cluster detection uses the exact same technique as `ansible-resizedisk`
 and `ansible-snapshot` (`Get-ClusterGroup`) - see those projects' READMEs
@@ -243,6 +258,12 @@ convention avoids.
   `Set-SCVirtualMachine`/`Stop-SCVirtualMachine`/`Start-SCVirtualMachine`.
   Without `scvmm_server` configured, this project always uses the native
   Hyper-V cmdlets.
+- **ServiceNow catalog form**: must collect a restart date/time from the
+  requester and pass it through as `vm_restart_scheduled_at` - required
+  by preflight whenever the change can't be applied live (i.e. always on
+  Hyper-V/SCVMM, and on VMware unless Hot Add is eligible). See
+  "Scheduling the restart" above for what this variable does and doesn't
+  do.
 
 ## Usage
 
@@ -262,11 +283,14 @@ ansible-playbook playbooks/resize_cpu.yml \
   --vault-password-file .vault_pass
 ```
 
-Shrink RAM (always a power-cycle - see the decision table above):
+Shrink RAM (always a power-cycle on Hyper-V/SCVMM, and whenever VMware
+Hot Add isn't eligible - see the decision table above - so
+`vm_restart_scheduled_at` is required here):
 
 ```bash
 ansible-playbook playbooks/resize_ram.yml \
   -e vm_name=WINSRV01 -e memory_gb=16 \
+  -e vm_restart_scheduled_at=2026-07-25T22:00:00 \
   --vault-password-file .vault_pass
 ```
 
@@ -276,11 +300,18 @@ Typical use case: a ServiceNow *Catalog Item* / *Change Request* triggers,
 via **Ansible Automation Platform** (job template + webhook) or a **MID
 Server** running `ansible-playbook` directly, a call to `resize_cpu`
 and/or `resize_ram` with the CI's attributes as extra-vars (`vm_name`,
-`vcpu_count`/`memory_gb`, ...). The result (`compute_summary` via
+`vcpu_count`/`memory_gb`, the requester's approved restart window as
+`vm_restart_scheduled_at`, ...). The result (`compute_summary` via
 `set_stats`, or the job's exit code) lets ServiceNow update the
-associated ticket/task - in particular `power_cycled`, so the change
-window/downtime communicated to the requester matches what actually
-happened (a live Hot Add change vs. a scheduled reboot).
+associated ticket/task - in particular `power_cycled` and
+`restart_scheduled_at`, so the change window/downtime communicated back
+matches what actually happened (a live Hot Add change vs. a scheduled
+reboot) and the approved window is on record. Since this playbook
+doesn't itself wait for that window (see "Scheduling the restart"
+above), a cold-path change is best triggered by a *second* workflow step
+- an AWX job scheduled for `vm_restart_scheduled_at`, or a ServiceNow
+Scheduled Job - rather than by running this playbook immediately after
+approval.
 
 ## Variables
 
@@ -291,6 +322,7 @@ happened (a live Hot Add change vs. a scheduled reboot).
 | `vm_name` | both | Name of the CI / VM, as known to vCenter and/or Hyper-V |
 | `vcpu_count` | `resize_cpu` | Target vCPU count |
 | `memory_gb` | `resize_ram` | Target memory size in GB |
+| `vm_restart_scheduled_at` | both, *conditionally* | Approved restart window (e.g. `2026-07-25T22:00:00`) - required only once preflight determines the change needs a power-cycle (always on Hyper-V/SCVMM; on VMware, only when Hot Add isn't eligible). Not time-enforced - see "Scheduling the restart" above |
 
 ### Optional
 

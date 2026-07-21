@@ -1,14 +1,12 @@
 ---
-# Two distinct paths, decided by preflight_ram_constraints
-# (compute_ram_hot_eligible / compute_ram_requires_powercycle):
-#   - Hot: VM already has Dynamic Memory enabled, is running, and this
-#     is a grow - just raise -MaximumBytes live.
-#   - Cold: power-cycle. If the VM currently has Dynamic Memory enabled,
-#     Min/Max are widened (never narrowed) around the new Startup value
-#     so Minimum <= Startup <= Maximum always holds, rather than
-#     blindly setting Startup alone and risking Set-VMMemory rejecting
-#     an inconsistent combination. A static-memory VM just gets its
-#     Startup value changed.
+# No Dynamic Memory for now (1:1 static memory only, matching this
+# project's current scope) - every memory change here is a power-cycle,
+# exactly like resize_cpu_hyperv, and always ends with
+# -DynamicMemoryEnabled $false plus Startup/Minimum/Maximum all set to
+# the same target value. If the VM already had Dynamic Memory enabled,
+# this deliberately flattens it to static - this project doesn't
+# preserve or manage Dynamic Memory bounds. Revisit this role if/when
+# Dynamic Memory support is added back.
 
 - name: Assert required variables/facts are defined
   ansible.builtin.assert:
@@ -16,23 +14,9 @@
       - vm_name is defined
       - memory_gb is defined
       - compute_hyperv_host is defined
-      - compute_ram_requires_powercycle is defined
-
-- name: Raise the Dynamic Memory maximum live
-  when:
-    - compute_ram_grow or compute_ram_shrink
-    - not compute_ram_requires_powercycle
-  delegate_to: "{{ compute_hyperv_host }}"
-  ansible.windows.win_shell:
-    cmd: |
-      $ErrorActionPreference = "Stop"
-      Set-VMMemory -VMName '{{ vm_name }}' -MaximumBytes {{ (memory_gb | float * 1073741824) | round(0) | int }}
-  register: resize_ram_result
 
 - name: Power-cycle and apply the memory change
-  when:
-    - compute_ram_grow or compute_ram_shrink
-    - compute_ram_requires_powercycle
+  when: compute_ram_grow or compute_ram_shrink
   delegate_to: "{{ compute_hyperv_host }}"
   ansible.windows.win_shell:
     cmd: |
@@ -55,14 +39,7 @@
           }
       }
 
-      $mem = Get-VMMemory -VMName '{{ vm_name }}'
-      if ($mem.DynamicMemoryEnabled) {
-          $newMin = [Math]::Min($mem.Minimum, $targetBytes)
-          $newMax = [Math]::Max($mem.Maximum, $targetBytes)
-          Set-VMMemory -VMName '{{ vm_name }}' -StartupBytes $targetBytes -MinimumBytes $newMin -MaximumBytes $newMax
-      } else {
-          Set-VMMemory -VMName '{{ vm_name }}' -StartupBytes $targetBytes
-      }
+      Set-VMMemory -VMName '{{ vm_name }}' -DynamicMemoryEnabled $false -StartupBytes $targetBytes
 
       if ($wasRunning) {
           Start-VM -Name '{{ vm_name }}'
@@ -84,4 +61,4 @@
   ansible.builtin.debug:
     msg: >-
       '{{ vm_name }}' memory changed from {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB to {{ memory_gb }}GB
-      ({{ 'live Dynamic Memory maximum raise' if not compute_ram_requires_powercycle else 'power-cycled' }}).
+      (power-cycled, static 1:1).

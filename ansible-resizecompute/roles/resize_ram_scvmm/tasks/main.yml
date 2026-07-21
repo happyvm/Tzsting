@@ -6,13 +6,10 @@
 # Set-SCVirtualMachine examples, which power the VM off before every
 # memory change shown - including when enabling Dynamic Memory.
 #
-# Known gap: unlike resize_ram_hyperv's native path, this does not widen
-# an existing Dynamic Memory Minimum/Maximum around the new value - it
-# only sets a flat MemoryMB. SCVMM's read-side property names for the
-# current Dynamic Memory bounds aren't confirmed reliably enough to
-# script against here; an operator managing Dynamic Memory bounds on an
-# SCVMM-managed VM should adjust them directly (SCVMM console or
-# Set-SCVirtualMachine -DynamicMemory*) rather than through this role.
+# No Dynamic Memory for now (1:1 static memory only, matching this
+# project's current scope, same as resize_ram_hyperv) - every change
+# here explicitly disables it and sets a flat MemoryMB, flattening an
+# existing Dynamic Memory VM to static if it had one configured.
 
 - name: Assert required variables are defined
   ansible.builtin.assert:
@@ -41,7 +38,7 @@
           Stop-SCVirtualMachine -VM $vm | Out-Null
       }
 
-      Set-SCVirtualMachine -VM $vm -MemoryMB {{ (memory_gb | float * 1024) | round(0) | int }} | Out-Null
+      Set-SCVirtualMachine -VM $vm -DynamicMemoryEnabled $false -MemoryMB {{ (memory_gb | float * 1024) | round(0) | int }} | Out-Null
 
       if ($wasRunning) {
           Start-SCVirtualMachine -VM $vm | Out-Null
@@ -58,4 +55,4 @@
   ansible.builtin.debug:
     msg: >-
       '{{ vm_name }}' memory changed from {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB to {{ memory_gb }}GB
-      via SCVMM (power-cycled; final state: {{ (resize_ram_result.stdout | trim | from_json).CurrentState }}).
+      via SCVMM (power-cycled, static 1:1; final state: {{ (resize_ram_result.stdout | trim | from_json).CurrentState }}).

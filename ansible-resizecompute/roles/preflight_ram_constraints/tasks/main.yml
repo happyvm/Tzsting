@@ -3,21 +3,13 @@
 # no-op, whether it can be applied live, and blocks on a clustered
 # Hyper-V VM without sign-off.
 #
-# "Live" means different things on each platform:
-#   - VMware: Memory Hot Add - grow only, same as CPU (neither platform
-#     supports memory hot-*remove*).
-#   - Hyper-V native, Dynamic Memory already enabled: raising
-#     -MaximumBytes on a running VM is genuinely live (confirmed against
-#     current Microsoft documentation) - but it only raises the ceiling,
-#     it doesn't force the guest to immediately claim the extra memory
-#     the way VMware's hot-add does. Lowering -MaximumBytes, or any
-#     change at all to a *static*-memory VM, needs -DynamicMemoryEnabled
-#     turned off first, which itself needs the VM off - so those always
-#     take the cold path.
-#   - SCVMM: always cold, matching Microsoft's own documented
-#     Set-SCVirtualMachine examples (which power the VM off before every
-#     memory change shown, including enabling Dynamic Memory) - no live
-#     path is attempted here for the SCVMM-managed case.
+# "Live" only exists on VMware here: Memory Hot Add, grow only (neither
+# platform supports memory hot-*remove*). Hyper-V's Dynamic Memory would
+# in principle allow a live raise of the ceiling, but this project
+# deliberately does not use Dynamic Memory for now (1:1 static memory
+# only, matching this project's current scope) - see resize_ram_hyperv's
+# header comment for the detail. That means every Hyper-V/SCVMM memory
+# change is a power-cycle, same as CPU.
 
 - name: Assert memory_gb is defined and within policy bounds
   ansible.builtin.assert:
@@ -98,38 +90,24 @@
     compute_ram_requires_powercycle: "{{ not compute_ram_hot_eligible }}"
 
 # --- Hyper-V ---------------------------------------------------------------
+# No Dynamic Memory here for now (1:1 static memory only - see
+# resize_ram_hyperv), so there is no live path to check eligibility for:
+# every Hyper-V/SCVMM memory change is a power-cycle, exactly like CPU.
 
-- name: Gather current memory configuration (Hyper-V)
+- name: Gather the current memory size (Hyper-V)
   when: compute_hypervisor_type == 'hyperv'
   delegate_to: "{{ compute_hyperv_host }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"
-      $vm = Get-VM -Name '{{ vm_name }}'
-      $mem = Get-VMMemory -VMName '{{ vm_name }}'
-      [PSCustomObject]@{
-          IsRunning            = ($vm.State -eq 'Running')
-          DynamicMemoryEnabled = $mem.DynamicMemoryEnabled
-          StartupBytes         = $mem.Startup
-          MinimumBytes         = $mem.Minimum
-          MaximumBytes         = $mem.Maximum
-      } | ConvertTo-Json -Compress
+      (Get-VMMemory -VMName '{{ vm_name }}').Startup
   changed_when: false
   register: compute_hyperv_ram_lookup
 
-- name: Parse current memory configuration (Hyper-V)
-  when: compute_hypervisor_type == 'hyperv'
-  ansible.builtin.set_fact:
-    compute_hyperv_ram_info: "{{ compute_hyperv_ram_lookup.stdout | trim | from_json }}"
-
-- name: Determine the comparable current memory size (Hyper-V)
-  # For a Dynamic Memory VM, the meaningful "current size" for a resize
-  # request is the ceiling (Maximum) it's already allowed to grow to,
-  # not the Startup value - Startup only matters at boot. For a static
-  # VM, Startup *is* the actual assigned size.
+- name: Determine whether this is a grow, a shrink or a no-op (Hyper-V)
   when: compute_hypervisor_type == 'hyperv'
   vars:
-    compute_ram_current_bytes: "{{ compute_hyperv_ram_info.MaximumBytes if compute_hyperv_ram_info.DynamicMemoryEnabled else compute_hyperv_ram_info.StartupBytes }}"
+    compute_ram_current_bytes: "{{ compute_hyperv_ram_lookup.stdout | trim | int }}"
   ansible.builtin.set_fact:
     compute_ram_current_mb: "{{ (compute_ram_current_bytes | int / 1048576) | round(0, 'ceil') | int }}"
     compute_ram_grow: "{{ ((memory_gb | float) * 1073741824) > (compute_ram_current_bytes | int) }}"
@@ -143,37 +121,10 @@
   ansible.builtin.debug:
     msg: "'{{ vm_name }}' already has {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB - nothing to do."
 
-- name: Determine hot-add eligibility (Hyper-V native, not SCVMM-managed)
-  when:
-    - compute_hypervisor_type == 'hyperv'
-    - not compute_managed_by_scvmm
-    - compute_ram_grow
-  ansible.builtin.set_fact:
-    compute_ram_hot_eligible: "{{ compute_hyperv_ram_info.DynamicMemoryEnabled and compute_hyperv_ram_info.IsRunning }}"
-
-- name: Determine hot-add eligibility (Hyper-V, shrink/no-op/SCVMM-managed)
-  when:
-    - compute_hypervisor_type == 'hyperv'
-    - compute_managed_by_scvmm or not compute_ram_grow
-  ansible.builtin.set_fact:
-    compute_ram_hot_eligible: false
-
-- name: Compute whether a power-cycle is required (Hyper-V)
+- name: A Hyper-V/SCVMM memory change always requires a power-cycle
   when: compute_hypervisor_type == 'hyperv'
   ansible.builtin.set_fact:
-    compute_ram_requires_powercycle: "{{ not compute_ram_hot_eligible }}"
-
-- name: Note that a live raise only moves the Dynamic Memory ceiling (Hyper-V, informational)
-  when:
-    - compute_hypervisor_type == 'hyperv'
-    - compute_ram_grow
-    - compute_ram_hot_eligible
-  ansible.builtin.debug:
-    msg: >-
-      '{{ vm_name }}' will have its Dynamic Memory maximum raised live to
-      {{ memory_gb }}GB. Unlike VMware's memory hot-add, this doesn't
-      force that memory into the guest immediately - Hyper-V still
-      allocates it based on actual demand, up to the new ceiling.
+    compute_ram_requires_powercycle: "{{ compute_ram_grow or compute_ram_shrink }}"
 
 # Best-effort cluster placement check - see ansible-resizedisk's matching
 # comment for the full reasoning behind blocking on a stale owner node
@@ -232,7 +183,6 @@
     - compute_ram_grow or compute_ram_shrink
     - compute_hyperv_ram_cluster_info.ClusterCheckAvailable
     - compute_hyperv_ram_cluster_info.IsClustered
-    - compute_ram_requires_powercycle
   ansible.builtin.assert:
     that:
       - compute_allow_clustered_vm | bool
@@ -242,3 +192,24 @@
       This memory change requires powering it off, and it can fail over
       to another node during that window. Coordinate with the cluster
       first, then pass -e compute_allow_clustered_vm=true to proceed.
+
+# --- Restart scheduling (both platforms) ------------------------------------
+
+- name: Require a scheduled restart window whenever a power-cycle is needed
+  when:
+    - (compute_ram_grow or compute_ram_shrink)
+    - compute_ram_requires_powercycle
+  ansible.builtin.assert:
+    that:
+      - vm_restart_scheduled_at is defined
+      - vm_restart_scheduled_at | length > 0
+      - vm_restart_scheduled_at is regex('^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?$')
+    fail_msg: >-
+      This memory change cannot be applied live and requires powering
+      '{{ vm_name }}' off - vm_restart_scheduled_at must be supplied
+      (e.g. -e vm_restart_scheduled_at=2026-07-25T22:00:00), the
+      restart window the ServiceNow request was approved for. This
+      playbook does not itself wait until that time (see README) - it's
+      a required confirmation that a window was actually chosen before
+      a power-cycle proceeds, and it's carried through to
+      compute_summary for the ticket/audit trail.

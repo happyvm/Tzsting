@@ -5,19 +5,27 @@
 # everything about the target VM is passed as extra-vars, resolved from
 # the CMDB CI record / change request.
 #
-# Applied live when possible - VMware Memory Hot Add (growing, already
-# enabled on the VM, VM running), or on Hyper-V a Dynamic Memory maximum
-# raise (growing, Dynamic Memory already enabled, VM running - note this
-# only raises the ceiling, see README.md) - otherwise the VM is
+# Applied live when possible - VMware Memory Hot Add only (growing,
+# already enabled on the VM, VM running) - otherwise the VM is
 # power-cycled (gracefully shut down, changed, powered back on if it was
-# running before). SCVMM-managed VMs are always power-cycled, matching
-# Microsoft's own documented Set-SCVirtualMachine pattern. See README.md
-# for the full hot-vs-cold decision table and the platform facts behind
-# it.
+# running before). No Dynamic Memory for now (1:1 static memory only,
+# matching this project's current scope), so every Hyper-V/SCVMM memory
+# change is a power-cycle, same as CPU - see README.md for the full
+# hot-vs-cold decision table and the platform facts behind it.
 #
 # Required extra-vars:
 #   vm_name      CI / VM name, as known to vCenter and/or Hyper-V
 #   memory_gb    target memory size in GB
+#   vm_restart_scheduled_at   REQUIRED WHENEVER a power-cycle turns out to
+#                             be needed (preflight fails otherwise) - the
+#                             restart window the ServiceNow request was
+#                             approved for, e.g. 2026-07-25T22:00:00. Not
+#                             enforced against the current time - this
+#                             playbook doesn't itself wait until then, it
+#                             requires the value as confirmation a window
+#                             was actually chosen (see README). Not needed
+#                             at all when the change is hot-add-eligible
+#                             (VMware only).
 #
 # Optional extra-vars:
 #   hypervisor_type            vmware|hyperv - skip hypervisor auto-detection
@@ -86,6 +94,7 @@
                 requested_memory_gb: "{{ memory_gb }}"
                 changed: "{{ compute_ram_grow or compute_ram_shrink }}"
                 power_cycled: "{{ compute_ram_requires_powercycle if (compute_ram_grow or compute_ram_shrink) else false }}"
+                restart_scheduled_at: "{{ vm_restart_scheduled_at if (compute_ram_grow or compute_ram_shrink) and compute_ram_requires_powercycle else '' }}"
             aggregate: false
       always:
         - name: Release the per-VM lock (runs on success or failure)
