@@ -1,0 +1,5 @@
+---
+# How long a lock is honored before it's considered abandoned by a crashed
+# run and can be broken by a new one. 2 hours comfortably covers a slow
+# resize (large disk, slow storage) with margin.
+resizedisk_lock_timeout_seconds: 7200

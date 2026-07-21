@@ -6,7 +6,10 @@
 # Assumes preflight_disk_constraints already ran: it looked up the disk
 # (hyperv_vhd_info) and rejected anything unsafe to grow (pass-through,
 # shared VHDX, checkpoints, differencing disk, IDE-attached/Generation 1
-# system disk, shrink/no-op).
+# system disk, shrink). resizedisk_disk_grow_needed is false when the disk
+# is already at/above the requested size (a retry after a previous run's
+# filesystem step failed) - the actual resize call is skipped in that
+# case, but this role still runs so the assert below stays honest.
 
 - name: Assert required variables/facts are defined
   ansible.builtin.assert:
@@ -15,19 +18,23 @@
       - vm_name is defined
       - disk_new_size_gb is defined
       - hyperv_vhd_info is defined
+      - resizedisk_disk_grow_needed is defined
     fail_msg: >-
       resizedisk_hyperv_host, vm_name and disk_new_size_gb must all be set for
-      resize_disk_hyperv, and hyperv_vhd_info must have been resolved by
-      preflight_disk_constraints.
+      resize_disk_hyperv, and hyperv_vhd_info/resizedisk_disk_grow_needed
+      must have been resolved by preflight_disk_constraints.
 
 - name: Grow the virtual hard disk to the requested size
+  when: resizedisk_disk_grow_needed
   delegate_to: "{{ resizedisk_hyperv_host }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    Resize-VHD -Path '{{ hyperv_vhd_info.Path }}' -SizeBytes {{ (disk_new_size_gb | int) * 1073741824 }}
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Resize-VHD -Path '{{ hyperv_vhd_info.Path }}' -SizeBytes {{ (disk_new_size_gb | int) * 1073741824 }}
   register: hyperv_resize_result
 
 - name: Report new disk size
+  when: resizedisk_disk_grow_needed
   ansible.builtin.debug:
     msg: >-
       Disk {{ hyperv_vhd_info.Path }} on {{ vm_name }} resized to {{ disk_new_size_gb }}GB.

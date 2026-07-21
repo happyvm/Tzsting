@@ -32,10 +32,11 @@
 
 - name: Search each known Hyper-V host for a VM with this name
   delegate_to: "{{ item }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "SilentlyContinue"
-    $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
-    if ($vm) { "FOUND|$($vm.State)" } else { "NOTFOUND" }
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "SilentlyContinue"
+      $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+      if ($vm) { "FOUND|$($vm.State)" } else { "NOTFOUND" }
   loop: "{{ groups['hyperv_hypervisor'] | default([]) }}"
   register: resizedisk_hyperv_search
   changed_when: false
@@ -95,3 +96,58 @@
     msg: >-
       '{{ vm_name }}' confirmed as a VM on {{ resizedisk_hypervisor_type }}
       {{ '(' + resizedisk_hyperv_host + ')' if resizedisk_hypervisor_type == 'hyperv' else '' }}.
+
+# --- SCVMM management detection (Hyper-V only) ------------------------------
+# resizedisk_hyperv_host above is always sourced from our own direct search
+# across the hyperv_hypervisor inventory group - deliberately not
+# overwritten with whatever hostname SCVMM reports, since that name isn't
+# guaranteed to match an inventory_hostname here (FQDN vs short name,
+# admin-console naming, etc.) and delegate_to needs an exact match. SCVMM
+# detection below only ever sets the resizedisk_managed_by_scvmm boolean.
+
+- name: Default resizedisk_managed_by_scvmm to false
+  ansible.builtin.set_fact:
+    resizedisk_managed_by_scvmm: false
+
+- name: Trust an explicit managed_by_scvmm override, if supplied
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - managed_by_scvmm is defined
+  ansible.builtin.set_fact:
+    resizedisk_managed_by_scvmm: "{{ managed_by_scvmm | bool }}"
+
+- name: Query SCVMM for this VM, if a server is configured and not already overridden
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - managed_by_scvmm is not defined
+    - scvmm_server is defined
+    - scvmm_server | length > 0
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+      [bool]$vm | ConvertTo-Json -Compress
+  changed_when: false
+  ignore_unreachable: true
+  ignore_errors: true
+  register: resizedisk_scvmm_search
+
+- name: Record whether SCVMM manages this VM
+  when:
+    - resizedisk_hypervisor_type == 'hyperv'
+    - managed_by_scvmm is not defined
+    - resizedisk_scvmm_search is defined
+    - resizedisk_scvmm_search is not skipped
+    - resizedisk_scvmm_search is succeeded
+  ansible.builtin.set_fact:
+    resizedisk_managed_by_scvmm: "{{ (resizedisk_scvmm_search.stdout | default('false') | trim | from_json) | bool }}"
+
+- name: Report management plane
+  when: resizedisk_hypervisor_type == 'hyperv'
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' will be resized {{ 'via SCVMM (Expand-SCVirtualDiskDrive)' if resizedisk_managed_by_scvmm
+      else 'directly via Hyper-V (Resize-VHD)' }}.

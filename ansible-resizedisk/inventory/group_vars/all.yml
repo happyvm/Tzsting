@@ -20,12 +20,28 @@ resizedisk_host_free_margin_gb: 10
 # legitimately large disk.
 resizedisk_max_size_gb: 2000
 
+# Refuse a clustered (highly-available) Hyper-V VM by default - it can
+# fail over mid-resize. Set true per-run (-e resizedisk_allow_clustered_vm=true)
+# once an operator has actually coordinated with the cluster.
+resizedisk_allow_clustered_vm: false
+
 # --- vCenter connection (single vCenter managing the VMware estate) --------
 vcenter_hostname: vcenter.example.local
 vcenter_username: "{{ vault_vcenter_username }}"
 vcenter_password: "{{ vault_vcenter_password }}"
 vcenter_datacenter: DC01
 vmware_validate_certs: false
+
+# --- SCVMM (optional) -------------------------------------------------------
+# Set scvmm_server to an inventory_hostname in the scvmm_management group
+# (see inventory/hosts.yml.example) to enable auto-detection of SCVMM-managed
+# Hyper-V VMs - resize then routes through Expand-SCVirtualDiskDrive instead
+# of Resize-VHD, so SCVMM's database doesn't drift out of sync with the
+# actual disk size. Leave empty ("") to disable detection entirely (direct
+# Resize-VHD is always used) - the previous, still fully supported, behavior.
+scvmm_server: ""
+scvmm_username: "{{ vault_scvmm_username | default('') }}"
+scvmm_password: "{{ vault_scvmm_password | default('') }}"
 
 # --- Default target disk ----------------------------------------------------
 # Which disk to grow when a VM has more than one. Override per-run

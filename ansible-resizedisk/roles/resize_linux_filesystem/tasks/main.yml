@@ -114,6 +114,11 @@
     linux_resize_result: "{{ run_guest_command_result.stdout | trim | from_json }}"
 
 - name: Fail if the filesystem gained no space despite the disk having been grown
+  # Only enforced when this run actually grew the disk (resizedisk_disk_grow_needed):
+  # if it was already at/above target coming in - e.g. a retry after a
+  # previous run's filesystem step failed - PartitionResized=false is the
+  # expected "nothing left to do" outcome here, not a wrong-disk mismatch.
+  when: resizedisk_disk_grow_needed
   ansible.builtin.assert:
     that:
       - linux_resize_result.PartitionResized
