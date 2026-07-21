@@ -1,0 +1,61 @@
+---
+# Hyper-V has no vCPU hot-add/hot-remove (see preflight_cpu_constraints's
+# header comment) - every change here goes through a power-cycle:
+# gracefully stop the VM if it's running, apply Set-VMProcessor, then
+# start it back up only if it was running before. All done in a single
+# delegated script so the poll-for-stopped/poll-for-started waits don't
+# need multiple round trips.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vcpu_count is defined
+      - compute_hyperv_host is defined
+
+- name: Power-cycle and apply the vCPU change
+  when: compute_cpu_grow or compute_cpu_shrink
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $timeoutSeconds = {{ compute_poweroff_timeout_seconds }}
+
+      $vm = Get-VM -Name '{{ vm_name }}'
+      $wasRunning = ($vm.State -eq 'Running')
+
+      if ($wasRunning) {
+          Stop-VM -Name '{{ vm_name }}'
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Off' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+          if ((Get-VM -Name '{{ vm_name }}').State -ne 'Off') {
+              throw "'{{ vm_name }}' did not reach the Off state within ${timeoutSeconds}s of Stop-VM - refusing to change vCPU count while its state is uncertain."
+          }
+      }
+
+      Set-VMProcessor -VMName '{{ vm_name }}' -Count {{ vcpu_count }}
+
+      if ($wasRunning) {
+          Start-VM -Name '{{ vm_name }}'
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+      }
+
+      [PSCustomObject]@{
+          WasRunning   = $wasRunning
+          CurrentState = (Get-VM -Name '{{ vm_name }}').State.ToString()
+      } | ConvertTo-Json -Compress
+  register: resize_cpu_result
+
+- name: Report the new vCPU count
+  when: compute_cpu_grow or compute_cpu_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' vCPU count changed from {{ compute_cpu_current }} to {{ vcpu_count }}
+      (power-cycled; final state: {{ (resize_cpu_result.stdout | trim | from_json).CurrentState }}).

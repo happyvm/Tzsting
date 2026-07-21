@@ -1,0 +1,86 @@
+---
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vcpu_count is defined
+      - compute_cpu_requires_powercycle is defined
+
+- name: Apply the vCPU change live (CPU Hot Add)
+  when:
+    - compute_cpu_grow or compute_cpu_shrink
+    - not compute_cpu_requires_powercycle
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    hardware:
+      num_cpus: "{{ vcpu_count | int }}"
+      num_cpu_cores_per_socket: "{{ vcpu_cores_per_socket | int }}"
+  register: resize_cpu_result
+
+- name: Record the VM's power state before a cold change
+  when:
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_cpu_requires_powercycle
+  ansible.builtin.set_fact:
+    compute_cpu_was_running: "{{ compute_vmware_search.instance.hw_power_status == 'poweredOn' }}"
+
+- name: Gracefully shut down the guest before a cold change
+  when:
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_cpu_requires_powercycle
+    - compute_cpu_was_running
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: shutdown-guest
+    state_change_timeout: "{{ compute_poweroff_timeout_seconds }}"
+
+- name: Apply the vCPU change with the VM powered off
+  when:
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_cpu_requires_powercycle
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    hardware:
+      num_cpus: "{{ vcpu_count | int }}"
+      num_cpu_cores_per_socket: "{{ vcpu_cores_per_socket | int }}"
+  register: resize_cpu_result
+
+- name: Power the VM back on if it was running before
+  when:
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_cpu_requires_powercycle
+    - compute_cpu_was_running
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: powered-on
+
+- name: Report the new vCPU count
+  when: compute_cpu_grow or compute_cpu_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' vCPU count changed from {{ compute_cpu_current }} to {{ vcpu_count }}
+      ({{ 'live via CPU Hot Add' if not compute_cpu_requires_powercycle else 'power-cycled' }}).

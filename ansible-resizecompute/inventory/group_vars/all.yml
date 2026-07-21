@@ -1,0 +1,55 @@
+---
+# Environment-wide defaults. Override per-environment (e.g. group_vars/all.yml
+# per inventory, or -e on the CLI / AWX survey) as needed. Secrets
+# (vcenter_password, vault_* below) belong in ansible-vault or the AWX
+# credential store, never committed in clear text.
+
+# --- Safety net -------------------------------------------------------------
+# Refuse a clustered (highly-available) Hyper-V VM by default - a failover
+# mid-operation (which always involves a power-off/power-on cycle on
+# Hyper-V, see README) can leave the VM started back up on a different
+# node than the one this run acted on. Set true per-run
+# (-e compute_allow_clustered_vm=true) once an operator has coordinated
+# with the cluster.
+compute_allow_clustered_vm: false
+
+# Policy caps against a mistyped value coming from ServiceNow (e.g. a
+# stray extra digit). Raise per-run for a legitimately large VM.
+compute_cpu_max_count: 32
+compute_ram_max_gb: 512
+compute_ram_min_gb: 1
+
+# How long to wait for a graceful Stop-VM/Stop-SCVirtualMachine to
+# actually reach a stopped state before giving up - the cold path (used
+# for every Hyper-V CPU change, every shrink, and any VMware change
+# where hot-add isn't available/enabled) needs the VM off before it can
+# apply the change.
+compute_poweroff_timeout_seconds: 300
+
+# --- vCenter connection (single vCenter managing the VMware estate) --------
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false
+
+# --- SCVMM (optional) -------------------------------------------------------
+# Set scvmm_server to an inventory_hostname in the scvmm_management group
+# (see inventory/hosts.yml.example) to enable auto-detection of
+# SCVMM-managed Hyper-V VMs - CPU/RAM changes then route through
+# Set-SCVirtualMachine instead of the native Hyper-V cmdlets, so SCVMM's
+# database doesn't drift out of sync with the actual VM configuration.
+# Leave empty ("") to disable detection entirely (the native Hyper-V
+# cmdlets are always used) - the previous, still fully supported,
+# behavior.
+scvmm_server: ""
+scvmm_username: "{{ vault_scvmm_username | default('') }}"
+scvmm_password: "{{ vault_scvmm_password | default('') }}"
+
+# --- resize_cpu defaults -----------------------------------------------------
+# VMware-only: cores per socket (default 1 = one socket per vCPU, the
+# most broadly compatible topology and the safest default absent a
+# specific guest-OS licensing reason to change it). Ignored on Hyper-V,
+# which has no equivalent socket/cores-per-socket split exposed by
+# Set-VMProcessor.
+vcpu_cores_per_socket: 1

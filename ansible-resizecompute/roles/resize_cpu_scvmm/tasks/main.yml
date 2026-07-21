@@ -1,0 +1,54 @@
+---
+# Applies the vCPU change via SCVMM (Set-SCVirtualMachine) instead of
+# the native Hyper-V cmdlets directly - used instead of resize_cpu_hyperv
+# whenever compute_managed_by_scvmm is true, so SCVMM's database doesn't
+# drift out of sync with the actual VM configuration. Follows the exact
+# power-off/change/power-on pattern from Microsoft's own documented
+# Set-SCVirtualMachine examples (SCVMM doesn't expose a hot-add path for
+# CPU any more than native Hyper-V does).
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+      - vm_name is defined
+      - vcpu_count is defined
+
+- name: Power-cycle and apply the vCPU change via SCVMM
+  when: compute_cpu_grow or compute_cpu_shrink
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ vm_name }}' not found in SCVMM"
+      }
+
+      $wasRunning = ($vm.Status -ne 'PowerOff')
+      if ($wasRunning) {
+          Stop-SCVirtualMachine -VM $vm | Out-Null
+      }
+
+      Set-SCVirtualMachine -VM $vm -CPUCount {{ vcpu_count }} | Out-Null
+
+      if ($wasRunning) {
+          Start-SCVirtualMachine -VM $vm | Out-Null
+      }
+
+      [PSCustomObject]@{
+          WasRunning   = $wasRunning
+          CurrentState = (Get-SCVirtualMachine -Name '{{ vm_name }}').Status.ToString()
+      } | ConvertTo-Json -Compress
+  register: resize_cpu_result
+
+- name: Report the new vCPU count
+  when: compute_cpu_grow or compute_cpu_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' vCPU count changed from {{ compute_cpu_current }} to {{ vcpu_count }}
+      via SCVMM (power-cycled; final state: {{ (resize_cpu_result.stdout | trim | from_json).CurrentState }}).

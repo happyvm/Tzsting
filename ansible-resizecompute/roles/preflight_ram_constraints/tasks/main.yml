@@ -1,0 +1,215 @@
+---
+# Determines whether the requested memory size is a grow, a shrink or a
+# no-op, whether it can be applied live, and blocks on a clustered
+# Hyper-V VM without sign-off.
+#
+# "Live" only exists on VMware here: Memory Hot Add, grow only (neither
+# platform supports memory hot-*remove*). Hyper-V's Dynamic Memory would
+# in principle allow a live raise of the ceiling, but this project
+# deliberately does not use Dynamic Memory for now (1:1 static memory
+# only, matching this project's current scope) - see resize_ram_hyperv's
+# header comment for the detail. That means every Hyper-V/SCVMM memory
+# change is a power-cycle, same as CPU.
+
+- name: Assert memory_gb is defined and within policy bounds
+  ansible.builtin.assert:
+    that:
+      - memory_gb is defined
+      - memory_gb | float >= (compute_ram_min_gb | float)
+      - memory_gb | float <= (compute_ram_max_gb | float)
+    fail_msg: >-
+      memory_gb must be supplied (e.g. -e memory_gb=16) and be between
+      {{ compute_ram_min_gb }} and {{ compute_ram_max_gb }} GB (the
+      policy floor/cap - raise/lower deliberately with
+      -e compute_ram_min_gb=... / -e compute_ram_max_gb=... if needed).
+
+# --- VMware --------------------------------------------------------------
+
+- name: Refuse to reconfigure a template
+  when: compute_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - not compute_vmware_search.instance.hw_is_template
+    fail_msg: "'{{ vm_name }}' is a template, not a deployable VM."
+
+- name: Determine whether this is a grow, a shrink or a no-op (VMware)
+  when: compute_hypervisor_type == 'vmware'
+  vars:
+    compute_ram_current_mb: "{{ compute_vmware_search.instance.hw_memtotal_mb | int }}"
+  ansible.builtin.set_fact:
+    compute_ram_current_mb: "{{ compute_ram_current_mb }}"
+    compute_ram_grow: "{{ ((memory_gb | float) * 1024) > (compute_ram_current_mb | int) }}"
+    compute_ram_shrink: "{{ ((memory_gb | float) * 1024) < (compute_ram_current_mb | int) }}"
+
+- name: Report when memory is already at the requested value
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - not compute_ram_grow
+    - not compute_ram_shrink
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' already has {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB - nothing to do."
+
+- name: Fetch Memory Hot Add status (VMware, grow only)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_ram_grow
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    schema: vsphere
+    properties:
+      - config.memoryHotAddEnabled
+  register: compute_vmware_ram_hotadd_info
+
+- name: Determine hot-add eligibility (VMware, grow only)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_ram_grow
+  ansible.builtin.set_fact:
+    # Best-effort, same reasoning as preflight_cpu_constraints: default
+    # to false (cold path) if this can't be read, never assume hot-add.
+    compute_ram_hot_eligible: >-
+      {{ (compute_vmware_ram_hotadd_info.instance.config.memoryHotAddEnabled | default(false) | bool)
+         and compute_vmware_search.instance.hw_power_status == 'poweredOn' }}
+
+- name: Determine hot-add eligibility (VMware, shrink/no-op)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - not compute_ram_grow
+  ansible.builtin.set_fact:
+    compute_ram_hot_eligible: false
+
+- name: Compute whether a power-cycle is required (VMware)
+  when: compute_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    compute_ram_requires_powercycle: "{{ not compute_ram_hot_eligible }}"
+
+# --- Hyper-V ---------------------------------------------------------------
+# No Dynamic Memory here for now (1:1 static memory only - see
+# resize_ram_hyperv), so there is no live path to check eligibility for:
+# every Hyper-V/SCVMM memory change is a power-cycle, exactly like CPU.
+
+- name: Gather the current memory size (Hyper-V)
+  when: compute_hypervisor_type == 'hyperv'
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      (Get-VMMemory -VMName '{{ vm_name }}').Startup
+  changed_when: false
+  register: compute_hyperv_ram_lookup
+
+- name: Determine whether this is a grow, a shrink or a no-op (Hyper-V)
+  when: compute_hypervisor_type == 'hyperv'
+  vars:
+    compute_ram_current_bytes: "{{ compute_hyperv_ram_lookup.stdout | trim | int }}"
+  ansible.builtin.set_fact:
+    compute_ram_current_mb: "{{ (compute_ram_current_bytes | int / 1048576) | round(0, 'ceil') | int }}"
+    compute_ram_grow: "{{ ((memory_gb | float) * 1073741824) > (compute_ram_current_bytes | int) }}"
+    compute_ram_shrink: "{{ ((memory_gb | float) * 1073741824) < (compute_ram_current_bytes | int) }}"
+
+- name: Report when memory is already at the requested value
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - not compute_ram_grow
+    - not compute_ram_shrink
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' already has {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB - nothing to do."
+
+- name: A Hyper-V/SCVMM memory change always requires a power-cycle
+  when: compute_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    compute_ram_requires_powercycle: "{{ compute_ram_grow or compute_ram_shrink }}"
+
+# Best-effort cluster placement check - see ansible-resizedisk's matching
+# comment for the full reasoning behind blocking on a stale owner node
+# rather than warning.
+- name: Check cluster placement (Hyper-V)
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_ram_grow or compute_ram_shrink
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+      [PSCustomObject]@{
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+          ClusterOwnerNode      = $clusterOwnerNode
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: compute_hyperv_ram_cluster_lookup
+
+- name: Parse cluster placement facts
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_ram_grow or compute_ram_shrink
+  ansible.builtin.set_fact:
+    compute_hyperv_ram_cluster_info: "{{ compute_hyperv_ram_cluster_lookup.stdout | from_json }}"
+
+- name: Refuse to act on a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_ram_grow or compute_ram_shrink
+    - compute_hyperv_ram_cluster_info.IsClustered
+    - compute_hyperv_ram_cluster_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - compute_hyperv_ram_cluster_info.ClusterOwnerNode == compute_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ compute_hyperv_ram_cluster_info.ClusterOwnerNode }}, not {{ compute_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to act on a clustered (highly-available) VM without an explicit override
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_ram_grow or compute_ram_shrink
+    - compute_hyperv_ram_cluster_info.ClusterCheckAvailable
+    - compute_hyperv_ram_cluster_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - compute_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ compute_hyperv_ram_cluster_info.ClusterOwnerNode }}).
+      This memory change requires powering it off, and it can fail over
+      to another node during that window. Coordinate with the cluster
+      first, then pass -e compute_allow_clustered_vm=true to proceed.
+
+# --- Restart scheduling (both platforms) ------------------------------------
+
+- name: Require a scheduled restart window whenever a power-cycle is needed
+  when:
+    - (compute_ram_grow or compute_ram_shrink)
+    - compute_ram_requires_powercycle
+  ansible.builtin.assert:
+    that:
+      - vm_restart_scheduled_at is defined
+      - vm_restart_scheduled_at | length > 0
+      - vm_restart_scheduled_at is regex('^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?$')
+    fail_msg: >-
+      This memory change cannot be applied live and requires powering
+      '{{ vm_name }}' off - vm_restart_scheduled_at must be supplied
+      (e.g. -e vm_restart_scheduled_at=2026-07-25T22:00:00), the
+      restart window the ServiceNow request was approved for. This
+      playbook does not itself wait until that time (see README) - it's
+      a required confirmation that a window was actually chosen before
+      a power-cycle proceeds, and it's carried through to
+      compute_summary for the ticket/audit trail.

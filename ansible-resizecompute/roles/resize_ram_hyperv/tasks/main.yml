@@ -1,0 +1,64 @@
+---
+# No Dynamic Memory for now (1:1 static memory only, matching this
+# project's current scope) - every memory change here is a power-cycle,
+# exactly like resize_cpu_hyperv, and always ends with
+# -DynamicMemoryEnabled $false plus Startup/Minimum/Maximum all set to
+# the same target value. If the VM already had Dynamic Memory enabled,
+# this deliberately flattens it to static - this project doesn't
+# preserve or manage Dynamic Memory bounds. Revisit this role if/when
+# Dynamic Memory support is added back.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - memory_gb is defined
+      - compute_hyperv_host is defined
+
+- name: Power-cycle and apply the memory change
+  when: compute_ram_grow or compute_ram_shrink
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $timeoutSeconds = {{ compute_poweroff_timeout_seconds }}
+      $targetBytes = {{ (memory_gb | float * 1073741824) | round(0) | int }}
+
+      $vm = Get-VM -Name '{{ vm_name }}'
+      $wasRunning = ($vm.State -eq 'Running')
+
+      if ($wasRunning) {
+          Stop-VM -Name '{{ vm_name }}'
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Off' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+          if ((Get-VM -Name '{{ vm_name }}').State -ne 'Off') {
+              throw "'{{ vm_name }}' did not reach the Off state within ${timeoutSeconds}s of Stop-VM - refusing to change memory while its state is uncertain."
+          }
+      }
+
+      Set-VMMemory -VMName '{{ vm_name }}' -DynamicMemoryEnabled $false -StartupBytes $targetBytes
+
+      if ($wasRunning) {
+          Start-VM -Name '{{ vm_name }}'
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+      }
+
+      [PSCustomObject]@{
+          WasRunning   = $wasRunning
+          CurrentState = (Get-VM -Name '{{ vm_name }}').State.ToString()
+      } | ConvertTo-Json -Compress
+  register: resize_ram_result
+
+- name: Report the new memory size
+  when: compute_ram_grow or compute_ram_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' memory changed from {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB to {{ memory_gb }}GB
+      (power-cycled, static 1:1).
