@@ -1,0 +1,95 @@
+---
+# Changes a VM's memory size (VMware or Hyper-V, auto-detected), growing
+# or shrinking. Designed to be triggered from a ServiceNow workflow (e.g.
+# via an AWX/Tower job template) - there is no static per-VM inventory:
+# everything about the target VM is passed as extra-vars, resolved from
+# the CMDB CI record / change request.
+#
+# Applied live when possible - VMware Memory Hot Add (growing, already
+# enabled on the VM, VM running), or on Hyper-V a Dynamic Memory maximum
+# raise (growing, Dynamic Memory already enabled, VM running - note this
+# only raises the ceiling, see README.md) - otherwise the VM is
+# power-cycled (gracefully shut down, changed, powered back on if it was
+# running before). SCVMM-managed VMs are always power-cycled, matching
+# Microsoft's own documented Set-SCVirtualMachine pattern. See README.md
+# for the full hot-vs-cold decision table and the platform facts behind
+# it.
+#
+# Required extra-vars:
+#   vm_name      CI / VM name, as known to vCenter and/or Hyper-V
+#   memory_gb    target memory size in GB
+#
+# Optional extra-vars:
+#   hypervisor_type            vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm           true|false - skip SCVMM auto-detection
+#   compute_ram_min_gb / compute_ram_max_gb   policy floor/cap (default 1 / 512)
+#   compute_allow_clustered_vm true to proceed on a highly-available
+#                               Hyper-V VM once failover has been
+#                               coordinated manually (default: refuse)
+#   compute_poweroff_timeout_seconds   how long to wait for a graceful
+#                                      shutdown before giving up (default 300)
+#
+# Usage:
+#   ansible-playbook playbooks/resize_ram.yml \
+#     -e vm_name=WINSRV01 -e memory_gb=32 \
+#     --vault-password-file .vault_pass
+
+- name: Change a VM's memory size
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: compute_lock
+      vars:
+        compute_lock_action: acquire
+
+    - name: Change the memory size, releasing the lock afterwards either way
+      block:
+        - name: Determine grow/shrink/no-op, hot-add eligibility, and block on a clustered VM without sign-off
+          ansible.builtin.include_role:
+            name: preflight_ram_constraints
+
+        - name: Change memory on VMware
+          ansible.builtin.include_role:
+            name: resize_ram_vmware
+          when: compute_hypervisor_type == 'vmware'
+
+        - name: Change memory on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: resize_ram_scvmm
+          when:
+            - compute_hypervisor_type == 'hyperv'
+            - compute_managed_by_scvmm
+
+        - name: Change memory on Hyper-V directly
+          ansible.builtin.include_role:
+            name: resize_ram_hyperv
+          when:
+            - compute_hypervisor_type == 'hyperv'
+            - not compute_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              compute_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ compute_hypervisor_type }}"
+                managed_by_scvmm: "{{ compute_managed_by_scvmm }}"
+                previous_memory_gb: "{{ (compute_ram_current_mb | int / 1024) | round(2) }}"
+                requested_memory_gb: "{{ memory_gb }}"
+                changed: "{{ compute_ram_grow or compute_ram_shrink }}"
+                power_cycled: "{{ compute_ram_requires_powercycle if (compute_ram_grow or compute_ram_shrink) else false }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: compute_lock
+          vars:
+            compute_lock_action: release

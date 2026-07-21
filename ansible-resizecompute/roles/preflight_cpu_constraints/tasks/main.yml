@@ -1,0 +1,223 @@
+---
+# Determines whether the requested vCPU count is a grow, a shrink or a
+# no-op, whether it can be applied live (VMware CPU Hot Add - grow only,
+# neither platform supports CPU hot-*remove*, confirmed against current
+# Broadcom/Microsoft documentation, not assumed) or needs the VM
+# power-cycled, and blocks on a clustered Hyper-V VM without sign-off.
+
+- name: Assert vcpu_count is defined and a positive integer
+  ansible.builtin.assert:
+    that:
+      - vcpu_count is defined
+      - vcpu_count | int > 0
+    fail_msg: "vcpu_count must be supplied as a positive integer (e.g. -e vcpu_count=4)."
+
+- name: Assert vcpu_count divides evenly by vcpu_cores_per_socket
+  ansible.builtin.assert:
+    that:
+      - (vcpu_count | int) % (vcpu_cores_per_socket | int) == 0
+    fail_msg: >-
+      vcpu_count ({{ vcpu_count }}) must be an exact multiple of
+      vcpu_cores_per_socket ({{ vcpu_cores_per_socket }}) - VMware
+      requires a whole number of sockets. Ignored on Hyper-V, which has
+      no equivalent socket/cores-per-socket split.
+
+- name: Refuse a vCPU count past the configured policy cap
+  ansible.builtin.assert:
+    that:
+      - vcpu_count | int <= (compute_cpu_max_count | int)
+    fail_msg: >-
+      Requested vcpu_count ({{ vcpu_count }}) is at or above the
+      configured policy cap of {{ compute_cpu_max_count }}. Raise it
+      deliberately with -e compute_cpu_max_count=... if this is a
+      legitimately large VM.
+
+# --- VMware --------------------------------------------------------------
+
+- name: Refuse to reconfigure a template
+  when: compute_hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - not compute_vmware_search.instance.hw_is_template
+    fail_msg: "'{{ vm_name }}' is a template, not a deployable VM."
+
+- name: Determine whether this is a grow, a shrink or a no-op (VMware)
+  when: compute_hypervisor_type == 'vmware'
+  vars:
+    compute_cpu_current: "{{ compute_vmware_search.instance.hw_processor_count | int }}"
+  ansible.builtin.set_fact:
+    compute_cpu_current: "{{ compute_cpu_current }}"
+    compute_cpu_grow: "{{ (vcpu_count | int) > (compute_cpu_current | int) }}"
+    compute_cpu_shrink: "{{ (vcpu_count | int) < (compute_cpu_current | int) }}"
+
+- name: Report when the vCPU count is already at the requested value
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - not compute_cpu_grow
+    - not compute_cpu_shrink
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' already has {{ vcpu_count }} vCPU(s) - nothing to do."
+
+# Only queried on a grow: CPU Hot Add can only ever add vCPUs, never
+# remove them (see the role header comment) - so a shrink never has a
+# hot path to check for, saving the extra vCenter call.
+- name: Fetch CPU Hot Add status (VMware, grow only)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_cpu_grow
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    schema: vsphere
+    properties:
+      - config.cpuHotAddEnabled
+  register: compute_vmware_cpu_hotadd_info
+
+- name: Determine hot-add eligibility (VMware, grow only)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_cpu_grow
+  ansible.builtin.set_fact:
+    # Best-effort: if this couldn't be read for any reason, default to
+    # false - the safe direction is to fall back to the cold
+    # (power-cycle) path, never to assume hot-add is available when it
+    # might not be.
+    compute_cpu_hot_eligible: >-
+      {{ (compute_vmware_cpu_hotadd_info.instance.config.cpuHotAddEnabled | default(false) | bool)
+         and compute_vmware_search.instance.hw_power_status == 'poweredOn' }}
+
+- name: Determine hot-add eligibility (VMware, shrink/no-op)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - not compute_cpu_grow
+  ansible.builtin.set_fact:
+    compute_cpu_hot_eligible: false
+
+- name: Compute whether a power-cycle is required (VMware)
+  when: compute_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    compute_cpu_requires_powercycle: "{{ not compute_cpu_hot_eligible }}"
+
+- name: Note that CPU Hot Add disables vNUMA (VMware, informational)
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_cpu_grow
+    - compute_cpu_hot_eligible
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' will be grown live via CPU Hot Add. This is a
+      VMware-wide behavior, not something this playbook controls: a VM
+      with CPU Hot Add enabled always runs with vNUMA disabled, which
+      can cost a few percent of performance on larger VMs regardless of
+      whether hot-add is actually used on a given run.
+
+# --- Hyper-V ---------------------------------------------------------------
+# Hyper-V has no vCPU hot-add or hot-remove at all (confirmed against
+# current Microsoft documentation - Set-VMProcessor requires the VM to
+# be turned off, unconditionally, for both a grow and a shrink) - so
+# every Hyper-V/SCVMM CPU change goes through the cold (power-cycle)
+# path, no eligibility check needed.
+
+- name: Gather the current vCPU count (Hyper-V)
+  when: compute_hypervisor_type == 'hyperv'
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      (Get-VM -Name '{{ vm_name }}').ProcessorCount
+  changed_when: false
+  register: compute_hyperv_cpu_lookup
+
+- name: Determine whether this is a grow, a shrink or a no-op (Hyper-V)
+  when: compute_hypervisor_type == 'hyperv'
+  vars:
+    compute_cpu_current: "{{ compute_hyperv_cpu_lookup.stdout | trim | int }}"
+  ansible.builtin.set_fact:
+    compute_cpu_current: "{{ compute_cpu_current }}"
+    compute_cpu_grow: "{{ (vcpu_count | int) > (compute_cpu_current | int) }}"
+    compute_cpu_shrink: "{{ (vcpu_count | int) < (compute_cpu_current | int) }}"
+
+- name: Report when the vCPU count is already at the requested value
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - not compute_cpu_grow
+    - not compute_cpu_shrink
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' already has {{ vcpu_count }} vCPU(s) - nothing to do."
+
+- name: A Hyper-V/SCVMM CPU change always requires a power-cycle
+  when: compute_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    compute_cpu_requires_powercycle: "{{ compute_cpu_grow or compute_cpu_shrink }}"
+
+# Best-effort cluster placement check - see ansible-resizedisk's matching
+# comment for the full reasoning behind blocking on a stale owner node
+# rather than warning.
+- name: Check cluster placement (Hyper-V)
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_cpu_grow or compute_cpu_shrink
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+      [PSCustomObject]@{
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+          ClusterOwnerNode      = $clusterOwnerNode
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: compute_hyperv_cluster_lookup
+
+- name: Parse cluster placement facts
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_cpu_grow or compute_cpu_shrink
+  ansible.builtin.set_fact:
+    compute_hyperv_cluster_info: "{{ compute_hyperv_cluster_lookup.stdout | from_json }}"
+
+- name: Refuse to act on a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_hyperv_cluster_info.IsClustered
+    - compute_hyperv_cluster_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - compute_hyperv_cluster_info.ClusterOwnerNode == compute_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ compute_hyperv_cluster_info.ClusterOwnerNode }}, not {{ compute_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to act on a clustered (highly-available) VM without an explicit override
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_cpu_grow or compute_cpu_shrink
+    - compute_hyperv_cluster_info.ClusterCheckAvailable
+    - compute_hyperv_cluster_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - compute_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ compute_hyperv_cluster_info.ClusterOwnerNode }}). A
+      CPU change here requires powering it off, and it can fail over to
+      another node during that window. Coordinate with the cluster
+      first, then pass -e compute_allow_clustered_vm=true to proceed.

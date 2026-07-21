@@ -1,0 +1,84 @@
+---
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - memory_gb is defined
+      - compute_ram_requires_powercycle is defined
+
+- name: Apply the memory change live (Memory Hot Add)
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - not compute_ram_requires_powercycle
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    hardware:
+      memory_mb: "{{ (memory_gb | float * 1024) | round(0) | int }}"
+  register: resize_ram_result
+
+- name: Record the VM's power state before a cold change
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - compute_ram_requires_powercycle
+  ansible.builtin.set_fact:
+    compute_ram_was_running: "{{ compute_vmware_search.instance.hw_power_status == 'poweredOn' }}"
+
+- name: Gracefully shut down the guest before a cold change
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - compute_ram_requires_powercycle
+    - compute_ram_was_running
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: shutdown-guest
+    state_change_timeout: "{{ compute_poweroff_timeout_seconds }}"
+
+- name: Apply the memory change with the VM powered off
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - compute_ram_requires_powercycle
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    hardware:
+      memory_mb: "{{ (memory_gb | float * 1024) | round(0) | int }}"
+  register: resize_ram_result
+
+- name: Power the VM back on if it was running before
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - compute_ram_requires_powercycle
+    - compute_ram_was_running
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: powered-on
+
+- name: Report the new memory size
+  when: compute_ram_grow or compute_ram_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' memory changed from {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB to {{ memory_gb }}GB
+      ({{ 'live via Memory Hot Add' if not compute_ram_requires_powercycle else 'power-cycled' }}).

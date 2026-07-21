@@ -1,0 +1,61 @@
+---
+# Applies the memory change via SCVMM (Set-SCVirtualMachine -MemoryMB)
+# instead of the native Hyper-V cmdlets directly - used instead of
+# resize_ram_hyperv whenever compute_managed_by_scvmm is true. Always
+# cold (power-off/change/power-on), matching Microsoft's own documented
+# Set-SCVirtualMachine examples, which power the VM off before every
+# memory change shown - including when enabling Dynamic Memory.
+#
+# Known gap: unlike resize_ram_hyperv's native path, this does not widen
+# an existing Dynamic Memory Minimum/Maximum around the new value - it
+# only sets a flat MemoryMB. SCVMM's read-side property names for the
+# current Dynamic Memory bounds aren't confirmed reliably enough to
+# script against here; an operator managing Dynamic Memory bounds on an
+# SCVMM-managed VM should adjust them directly (SCVMM console or
+# Set-SCVirtualMachine -DynamicMemory*) rather than through this role.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+      - vm_name is defined
+      - memory_gb is defined
+
+- name: Power-cycle and apply the memory change via SCVMM
+  when: compute_ram_grow or compute_ram_shrink
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ vm_name }}' not found in SCVMM"
+      }
+
+      $wasRunning = ($vm.Status -ne 'PowerOff')
+      if ($wasRunning) {
+          Stop-SCVirtualMachine -VM $vm | Out-Null
+      }
+
+      Set-SCVirtualMachine -VM $vm -MemoryMB {{ (memory_gb | float * 1024) | round(0) | int }} | Out-Null
+
+      if ($wasRunning) {
+          Start-SCVirtualMachine -VM $vm | Out-Null
+      }
+
+      [PSCustomObject]@{
+          WasRunning   = $wasRunning
+          CurrentState = (Get-SCVirtualMachine -Name '{{ vm_name }}').Status.ToString()
+      } | ConvertTo-Json -Compress
+  register: resize_ram_result
+
+- name: Report the new memory size
+  when: compute_ram_grow or compute_ram_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' memory changed from {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB to {{ memory_gb }}GB
+      via SCVMM (power-cycled; final state: {{ (resize_ram_result.stdout | trim | from_json).CurrentState }}).

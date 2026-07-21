@@ -1,0 +1,150 @@
+---
+# Best-effort per-VM lock so two ServiceNow-triggered runs against the
+# same vm_name don't race each other - especially important here since
+# the cold path power-cycles the VM, and two overlapping runs
+# power-cycling the same VM at once would be actively dangerous, not
+# just wasteful. Called twice from each playbook: once with
+# compute_lock_action=acquire right after preflight_platform, and once
+# with compute_lock_action=release in an `always:` block wrapping
+# everything else, so the lock is freed on both success and failure.
+#
+# Deliberately its own namespace/marker (COMPUTE_LOCK / C:\ProgramData\
+# ansible-resizecompute\) rather than sharing ansible-resizedisk's or
+# ansible-snapshot's lock - none of these three projects coordinate with
+# each other. Running a CPU resize and a disk resize (or a snapshot
+# revert) against the same VM at the same time is still the operator's
+# responsibility to avoid.
+#
+# The two platforms get genuinely different guarantees:
+#   - Hyper-V: a lock file created with FileMode.CreateNew on the
+#     owning Hyper-V host. This IS atomic (the OS refuses a second
+#     exclusive create), so this is a real mutual-exclusion lock, not
+#     just advisory.
+#   - VMware: a marker written into the VM's annotation field via a
+#     read-then-write vCenter API call. This has no compare-and-swap, so
+#     two runs starting within the same read-write window could both
+#     believe they acquired it - it narrows the race a lot (covers the
+#     common "double-clicked submit" case) but isn't airtight. There's no
+#     vCenter API available to this playbook that offers true atomic
+#     locking on an arbitrary VM field.
+
+- name: Assert compute_lock_action is valid
+  ansible.builtin.assert:
+    that:
+      - compute_lock_action in ['acquire', 'release']
+    fail_msg: "compute_lock_action must be 'acquire' or 'release'."
+
+- name: Determine a run identifier for the lock marker
+  ansible.builtin.set_fact:
+    compute_lock_run_id: "{{ compute_lock_run_id | default(lookup('pipe', 'date -u +%s') ~ '-' ~ (999999 | random)) }}"
+
+# --- VMware --------------------------------------------------------------
+
+- name: (VMware) Read the current annotation
+  when: compute_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: compute_lock_vmware_read
+
+- name: (VMware) Parse an existing lock marker, if any
+  when: compute_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    compute_lock_vmware_match: "{{ (compute_lock_vmware_read.instance.annotation | default(''))
+                                    | regex_search('COMPUTE_LOCK:(\\d+):(\\S+)', '\\1', '\\2') }}"
+    compute_lock_now_epoch: "{{ lookup('pipe', 'date -u +%s') }}"
+
+- name: (VMware) Refuse to acquire while a non-stale lock is held by another run
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_lock_action == 'acquire'
+    - compute_lock_vmware_match is not none
+    - (compute_lock_now_epoch | int) - (compute_lock_vmware_match[0] | int) < (compute_lock_timeout_seconds | int)
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' already has an active compute lock (run
+      {{ compute_lock_vmware_match[1] }}, acquired
+      {{ (compute_lock_now_epoch | int) - (compute_lock_vmware_match[0] | int) }}s ago).
+      Another CPU/RAM change looks to be in progress - wait for it to
+      finish, or investigate if it's stuck (locks self-expire after
+      {{ compute_lock_timeout_seconds }}s).
+
+- name: (VMware) Write the updated annotation (lock added or removed)
+  when: compute_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    annotation: >-
+      {{
+        (
+          (compute_lock_vmware_read.instance.annotation | default(''))
+          | regex_replace('\n?COMPUTE_LOCK:\d+:\S+', '')
+        )
+        ~ ('\nCOMPUTE_LOCK:' ~ compute_lock_now_epoch ~ ':' ~ compute_lock_run_id if compute_lock_action == 'acquire' else '')
+      }}
+  ignore_errors: "{{ compute_lock_action == 'release' }}"  # best-effort on release: a failed cleanup just leaves a lock that self-expires
+
+# --- Hyper-V ---------------------------------------------------------------
+
+- name: (Hyper-V) Acquire or release the lock file on the owning host
+  when: compute_hypervisor_type == 'hyperv'
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $lockDir = "C:\ProgramData\ansible-resizecompute"
+      $lockPath = Join-Path $lockDir "{{ vm_name }}.lock"
+      if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
+
+      if ('{{ compute_lock_action }}' -eq 'release') {
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+          "RELEASED"
+          exit 0
+      }
+
+      if (Test-Path $lockPath) {
+          $ageSeconds = [int]((Get-Date).ToUniversalTime() - (Get-Item $lockPath).LastWriteTimeUtc).TotalSeconds
+          if ($ageSeconds -lt {{ compute_lock_timeout_seconds }}) {
+              $holder = Get-Content $lockPath -Raw -ErrorAction SilentlyContinue
+              "LOCKED:$ageSeconds`:$holder"
+              exit 0
+          }
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue  # stale, break it
+      }
+
+      try {
+          $fs = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+          $writer = New-Object System.IO.StreamWriter($fs)
+          $writer.Write("{{ compute_lock_run_id }}")
+          $writer.Close()
+          $fs.Close()
+          "ACQUIRED"
+      } catch [System.IO.IOException] {
+          "LOCKED:race"
+      }
+  changed_when: false
+  register: compute_lock_hyperv_result
+
+- name: (Hyper-V) Refuse to acquire while a lock is held by another run
+  when:
+    - compute_hypervisor_type == 'hyperv'
+    - compute_lock_action == 'acquire'
+    - compute_lock_hyperv_result.stdout is defined
+    - compute_lock_hyperv_result.stdout is search('^LOCKED')
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' already has an active compute lock on
+      {{ compute_hyperv_host }} ({{ compute_lock_hyperv_result.stdout | trim }}).
+      Another CPU/RAM change looks to be in progress - wait for it to
+      finish, or investigate if it's stuck (locks self-expire after
+      {{ compute_lock_timeout_seconds }}s).

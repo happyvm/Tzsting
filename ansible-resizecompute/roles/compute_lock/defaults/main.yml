@@ -1,0 +1,6 @@
+---
+# How long a lock is honored before it's considered abandoned by a
+# crashed run and can be broken by a new one. A cold-path CPU/RAM change
+# involves a full power-off/power-on cycle plus guest boot time - 30
+# minutes comfortably covers that with margin.
+compute_lock_timeout_seconds: 1800

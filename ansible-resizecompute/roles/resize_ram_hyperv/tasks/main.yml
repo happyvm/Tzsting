@@ -1,0 +1,87 @@
+---
+# Two distinct paths, decided by preflight_ram_constraints
+# (compute_ram_hot_eligible / compute_ram_requires_powercycle):
+#   - Hot: VM already has Dynamic Memory enabled, is running, and this
+#     is a grow - just raise -MaximumBytes live.
+#   - Cold: power-cycle. If the VM currently has Dynamic Memory enabled,
+#     Min/Max are widened (never narrowed) around the new Startup value
+#     so Minimum <= Startup <= Maximum always holds, rather than
+#     blindly setting Startup alone and risking Set-VMMemory rejecting
+#     an inconsistent combination. A static-memory VM just gets its
+#     Startup value changed.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - memory_gb is defined
+      - compute_hyperv_host is defined
+      - compute_ram_requires_powercycle is defined
+
+- name: Raise the Dynamic Memory maximum live
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - not compute_ram_requires_powercycle
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Set-VMMemory -VMName '{{ vm_name }}' -MaximumBytes {{ (memory_gb | float * 1073741824) | round(0) | int }}
+  register: resize_ram_result
+
+- name: Power-cycle and apply the memory change
+  when:
+    - compute_ram_grow or compute_ram_shrink
+    - compute_ram_requires_powercycle
+  delegate_to: "{{ compute_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $timeoutSeconds = {{ compute_poweroff_timeout_seconds }}
+      $targetBytes = {{ (memory_gb | float * 1073741824) | round(0) | int }}
+
+      $vm = Get-VM -Name '{{ vm_name }}'
+      $wasRunning = ($vm.State -eq 'Running')
+
+      if ($wasRunning) {
+          Stop-VM -Name '{{ vm_name }}'
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Off' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+          if ((Get-VM -Name '{{ vm_name }}').State -ne 'Off') {
+              throw "'{{ vm_name }}' did not reach the Off state within ${timeoutSeconds}s of Stop-VM - refusing to change memory while its state is uncertain."
+          }
+      }
+
+      $mem = Get-VMMemory -VMName '{{ vm_name }}'
+      if ($mem.DynamicMemoryEnabled) {
+          $newMin = [Math]::Min($mem.Minimum, $targetBytes)
+          $newMax = [Math]::Max($mem.Maximum, $targetBytes)
+          Set-VMMemory -VMName '{{ vm_name }}' -StartupBytes $targetBytes -MinimumBytes $newMin -MaximumBytes $newMax
+      } else {
+          Set-VMMemory -VMName '{{ vm_name }}' -StartupBytes $targetBytes
+      }
+
+      if ($wasRunning) {
+          Start-VM -Name '{{ vm_name }}'
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+      }
+
+      [PSCustomObject]@{
+          WasRunning   = $wasRunning
+          CurrentState = (Get-VM -Name '{{ vm_name }}').State.ToString()
+      } | ConvertTo-Json -Compress
+  register: resize_ram_result
+
+- name: Report the new memory size
+  when: compute_ram_grow or compute_ram_shrink
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' memory changed from {{ (compute_ram_current_mb | int / 1024) | round(2) }}GB to {{ memory_gb }}GB
+      ({{ 'live Dynamic Memory maximum raise' if not compute_ram_requires_powercycle else 'power-cycled' }}).
