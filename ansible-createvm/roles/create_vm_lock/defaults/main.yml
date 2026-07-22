@@ -1,0 +1,6 @@
+---
+# How long a lock is honored before it's considered abandoned by a
+# crashed run and can be broken by a new one. VM creation (clone +
+# customization + first boot) can take a while on a slow datastore/host -
+# 30 minutes comfortably covers that with margin.
+createvm_lock_timeout_seconds: 1800

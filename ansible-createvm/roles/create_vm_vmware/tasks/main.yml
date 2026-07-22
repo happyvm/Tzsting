@@ -1,0 +1,98 @@
+---
+# Clones template_name into a new VM, sizing/placing/customizing it in a
+# single reconfigure call. Windows customization goes through the
+# standard sysprep-based `customization` dict (works out of the box on
+# any template with VMware Tools). Linux customization uses the same
+# `customization` dict for hostname/network/DNS (the reliable, portable
+# part), plus - if cloud_init_userdata was supplied - injects it via the
+# `guestinfo.userdata`/`guestinfo.metadata` advanced settings that
+# cloud-init's VMware datasource reads on first boot, rather than the
+# legacy `script_text` customization mechanism (which needs the
+# Perl-based Linux customization package installed in the guest -
+# something most modern minimal/cloud-image-based templates don't have).
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - template_name is defined
+      - vcpu_count is defined
+      - memory_gb is defined
+      - guest_os is defined
+
+# `| default(omit)` only works for a module's own top-level parameters,
+# not for keys nested inside a dict/list value (a documented Ansible
+# limitation, ansible/ansible#45907) - customization/networks below are
+# built with combine() instead, only merging in a key when its source
+# var is actually defined, so an unset optional field is genuinely
+# absent from the dict rather than ending up as a literal "None"/omit
+# placeholder string the module would try to use.
+- name: Build the customization dict
+  ansible.builtin.set_fact:
+    createvm_customization: >-
+      {{
+        {'hostname': computer_name}
+        | combine({'domain': domain_name, 'joindomain': domain_name} if (domain_name | default('')) | length > 0 else {})
+        | combine({'domainadmin': domain_admin_username, 'domainadminpassword': domain_admin_password} if (domain_admin_username | default('')) | length > 0 else {})
+        | combine({'joinworkgroup': workgroup_name} if (workgroup_name | default('')) | length > 0 else {})
+        | combine({'dns_servers': dns_servers} if (dns_servers | default([])) | length > 0 else {})
+        | combine({'timezone': vm_timezone} if vm_timezone is defined else {})
+        | combine({'password': local_admin_password} if (local_admin_password | default('')) | length > 0 else {})
+        | combine({'productid': product_key} if (product_key | default('')) | length > 0 else {})
+      }}
+
+- name: Build the network list
+  ansible.builtin.set_fact:
+    createvm_networks:
+      - "{{ {'name': network_name, 'type': network_type}
+             | combine({'ip': ip_address, 'netmask': netmask, 'gateway': gateway} if network_type == 'static' else {}) }}"
+
+- name: Build the guestinfo advanced settings for cloud-init, if userdata was supplied
+  when:
+    - guest_os == 'linux'
+    - (cloud_init_userdata | default('')) | length > 0
+  ansible.builtin.set_fact:
+    createvm_advanced_settings:
+      - key: guestinfo.userdata
+        value: "{{ cloud_init_userdata | b64encode }}"
+      - key: guestinfo.userdata.encoding
+        value: base64
+      - key: guestinfo.metadata
+        value: "{{ (cloud_init_metadata | default('instance-id: ' ~ vm_name ~ '\nlocal-hostname: ' ~ computer_name ~ '\n')) | b64encode }}"
+      - key: guestinfo.metadata.encoding
+        value: base64
+
+- name: Clone, size, place and customize the VM
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    template: "{{ template_name }}"
+    state: present
+    folder: "{{ vmware_folder }}"
+    cluster: "{{ vmware_cluster | default(omit) }}"
+    esxi_hostname: "{{ esxi_host | default(omit) }}"
+    datastore: "{{ vmware_datastore }}"
+    resource_pool: "{{ vmware_resource_pool | default(omit) }}"
+    hardware:
+      num_cpus: "{{ vcpu_count | int }}"
+      num_cpu_cores_per_socket: "{{ vcpu_cores_per_socket | default(1) | int }}"
+      memory_mb: "{{ (memory_gb | float * 1024) | round(0) | int }}"
+    disk: "{{ [{'size_gb': disk_gb | int, 'type': 'thin', 'controller_type': 'paravirtual', 'controller_number': 0, 'unit_number': 0}] if disk_gb is defined else omit }}"
+    networks: "{{ createvm_networks }}"
+    customization: "{{ createvm_customization }}"
+    advanced_settings: "{{ createvm_advanced_settings | default(omit) }}"
+    wait_for_ip_address: "{{ wait_for_ip | default(true) | bool }}"
+    wait_for_ip_address_timeout: "{{ wait_for_ip_timeout_seconds | default(600) | int }}"
+  register: create_vm_result
+
+- name: Report the new VM
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' created from template '{{ template_name }}'
+      ({{ vcpu_count }} vCPU, {{ memory_gb }}GB RAM{{ ', ' ~ disk_gb ~ 'GB disk' if disk_gb is defined else '' }}).
+      IP: {{ create_vm_result.instance.ipv4 | default('not reported') }}.

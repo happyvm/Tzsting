@@ -1,0 +1,31 @@
+---
+# Environment-wide defaults. Override per-environment (e.g. group_vars/all.yml
+# per inventory, or -e on the CLI / AWX survey) as needed. Secrets
+# (vcenter_password, vault_* below) belong in ansible-vault or the AWX
+# credential store, never committed in clear text.
+
+# --- Policy caps -------------------------------------------------------------
+# Guardrails against a mistyped value coming from ServiceNow (e.g. a
+# stray extra digit). Raise per-run for a legitimately large VM.
+createvm_max_vcpu_count: 32
+createvm_max_memory_gb: 512
+createvm_max_disk_gb: 4000
+
+# --- vCenter connection (single vCenter managing the VMware estate) --------
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false
+
+# --- SCVMM (required for the Hyper-V path in this project - see README) ----
+# Unlike ansible-resizedisk/ansible-snapshot/ansible-resizecompute, where
+# scvmm_server is optional (native Hyper-V is always a fully supported
+# fallback), this project has no native-Hyper-V creation path at all:
+# template + guest customization is an SCVMM-only capability. Leaving
+# scvmm_server empty means hypervisor_type=hyperv always fails at
+# preflight with a clear message, rather than silently attempting
+# something native Hyper-V can't actually do.
+scvmm_server: ""
+scvmm_username: "{{ vault_scvmm_username | default('') }}"
+scvmm_password: "{{ vault_scvmm_password | default('') }}"

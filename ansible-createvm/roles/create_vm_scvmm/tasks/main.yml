@@ -1,0 +1,99 @@
+---
+# Creates the VM via SCVMM (New-SCVirtualMachine -VMTemplate), the only
+# supported Hyper-V creation path in this project - see README for why
+# native Hyper-V has no equivalent template + customization API.
+#
+# Network is DHCP-only for v1: whatever network adapter/VLAN the
+# template itself is configured with carries over unchanged. Assigning
+# a static IP needs Grant-SCIPAddress against an SCVMM-managed IP pool,
+# which this project doesn't implement yet (documented gap, see README)
+# - a known, deliberate scope reduction rather than an oversight.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - template_name is defined
+      - vm_host is defined
+      - vm_path is defined
+      - vcpu_count is defined
+      - memory_gb is defined
+      - guest_os is defined
+
+- name: Create the VM from the template via SCVMM
+  no_log: true  # domain_admin_password/local_admin_password are interpolated into this script
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $template = Get-SCVMTemplate -Name '{{ template_name }}'
+      if (-not $template) {
+          throw "Template '{{ template_name }}' not found in SCVMM"
+      }
+      $vmHost = Get-SCVMHost -ComputerName '{{ vm_host }}'
+      if (-not $vmHost) {
+          throw "VM host '{{ vm_host }}' not found in SCVMM"
+      }
+
+      $params = @{
+          Name         = '{{ vm_name }}'
+          VMTemplate   = $template
+          VMHost       = $vmHost
+          Path         = '{{ vm_path }}'
+          CPUCount     = {{ vcpu_count | int }}
+          MemoryMB     = {{ (memory_gb | float * 1024) | round(0) | int }}
+          ComputerName = '{{ computer_name }}'
+      }
+
+      {% if guest_os == 'windows' %}
+      {% if (domain_name | default('')) | length > 0 %}
+      $domainCred = New-Object System.Management.Automation.PSCredential(
+          '{{ domain_admin_username }}',
+          (ConvertTo-SecureString -String @'
+      {{ domain_admin_password }}
+      '@ -AsPlainText -Force)
+      )
+      $params['Domain'] = '{{ domain_name }}'
+      $params['DomainJoinCredential'] = $domainCred
+      {% elif (workgroup_name | default('')) | length > 0 %}
+      $params['Workgroup'] = '{{ workgroup_name }}'
+      {% endif %}
+      {% if (local_admin_password | default('')) | length > 0 %}
+      # SCVMM only uses the password half of this credential to set the
+      # local administrator account's password during customization -
+      # the username is required by PSCredential's constructor but not
+      # otherwise meaningful here.
+      $localCred = New-Object System.Management.Automation.PSCredential(
+          'Administrator',
+          (ConvertTo-SecureString -String @'
+      {{ local_admin_password }}
+      '@ -AsPlainText -Force)
+      )
+      $params['LocalAdministratorCredential'] = $localCred
+      {% endif %}
+      {% if (product_key | default('')) | length > 0 %}
+      $params['ProductKey'] = '{{ product_key }}'
+      {% endif %}
+      {% if vm_timezone is defined %}
+      $params['TimeZone'] = {{ vm_timezone | int }}
+      {% endif %}
+      {% elif guest_os == 'linux' %}
+      {% if (domain_name | default('')) | length > 0 %}
+      $params['LinuxDomainName'] = '{{ domain_name }}'
+      {% endif %}
+      {% if (ssh_public_key | default('')) | length > 0 %}
+      $params['LinuxAdministratorSSHKeyString'] = '{{ ssh_public_key }}'
+      {% endif %}
+      {% endif %}
+
+      New-SCVirtualMachine @params | Out-Null
+  register: create_vm_result
+
+- name: Report the new VM
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' created from template '{{ template_name }}' via
+      SCVMM ({{ vcpu_count }} vCPU, {{ memory_gb }}GB RAM, DHCP network).

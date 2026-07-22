@@ -1,0 +1,147 @@
+---
+# Best-effort per-vm_name lock so two ServiceNow-triggered runs
+# requesting the same VM name don't race each other into creating two
+# VMs (or one failing halfway through a clone). Called twice from
+# create_vm.yml: once with createvm_lock_action=acquire right after
+# preflight_create_constraints confirms the name is free, and once with
+# createvm_lock_action=release in an `always:` block, so the lock is
+# freed on both success and failure.
+#
+# Unlike the other three projects' locks, there's no existing VM object
+# here to hang a marker off (the whole point is that it doesn't exist
+# yet) - so the two platforms get a genuinely different mechanism, not
+# just a different guarantee:
+#   - Hyper-V/SCVMM: a lock file created with FileMode.CreateNew on
+#     scvmm_server (always available on this path - see README, SCVMM is
+#     required for Hyper-V creation in this project). Atomic at the OS
+#     level, a real mutex lock.
+#   - VMware: a lock file on the **Ansible control node** itself
+#     (delegate_to: localhost), using the POSIX `noclobber` idiom for an
+#     atomic create. This is a narrower guarantee than the other three
+#     projects' VMware lock (a vCenter-side annotation marker): it only
+#     protects concurrent runs launched from the *same* control
+#     node/execution environment. In an AWX/AAP deployment where each
+#     job runs in an isolated execution environment (no shared
+#     filesystem between concurrent jobs), this lock provides no
+#     protection at all - there's no vCenter-side object to attach a
+#     marker to before the VM exists, and this project doesn't invent
+#     one (e.g. a placeholder VM) just to hold a lock.
+
+- name: Assert createvm_lock_action is valid
+  ansible.builtin.assert:
+    that:
+      - createvm_lock_action in ['acquire', 'release']
+    fail_msg: "createvm_lock_action must be 'acquire' or 'release'."
+
+- name: Determine a run identifier for the lock marker
+  ansible.builtin.set_fact:
+    createvm_lock_run_id: "{{ createvm_lock_run_id | default(lookup('pipe', 'date -u +%s') ~ '-' ~ (999999 | random)) }}"
+
+# --- VMware (control-node-local, see header comment) ------------------------
+
+- name: (VMware) Determine the lock file path
+  when: hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    createvm_lock_vmware_dir: "{{ lookup('env', 'HOME') }}/.ansible-createvm-locks"
+    createvm_lock_vmware_path: "{{ lookup('env', 'HOME') }}/.ansible-createvm-locks/{{ vm_name }}.lock"
+
+- name: (VMware) Acquire or release the local lock file
+  when: hypervisor_type == 'vmware'
+  delegate_to: localhost
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      mkdir -p '{{ createvm_lock_vmware_dir }}'
+      lock='{{ createvm_lock_vmware_path }}'
+
+      if [ '{{ createvm_lock_action }}' = 'release' ]; then
+          rm -f "$lock"
+          echo RELEASED
+          exit 0
+      fi
+
+      if [ -e "$lock" ]; then
+          age=$(( $(date -u +%s) - $(date -u -r "$lock" +%s) ))
+          if [ "$age" -lt {{ createvm_lock_timeout_seconds }} ]; then
+              echo "LOCKED:${age}:$(cat "$lock")"
+              exit 0
+          fi
+          rm -f "$lock"  # stale, break it
+      fi
+
+      if ( set -o noclobber; echo '{{ createvm_lock_run_id }}' > "$lock" ) 2>/dev/null; then
+          echo ACQUIRED
+      else
+          echo "LOCKED:race"
+      fi
+  changed_when: false
+  register: createvm_lock_vmware_result
+
+- name: (VMware) Refuse to acquire while a lock is held by another run
+  when:
+    - hypervisor_type == 'vmware'
+    - createvm_lock_action == 'acquire'
+    - createvm_lock_vmware_result.stdout is defined
+    - createvm_lock_vmware_result.stdout is search('^LOCKED')
+  ansible.builtin.fail:
+    msg: >-
+      A create_vm run for '{{ vm_name }}' already has an active lock on
+      this control node ({{ createvm_lock_vmware_result.stdout | trim }}).
+      Another creation looks to be in progress - wait for it to finish,
+      or investigate if it's stuck (locks self-expire after
+      {{ createvm_lock_timeout_seconds }}s).
+
+# --- Hyper-V/SCVMM -----------------------------------------------------------
+
+- name: (Hyper-V) Acquire or release the lock file on scvmm_server
+  when: hypervisor_type == 'hyperv'
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $lockDir = "C:\ProgramData\ansible-createvm"
+      $lockPath = Join-Path $lockDir "{{ vm_name }}.lock"
+      if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
+
+      if ('{{ createvm_lock_action }}' -eq 'release') {
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+          "RELEASED"
+          exit 0
+      }
+
+      if (Test-Path $lockPath) {
+          $ageSeconds = [int]((Get-Date).ToUniversalTime() - (Get-Item $lockPath).LastWriteTimeUtc).TotalSeconds
+          if ($ageSeconds -lt {{ createvm_lock_timeout_seconds }}) {
+              $holder = Get-Content $lockPath -Raw -ErrorAction SilentlyContinue
+              "LOCKED:$ageSeconds`:$holder"
+              exit 0
+          }
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue  # stale, break it
+      }
+
+      try {
+          $fs = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+          $writer = New-Object System.IO.StreamWriter($fs)
+          $writer.Write("{{ createvm_lock_run_id }}")
+          $writer.Close()
+          $fs.Close()
+          "ACQUIRED"
+      } catch [System.IO.IOException] {
+          "LOCKED:race"
+      }
+  changed_when: false
+  register: createvm_lock_hyperv_result
+
+- name: (Hyper-V) Refuse to acquire while a lock is held by another run
+  when:
+    - hypervisor_type == 'hyperv'
+    - createvm_lock_action == 'acquire'
+    - createvm_lock_hyperv_result.stdout is defined
+    - createvm_lock_hyperv_result.stdout is search('^LOCKED')
+  ansible.builtin.fail:
+    msg: >-
+      A create_vm run for '{{ vm_name }}' already has an active lock on
+      {{ scvmm_server }} ({{ createvm_lock_hyperv_result.stdout | trim }}).
+      Another creation looks to be in progress - wait for it to finish,
+      or investigate if it's stuck (locks self-expire after
+      {{ createvm_lock_timeout_seconds }}s).
