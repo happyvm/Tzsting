@@ -3,6 +3,11 @@
 # in its SCVMM Description field (preserving any existing content) - via
 # SCVMM rather than the native Hyper-V cmdlets, so SCVMM's database
 # doesn't drift out of sync. Does not delete anything.
+#
+# Marker format: DECOMMISSION_SCHEDULED:<date>:<servicenow_ticket>:<was_running>:<reason>
+# <was_running> records the VM's power state *before* this run touches
+# it, so decommission_cancel.yml can restore exactly that state later
+# rather than unconditionally powering the VM back on.
 
 - name: Assert required variables are defined
   ansible.builtin.assert:
@@ -11,6 +16,8 @@
       - scvmm_server | length > 0
       - vm_name is defined
       - vm_delete_scheduled_at is defined
+      - servicenow_ticket is defined
+      - deletevm_was_running is defined
 
 - name: Gracefully stop the VM and record the decommission marker via SCVMM
   delegate_to: "{{ scvmm_server }}"
@@ -32,7 +39,8 @@
       $currentDescription = $vm.Description
       if (-not $currentDescription) { $currentDescription = "" }
       $currentDescription = $currentDescription -replace '\n?DECOMMISSION_SCHEDULED:\S+:.*', ''
-      $newDescription = $currentDescription + "`nDECOMMISSION_SCHEDULED:{{ vm_delete_scheduled_at }}:{{ decommission_reason | default('no reason given') }}"
+      $marker = "DECOMMISSION_SCHEDULED:{{ vm_delete_scheduled_at }}:{{ servicenow_ticket }}:{{ deletevm_was_running }}:{{ decommission_reason | default('no reason given') }}"
+      $newDescription = $currentDescription + "`n" + $marker
       Set-SCVirtualMachine -VM $vm -Description $newDescription | Out-Null
 
       [PSCustomObject]@{
@@ -45,6 +53,7 @@
     msg: >-
       '{{ vm_name }}' stopped via SCVMM (final state:
       {{ (decommission_stop_result.stdout | trim | from_json).FinalState }})
-      and marked for deletion on {{ vm_delete_scheduled_at }}. Run
-      delete_vm.yml against the same vm_name when that window opens to
-      actually remove it.
+      and marked for deletion on {{ vm_delete_scheduled_at }} (ticket
+      {{ servicenow_ticket }}). Run delete_vm.yml against the same
+      vm_name when that window opens to actually remove it, or
+      decommission_cancel.yml to bring it back into service instead.

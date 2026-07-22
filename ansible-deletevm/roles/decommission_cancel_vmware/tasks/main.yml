@@ -1,0 +1,41 @@
+---
+# Removes the decommission marker from the VM's annotation (preserving
+# any other content) and restores it to the power state it was in
+# before decommission_stop ran.
+
+- name: Assert required facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - deletevm_cancel_raw_field is defined
+      - deletevm_cancel_was_running is defined
+
+- name: Remove the decommission marker
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    annotation: "{{ deletevm_cancel_raw_field | regex_replace('\\n?DECOMMISSION_SCHEDULED:\\S+:.*', '') }}"
+
+- name: Power the VM back on, if it was running before decommission_stop
+  when: deletevm_cancel_was_running | bool
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: powered-on
+
+- name: Report the cancellation
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' decommission cancelled - marker removed
+      {{ 'and the VM powered back on.' if deletevm_cancel_was_running | bool
+         else '. Left powered off, as it was before decommission_stop.' }}

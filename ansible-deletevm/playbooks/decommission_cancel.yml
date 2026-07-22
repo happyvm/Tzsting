@@ -1,0 +1,89 @@
+---
+# Rolls back a decommission_stop.yml run: removes the DECOMMISSION_SCHEDULED
+# marker from the VM and restores it to the power state it was in before
+# decommission_stop touched it (powers it back on only if it was
+# actually running beforehand - a VM that was already off stays off).
+#
+# There is deliberately no equivalent rollback for delete_vm.yml - once
+# a VM has actually been deleted (its configuration and disk files
+# removed), there is nothing left in this project's control to restore
+# it from. This playbook only ever reverses the *stop-and-mark* half of
+# the two-phase workflow, before delete_vm.yml has run - if delete_vm.yml
+# already ran, the VM is gone and the only way back is a backup/restore
+# process outside this project's scope.
+#
+# Required extra-vars:
+#   vm_name   CI / VM name, as known to vCenter and/or Hyper-V
+#
+# Optional extra-vars:
+#   hypervisor_type    vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm   true|false - skip SCVMM auto-detection
+#
+# Fails clearly if vm_name has no active DECOMMISSION_SCHEDULED marker -
+# refusing to guess it should "roll back" a VM that was never actually
+# marked for deletion.
+#
+# Usage:
+#   ansible-playbook playbooks/decommission_cancel.yml \
+#     -e vm_name=WINSRV01 \
+#     --vault-password-file .vault_pass
+
+- name: Cancel a pending VM decommission and restore its prior state
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: delete_vm_lock
+      vars:
+        deletevm_lock_action: acquire
+
+    - name: Cancel the decommission, releasing the lock afterwards either way
+      block:
+        - name: Read and parse the decommission marker, fail if none exists
+          ansible.builtin.include_role:
+            name: preflight_cancel_constraints
+
+        - name: Cancel on VMware
+          ansible.builtin.include_role:
+            name: decommission_cancel_vmware
+          when: deletevm_hypervisor_type == 'vmware'
+
+        - name: Cancel on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: decommission_cancel_scvmm
+          when:
+            - deletevm_hypervisor_type == 'hyperv'
+            - deletevm_managed_by_scvmm
+
+        - name: Cancel on Hyper-V directly
+          ansible.builtin.include_role:
+            name: decommission_cancel_hyperv
+          when:
+            - deletevm_hypervisor_type == 'hyperv'
+            - not deletevm_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              deletevm_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ deletevm_hypervisor_type }}"
+                managed_by_scvmm: "{{ deletevm_managed_by_scvmm }}"
+                action: decommission_cancel
+                cancelled_delete_scheduled_at: "{{ deletevm_cancel_date }}"
+                cancelled_servicenow_ticket: "{{ deletevm_cancel_ticket }}"
+                restored_to_running: "{{ deletevm_cancel_was_running }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: delete_vm_lock
+          vars:
+            deletevm_lock_action: release

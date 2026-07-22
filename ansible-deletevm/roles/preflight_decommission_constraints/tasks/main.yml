@@ -19,6 +19,35 @@
       README) - it's recorded on the VM as a marker for anyone who finds
       it stopped and wonders why, and for the ticket/audit trail.
 
+- name: Assert servicenow_ticket is defined and safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - servicenow_ticket is defined
+      - servicenow_ticket | length > 0
+      - servicenow_ticket is regex('^[A-Za-z0-9._-]{1,40}$')
+    fail_msg: >-
+      servicenow_ticket must be supplied (e.g.
+      -e servicenow_ticket=CHG0012345) - the change/request ticket
+      driving this decommission, recorded as part of the marker on the
+      VM itself and in the job summary. Letters, digits, dot, underscore
+      and hyphen only (1-40 chars) - same command-injection reasoning as
+      vm_name's fail_msg in preflight_platform.
+
+# Captured once, before the graceful shutdown that's about to happen in
+# decommission_stop_{vmware,hyperv,scvmm} - recorded in the marker so
+# decommission_cancel can restore the VM to exactly the state it was in
+# before this run, rather than always powering it back on regardless of
+# whether it was actually running beforehand.
+- name: Record whether the VM is currently running (VMware)
+  when: deletevm_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    deletevm_was_running: "{{ deletevm_vmware_search.instance.hw_power_status == 'poweredOn' }}"
+
+- name: Record whether the VM is currently running (Hyper-V)
+  when: deletevm_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    deletevm_was_running: "{{ deletevm_hyperv_power_state == 'Running' }}"
+
 # Best-effort cluster placement check - see ansible-resizedisk's matching
 # comment for the full reasoning behind blocking on a stale owner node
 # rather than warning.

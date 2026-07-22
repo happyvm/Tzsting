@@ -15,6 +15,11 @@
 #                             Description) and in the job summary. Not
 #                             enforced against the current time by either
 #                             playbook - see delete_vm.yml's header.
+#   servicenow_ticket         the change/request ticket driving this
+#                             decommission, e.g. CHG0012345 - recorded as
+#                             part of the same marker, so anyone who
+#                             finds the VM stopped can trace why straight
+#                             from the VM itself, no CMDB lookup needed.
 #
 # Optional extra-vars:
 #   decommission_reason        free text, recorded alongside the marker
@@ -26,10 +31,16 @@
 #   deletevm_poweroff_timeout_seconds   how long to wait for a graceful
 #                                       shutdown before giving up (default 300)
 #
+# Changed your mind before delete_vm.yml actually runs? Use
+# decommission_cancel.yml against the same vm_name - it removes this
+# marker and restores the VM to the power state it was in before this
+# playbook touched it.
+#
 # Usage:
 #   ansible-playbook playbooks/decommission_stop.yml \
 #     -e vm_name=WINSRV01 -e vm_delete_scheduled_at=2026-08-15 \
-#     -e decommission_reason='RITM0012345 - app retired' \
+#     -e servicenow_ticket=CHG0012345 \
+#     -e decommission_reason='app retired' \
 #     --vault-password-file .vault_pass
 
 - name: Stop a VM and mark it for deletion
@@ -82,6 +93,8 @@
                 managed_by_scvmm: "{{ deletevm_managed_by_scvmm }}"
                 action: decommission_stop
                 delete_scheduled_at: "{{ vm_delete_scheduled_at }}"
+                servicenow_ticket: "{{ servicenow_ticket }}"
+                was_running: "{{ deletevm_was_running }}"
                 reason: "{{ decommission_reason | default('') }}"
             aggregate: false
       always:

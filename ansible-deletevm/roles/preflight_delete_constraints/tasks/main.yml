@@ -53,7 +53,7 @@
   ansible.builtin.debug:
     msg: >-
       Prior decommission_stop marker found:
-      {{ deletevm_vmware_search.instance.annotation | regex_search('DECOMMISSION_SCHEDULED:\S+') }}
+      {{ deletevm_vmware_search.instance.annotation | regex_search('DECOMMISSION_SCHEDULED:[^\n]+') }}
 
 # --- Hyper-V: cluster check + report checkpoints/marker (informational) ----
 
@@ -137,4 +137,4 @@
   ansible.builtin.debug:
     msg: >-
       Prior decommission_stop marker found:
-      {{ deletevm_delete_info.Notes | regex_search('DECOMMISSION_SCHEDULED:\S+') }}
+      {{ deletevm_delete_info.Notes | regex_search('DECOMMISSION_SCHEDULED:[^\n]+') }}

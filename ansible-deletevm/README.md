@@ -6,14 +6,20 @@ alongside `ansible-resizedisk`, `ansible-snapshot`, `ansible-resizecompute`
 and `ansible-createvm`, sharing their overall design (ServiceNow-
 triggered, hypervisor auto-detection, per-VM locking, SCVMM awareness).
 
-Two playbooks supporting an optional **two-phase decommission**
-workflow - stop the VM now, delete it later:
+Three playbooks supporting an optional **two-phase decommission**
+workflow - stop the VM now, delete it later, or change your mind before
+that happens:
 
 - **`decommission_stop.yml`** — gracefully stops the VM and marks it for
-  deletion at a later date. Does not delete anything.
+  deletion at a later date, recording the driving ServiceNow ticket as a
+  note on the VM itself. Does not delete anything.
+- **`decommission_cancel.yml`** — the rollback: removes that marker and
+  restores the VM to the power state it was in before `decommission_stop`
+  touched it. Only undoes the *stop-and-mark* half of the workflow - see
+  "Rollback" below for why an actual deletion has no equivalent.
 - **`delete_vm.yml`** — permanently deletes the VM and its disk files.
   **Does not require the VM to already be powered off** - it handles
-  that itself, gracefully, as part of its own execution. The two
+  that itself, gracefully, as part of its own execution. All three
   playbooks are independent, not a strict sequence: running
   `delete_vm.yml` directly against a running VM works fine on its own;
   `decommission_stop.yml` is there for when a grace period between
@@ -45,17 +51,35 @@ Then, per playbook:
 ### `decommission_stop`
 
 3. **`preflight_decommission_constraints`** — validates
-   `vm_delete_scheduled_at` looks like a date, and blocks on a clustered
-   Hyper-V VM whose owner node has drifted or that hasn't been
-   explicitly signed off (stopping a clustered VM here bypasses cluster
-   orchestration).
+   `vm_delete_scheduled_at` looks like a date and `servicenow_ticket` is
+   supplied and safe to interpolate into PowerShell, records the VM's
+   *current* power state (`deletevm_was_running` - captured here,
+   before anything touches it, specifically so `decommission_cancel`
+   can restore exactly that state later rather than blindly powering
+   the VM back on), and blocks on a clustered Hyper-V VM whose owner
+   node has drifted or that hasn't been explicitly signed off (stopping
+   a clustered VM here bypasses cluster orchestration).
 4. **`decommission_stop_vmware`** / **`decommission_stop_scvmm`** /
    **`decommission_stop_hyperv`** — gracefully shuts the VM down (if
-   running) and writes a `DECOMMISSION_SCHEDULED:<date>:<reason>` marker
-   into the VM's annotation (VMware) / Notes (Hyper-V) / SCVMM
+   running) and writes a
+   `DECOMMISSION_SCHEDULED:<date>:<ticket>:<was_running>:<reason>`
+   marker into the VM's annotation (VMware) / Notes (Hyper-V) / SCVMM
    Description field, **preserving any existing content** in that field
    (only the marker itself is replaced on a re-run, e.g. to push the
-   date back). Nothing is deleted.
+   date back or correct the ticket number). Nothing is deleted.
+
+### `decommission_cancel`
+
+3. **`preflight_cancel_constraints`** — reads whichever field
+   `decommission_stop` would have written into, parses the marker, and
+   **fails clearly if there isn't one** - the guardrail against rolling
+   back a VM that was never actually marked for deletion (e.g. a
+   `vm_name` typo that happens to match a real, unrelated VM).
+4. **`decommission_cancel_vmware`** / **`decommission_cancel_scvmm`** /
+   **`decommission_cancel_hyperv`** — removes the marker (preserving any
+   other content in the field, same as the write side) and powers the VM
+   back on **only if** the parsed marker says it was running before
+   `decommission_stop` ran; a VM that was already off stays off.
 
 ### `delete_vm`
 
@@ -85,6 +109,30 @@ actually chosen (for the audit trail and for whoever finds the VM
 stopped and wonders why), not a scheduling mechanism - actually running
 `delete_vm.yml` *on* that date is the calling workflow's job (an
 AWX/Tower job scheduled for that date, or a ServiceNow Scheduled Job).
+
+### Rollback
+
+`decommission_cancel.yml` is the rollback for `decommission_stop.yml` -
+before `delete_vm.yml` has run, it fully reverses the stop-and-mark step
+(remove the marker, restore the prior power state). **There is no
+equivalent rollback for `delete_vm.yml` itself.** Once a VM has actually
+been deleted - its configuration and disk files removed - there is
+nothing left in this project's control to restore it from. If
+`delete_vm.yml` already ran, the only way back is a backup/restore
+process outside this project's scope (this project doesn't take or
+manage backups). This asymmetry is deliberate, not a gap: the two-phase
+workflow (`decommission_stop` → grace period → `delete_vm`) exists
+precisely so that "rollback" is possible for as long as it's meaningful
+to offer it, and stops being offered exactly where it would otherwise be
+a false promise.
+
+`decommission_cancel_hyperv`/`decommission_cancel_scvmm` interpolate the
+*existing* Notes/Description content back into a PowerShell here-string
+rather than a plain quoted string (the same technique used for passwords
+elsewhere in this series) - that field can contain arbitrary text an
+operator typed in previously, unvalidated, so it needs the same
+injection-safe handling as any other free-form input reaching a
+PowerShell script.
 
 ### Why snapshots/checkpoints don't block deletion
 
@@ -151,6 +199,7 @@ ansible-deletevm/
 │   └── group_vars/all.yml                    # vCenter/SCVMM connection + policy vars
 ├── playbooks/
 │   ├── decommission_stop.yml
+│   ├── decommission_cancel.yml
 │   └── delete_vm.yml
 ├── scripts/
 │   ├── extract_embedded_scripts.py           # pulls embedded PowerShell out into standalone files (for CI)
@@ -160,6 +209,8 @@ ansible-deletevm/
     ├── delete_vm_lock/                       # per-VM lock (acquire/release), anti double-run
     ├── preflight_decommission_constraints/
     ├── decommission_stop_vmware/ , decommission_stop_hyperv/ , decommission_stop_scvmm/
+    ├── preflight_cancel_constraints/
+    ├── decommission_cancel_vmware/ , decommission_cancel_hyperv/ , decommission_cancel_scvmm/
     ├── preflight_delete_constraints/
     └── delete_vm_vmware/ , delete_vm_hyperv/ , delete_vm_scvmm/
 ```
@@ -168,7 +219,7 @@ ansible-deletevm/
 
 - **`.github/workflows/ansible-deletevm-ci.yml`** (triggered on changes
   under `ansible-deletevm/`): `yamllint`, `ansible-lint` (`basic`
-  profile), and `ansible-playbook --syntax-check` against both
+  profile), and `ansible-playbook --syntax-check` against all three
   playbooks. No `shellcheck` job - this project has no guest-touching
   bash.
 - **`.github/workflows/powershell-quality.yml`** (pre-existing at the
@@ -223,13 +274,21 @@ Two-phase: stop now, delete later:
 ```bash
 ansible-playbook playbooks/decommission_stop.yml \
   -e vm_name=WINSRV01 -e vm_delete_scheduled_at=2026-08-15 \
-  -e decommission_reason='RITM0012345 - app retired' \
+  -e servicenow_ticket=CHG0012345 -e decommission_reason='app retired' \
   --vault-password-file .vault_pass
 
 # ... grace period elapses (whatever process/schedule triggers this next run) ...
 
 ansible-playbook playbooks/delete_vm.yml \
   -e vm_name=WINSRV01 -e confirm_delete=true \
+  --vault-password-file .vault_pass
+```
+
+Changed your mind before that second run happens:
+
+```bash
+ansible-playbook playbooks/decommission_cancel.yml \
+  -e vm_name=WINSRV01 \
   --vault-password-file .vault_pass
 ```
 
@@ -248,11 +307,16 @@ Typical use case: a ServiceNow *Change Request* / decommission workflow
 triggers, via **Ansible Automation Platform** (job template + webhook)
 or a **MID Server** running `ansible-playbook` directly, a call to
 `decommission_stop` when the change is approved (capturing the agreed
-deletion date), then a separately scheduled call to `delete_vm` once
-that date arrives - or a single `delete_vm` call for an immediate
-decommission. The result (`deletevm_summary` via `set_stats`, or the
-job's exit code) lets ServiceNow update the CI record (retire it) and
-the associated ticket/task.
+deletion date and the driving ticket - `servicenow_ticket` ends up
+written directly onto the VM, so anyone who finds it stopped can trace
+why without a CMDB lookup), then a separately scheduled call to
+`delete_vm` once that date arrives - or a single `delete_vm` call for an
+immediate decommission. If the change gets withdrawn or rescheduled
+before that second call happens, `decommission_cancel` reverses the stop
+and restores the VM to service. The result (`deletevm_summary` via
+`set_stats`, or the job's exit code) lets ServiceNow update the CI
+record (retire it, or leave it active on a cancel) and the associated
+ticket/task.
 
 ## Variables
 
@@ -260,20 +324,26 @@ the associated ticket/task.
 
 | Variable | Used by | Description |
 |---|---|---|
-| `vm_name` | both | Name of the CI / VM, as known to vCenter and/or Hyper-V |
+| `vm_name` | all three | Name of the CI / VM, as known to vCenter and/or Hyper-V |
 | `vm_delete_scheduled_at` | `decommission_stop` | Date (or date/time) this VM is approved to be deleted, e.g. `2026-08-15` |
+| `servicenow_ticket` | `decommission_stop` | The change/request ticket driving this decommission, e.g. `CHG0012345` - recorded as part of the marker on the VM itself |
 | `confirm_delete` | `delete_vm` | Must be explicitly `true` - the one hard gate on this playbook |
+
+`decommission_cancel` has no playbook-specific required variable beyond
+`vm_name` - it reads everything else it needs back out of the marker
+`decommission_stop` wrote, and fails if that marker isn't there (see
+"How it works" above).
 
 ### Optional
 
 | Variable | Default | Used by | Description |
 |---|---|---|---|
-| `hypervisor_type` | auto-detected | both | `vmware` or `hyperv`, to skip the search |
-| `managed_by_scvmm` | auto-detected if `scvmm_server` is configured | both | `true`/`false`, to skip SCVMM detection |
+| `hypervisor_type` | auto-detected | all three | `vmware` or `hyperv`, to skip the search |
+| `managed_by_scvmm` | auto-detected if `scvmm_server` is configured | all three | `true`/`false`, to skip SCVMM detection |
 | `decommission_reason` | `""` | `decommission_stop` | Free text recorded alongside the deletion marker |
-| `deletevm_allow_clustered_vm` | `false` | both | `true` to proceed on a highly-available Hyper-V VM once failover has been coordinated manually |
-| `deletevm_poweroff_timeout_seconds` | `300` | both | How long to wait for a graceful shutdown before giving up |
-| `deletevm_lock_timeout_seconds` | `1800` | both | Delay before a per-VM lock is considered abandoned and can be broken by a new run |
+| `deletevm_allow_clustered_vm` | `false` | `decommission_stop`, `delete_vm` | `true` to proceed on a highly-available Hyper-V VM once failover has been coordinated manually |
+| `deletevm_poweroff_timeout_seconds` | `300` | `decommission_stop`, `delete_vm` | How long to wait for a graceful shutdown before giving up |
+| `deletevm_lock_timeout_seconds` | `1800` | all three | Delay before a per-VM lock is considered abandoned and can be broken by a new run |
 
 ### Per environment (`inventory/group_vars/all.yml`)
 

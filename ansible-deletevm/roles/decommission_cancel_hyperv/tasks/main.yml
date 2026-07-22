@@ -1,0 +1,44 @@
+---
+# Removes the decommission marker from the VM's Notes field (preserving
+# any other content) and restores it to the power state it was in
+# before decommission_stop ran.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - deletevm_hyperv_host is defined
+      - deletevm_cancel_raw_field is defined
+      - deletevm_cancel_was_running is defined
+
+- name: Remove the marker and restore the prior power state
+  delegate_to: "{{ deletevm_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+
+      # deletevm_cancel_raw_field is pre-existing, unvalidated free-text
+      # Notes content (an operator could have typed anything into it
+      # previously) - a here-string is safe against that the same way
+      # it's used elsewhere in this project for arbitrary passwords: the
+      # only way to break it is a line that's exactly '@ at the start,
+      # unlike a single-quoted string which a bare embedded quote breaks.
+      $newNotes = @'
+      {{ deletevm_cancel_raw_field | regex_replace("\n?DECOMMISSION_SCHEDULED:\S+:.*", "") }}
+      '@
+      Set-VM -Name '{{ vm_name }}' -Notes $newNotes
+
+      if ('{{ deletevm_cancel_was_running }}' -eq 'True') {
+          Start-VM -Name '{{ vm_name }}'
+      }
+
+      [PSCustomObject]@{
+          FinalState = (Get-VM -Name '{{ vm_name }}').State.ToString()
+      } | ConvertTo-Json -Compress
+  register: decommission_cancel_result
+
+- name: Report the cancellation
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' decommission cancelled - marker removed (final
+      state: {{ (decommission_cancel_result.stdout | trim | from_json).FinalState }}).
