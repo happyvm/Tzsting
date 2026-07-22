@@ -1,0 +1,92 @@
+---
+# Stops a VM (VMware or Hyper-V, auto-detected) and marks it for
+# deletion at a later date - the first half of the optional two-phase
+# decommission workflow (stop now, delete later). Does not delete
+# anything: the VM stays registered, powered off, with its disks intact,
+# until delete_vm.yml is run against the same vm_name. Standalone use is
+# also fine - delete_vm.yml doesn't require this to have run first (it
+# handles powering the VM off itself, see its own header).
+#
+# Required extra-vars:
+#   vm_name                   CI / VM name, as known to vCenter and/or Hyper-V
+#   vm_delete_scheduled_at    date (or date/time) this VM is approved to
+#                             be deleted, e.g. 2026-08-15 - recorded as a
+#                             marker on the VM itself (annotation/Notes/
+#                             Description) and in the job summary. Not
+#                             enforced against the current time by either
+#                             playbook - see delete_vm.yml's header.
+#
+# Optional extra-vars:
+#   decommission_reason        free text, recorded alongside the marker
+#   hypervisor_type             vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm            true|false - skip SCVMM auto-detection
+#   deletevm_allow_clustered_vm true to proceed on a highly-available
+#                                Hyper-V VM once failover has been
+#                                coordinated manually (default: refuse)
+#   deletevm_poweroff_timeout_seconds   how long to wait for a graceful
+#                                       shutdown before giving up (default 300)
+#
+# Usage:
+#   ansible-playbook playbooks/decommission_stop.yml \
+#     -e vm_name=WINSRV01 -e vm_delete_scheduled_at=2026-08-15 \
+#     -e decommission_reason='RITM0012345 - app retired' \
+#     --vault-password-file .vault_pass
+
+- name: Stop a VM and mark it for deletion
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: delete_vm_lock
+      vars:
+        deletevm_lock_action: acquire
+
+    - name: Stop and mark the VM, releasing the lock afterwards either way
+      block:
+        - name: Validate inputs and block on a clustered VM without sign-off
+          ansible.builtin.include_role:
+            name: preflight_decommission_constraints
+
+        - name: Stop and mark on VMware
+          ansible.builtin.include_role:
+            name: decommission_stop_vmware
+          when: deletevm_hypervisor_type == 'vmware'
+
+        - name: Stop and mark on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: decommission_stop_scvmm
+          when:
+            - deletevm_hypervisor_type == 'hyperv'
+            - deletevm_managed_by_scvmm
+
+        - name: Stop and mark on Hyper-V directly
+          ansible.builtin.include_role:
+            name: decommission_stop_hyperv
+          when:
+            - deletevm_hypervisor_type == 'hyperv'
+            - not deletevm_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              deletevm_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ deletevm_hypervisor_type }}"
+                managed_by_scvmm: "{{ deletevm_managed_by_scvmm }}"
+                action: decommission_stop
+                delete_scheduled_at: "{{ vm_delete_scheduled_at }}"
+                reason: "{{ decommission_reason | default('') }}"
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: delete_vm_lock
+          vars:
+            deletevm_lock_action: release

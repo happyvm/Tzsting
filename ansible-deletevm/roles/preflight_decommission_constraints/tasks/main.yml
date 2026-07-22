@@ -1,0 +1,81 @@
+---
+# Validates decommission_stop's inputs and blocks on a clustered Hyper-V
+# VM whose owner node has drifted or that hasn't been explicitly signed
+# off - both platforms' stop step powers the VM off, and a clustered VM
+# can fail over during that window.
+
+- name: Assert vm_delete_scheduled_at is defined and looks like a date/time
+  ansible.builtin.assert:
+    that:
+      - vm_delete_scheduled_at is defined
+      - vm_delete_scheduled_at | length > 0
+      - vm_delete_scheduled_at is regex('^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?)?$')
+    fail_msg: >-
+      vm_delete_scheduled_at must be supplied (e.g.
+      -e vm_delete_scheduled_at=2026-08-15 or
+      -e vm_delete_scheduled_at=2026-08-15T22:00:00) - the date (and
+      optionally time) this VM is approved to actually be deleted on.
+      Not enforced against the current time by delete_vm later (see
+      README) - it's recorded on the VM as a marker for anyone who finds
+      it stopped and wonders why, and for the ticket/audit trail.
+
+# Best-effort cluster placement check - see ansible-resizedisk's matching
+# comment for the full reasoning behind blocking on a stale owner node
+# rather than warning.
+- name: Check cluster placement (Hyper-V)
+  when: deletevm_hypervisor_type == 'hyperv'
+  delegate_to: "{{ deletevm_hyperv_host | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+      [PSCustomObject]@{
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+          ClusterOwnerNode      = $clusterOwnerNode
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: deletevm_cluster_lookup
+
+- name: Parse cluster placement facts
+  when: deletevm_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    deletevm_cluster_info: "{{ deletevm_cluster_lookup.stdout | from_json }}"
+
+- name: Refuse to act on a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_cluster_info.IsClustered
+    - deletevm_cluster_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - deletevm_cluster_info.ClusterOwnerNode == deletevm_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ deletevm_cluster_info.ClusterOwnerNode }}, not {{ deletevm_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to act on a clustered (highly-available) VM without an explicit override
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_cluster_info.ClusterCheckAvailable
+    - deletevm_cluster_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - deletevm_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ deletevm_cluster_info.ClusterOwnerNode }}). Stopping
+      it here bypasses cluster orchestration, and it can fail over
+      during that window. Coordinate with the cluster first, then pass
+      -e deletevm_allow_clustered_vm=true to proceed.

@@ -95,3 +95,16 @@ jobs:
             throw "PSScriptAnalyzer found $($issues.Count) issue(s) in ansible-createvm's embedded PowerShell."
           }
 
+      - name: Extract embedded PowerShell from ansible-deletevm
+        run: python3 ansible-deletevm/scripts/extract_embedded_scripts.py powershell
+
+      - name: Run PSScriptAnalyzer on ansible-deletevm's embedded PowerShell
+        shell: pwsh
+        run: |
+          $issues = Invoke-ScriptAnalyzer -Path ansible-deletevm/.extracted/powershell -Recurse -Severity Error, Warning `
+            -Settings ansible-deletevm/scripts/PSScriptAnalyzerSettings.psd1
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found $($issues.Count) issue(s) in ansible-deletevm's embedded PowerShell."
+          }
+

@@ -1,0 +1,140 @@
+---
+# Validates delete_vm's inputs: confirm_delete must be explicitly true
+# (the one hard, non-negotiable gate on this playbook - it does not
+# require the VM to already be powered off, see delete_vm.yml's header),
+# blocks on a clustered Hyper-V VM without sign-off, and reports
+# (informational only, never blocking) any snapshots/checkpoints that
+# will be destroyed along with the VM and any prior decommission_stop
+# marker found on it.
+
+- name: Assert confirm_delete is explicitly true
+  ansible.builtin.assert:
+    that:
+      - confirm_delete is defined
+      - confirm_delete | bool
+    fail_msg: >-
+      confirm_delete must be explicitly set to true
+      (-e confirm_delete=true) to actually delete '{{ vm_name }}'. This
+      is deliberately the only hard requirement here - delete_vm does
+      NOT require the VM to already be powered off (it handles that
+      itself, see the playbook header) - so this flag is the one thing
+      standing between running this playbook and permanently destroying
+      the VM and its disks.
+
+# --- VMware: report snapshots + any decommission marker (informational) ----
+
+- name: Check for snapshots (VMware, informational)
+  when: deletevm_hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_snapshot_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: deletevm_vmware_snapshot_info
+
+- name: Warn if snapshots exist (VMware, non-blocking)
+  when:
+    - deletevm_hypervisor_type == 'vmware'
+    - (deletevm_vmware_snapshot_info.guest_snapshots.snapshots | default([])) | length > 0
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' has
+      {{ deletevm_vmware_snapshot_info.guest_snapshots.snapshots | length }}
+      snapshot(s) that will be permanently destroyed along with the VM:
+      {{ deletevm_vmware_snapshot_info.guest_snapshots.snapshots | map(attribute='name') | list }}.
+
+- name: Report a prior decommission_stop marker, if present (VMware, informational)
+  when:
+    - deletevm_hypervisor_type == 'vmware'
+    - (deletevm_vmware_search.instance.annotation | default('')) is search('DECOMMISSION_SCHEDULED:')
+  ansible.builtin.debug:
+    msg: >-
+      Prior decommission_stop marker found:
+      {{ deletevm_vmware_search.instance.annotation | regex_search('DECOMMISSION_SCHEDULED:\S+') }}
+
+# --- Hyper-V: cluster check + report checkpoints/marker (informational) ----
+
+- name: Check cluster placement (Hyper-V)
+  when: deletevm_hypervisor_type == 'hyperv'
+  delegate_to: "{{ deletevm_hyperv_host | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $clusterCheckAvailable = [bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)
+      $isClustered = $false
+      $clusterOwnerNode = $null
+      if ($clusterCheckAvailable) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              $isClustered = $true
+              $clusterOwnerNode = $clusterGroup.OwnerNode.Name
+          }
+      }
+      $checkpointCount = (Get-VMSnapshot -VMName '{{ vm_name }}' -ErrorAction SilentlyContinue | Measure-Object).Count
+      $notes = (Get-VM -Name '{{ vm_name }}').Notes
+      [PSCustomObject]@{
+          IsClustered           = $isClustered
+          ClusterCheckAvailable = $clusterCheckAvailable
+          ClusterOwnerNode      = $clusterOwnerNode
+          CheckpointCount       = $checkpointCount
+          Notes                 = $notes
+      } | ConvertTo-Json -Compress
+  changed_when: false
+  register: deletevm_delete_lookup
+
+- name: Parse the lookup
+  when: deletevm_hypervisor_type == 'hyperv'
+  ansible.builtin.set_fact:
+    deletevm_delete_info: "{{ deletevm_delete_lookup.stdout | from_json }}"
+
+- name: Refuse to act on a clustered VM if the owner node doesn't match where we're about to act
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_delete_info.IsClustered
+    - deletevm_delete_info.ClusterOwnerNode is not none
+  ansible.builtin.assert:
+    that:
+      - deletevm_delete_info.ClusterOwnerNode == deletevm_hyperv_host
+    fail_msg: >-
+      '{{ vm_name }}' is clustered and currently owned by
+      {{ deletevm_delete_info.ClusterOwnerNode }}, not {{ deletevm_hyperv_host }}
+      (where this run found it and is about to act). It likely just
+      failed over - refusing to proceed on stale placement information.
+
+- name: Refuse to act on a clustered (highly-available) VM without an explicit override
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_delete_info.ClusterCheckAvailable
+    - deletevm_delete_info.IsClustered
+  ansible.builtin.assert:
+    that:
+      - deletevm_allow_clustered_vm | bool
+    fail_msg: >-
+      '{{ vm_name }}' is a highly-available VM in a Failover Cluster
+      (owner node {{ deletevm_delete_info.ClusterOwnerNode }}). Removing
+      it here bypasses cluster orchestration, and it can fail over
+      during that window. Coordinate with the cluster first (remove the
+      cluster role, or accept this playbook doing so - see
+      delete_vm_hyperv), then pass -e deletevm_allow_clustered_vm=true
+      to proceed.
+
+- name: Warn if checkpoints exist (Hyper-V, non-blocking)
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_delete_info.CheckpointCount > 0
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' has {{ deletevm_delete_info.CheckpointCount }}
+      checkpoint(s) that will be permanently destroyed along with the VM.
+
+- name: Report a prior decommission_stop marker, if present (Hyper-V, informational)
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - (deletevm_delete_info.Notes | default('')) is search('DECOMMISSION_SCHEDULED:')
+  ansible.builtin.debug:
+    msg: >-
+      Prior decommission_stop marker found:
+      {{ deletevm_delete_info.Notes | regex_search('DECOMMISSION_SCHEDULED:\S+') }}

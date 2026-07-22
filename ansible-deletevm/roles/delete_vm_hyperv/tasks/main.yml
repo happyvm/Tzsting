@@ -1,0 +1,94 @@
+---
+# Powers off (gracefully, if running) and permanently deletes the VM.
+# Does not require the VM to already be off - that's handled here.
+#
+# Two things Remove-VM does NOT do on its own, that this role handles
+# explicitly (both confirmed against current behavior, not assumed):
+#   - It leaves the VHD/VHDX files on disk - Remove-VM only removes the
+#     VM's configuration from Hyper-V, not its virtual hard disks. This
+#     role captures every attached disk's path before removal and
+#     deletes those files itself afterwards, otherwise "deleting" a VM
+#     here would silently leave its storage behind, defeating half the
+#     point of a decommission.
+#   - It refuses on a VM that's still a member of a Failover Cluster
+#     role. If the VM is clustered (checked in preflight_delete_constraints,
+#     which already blocks on a stale owner node / missing override),
+#     the cluster role is removed first (Remove-ClusterGroup
+#     -RemoveResources) - that only removes it from cluster management,
+#     it does not touch the VM itself, which Remove-VM still has to do.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - deletevm_hyperv_host is defined
+      - confirm_delete | bool
+
+- name: Power off, remove from cluster if needed, delete the VM and its disks
+  delegate_to: "{{ deletevm_hyperv_host }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $timeoutSeconds = {{ deletevm_poweroff_timeout_seconds }}
+
+      $vm = Get-VM -Name '{{ vm_name }}'
+      $diskPaths = @(Get-VMHardDiskDrive -VM $vm | Where-Object { $_.Path } | ForEach-Object { $_.Path })
+
+      if ([bool](Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue)) {
+          $clusterGroup = Get-ClusterGroup -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+          if ($clusterGroup) {
+              Remove-ClusterGroup -VMId $vm.VMId -RemoveResources -Force
+          }
+      }
+
+      if ($vm.State -eq 'Running') {
+          Stop-VM -Name '{{ vm_name }}' -Force
+          $waited = 0
+          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Off' -and $waited -lt $timeoutSeconds) {
+              Start-Sleep -Seconds 5
+              $waited += 5
+          }
+          if ((Get-VM -Name '{{ vm_name }}').State -ne 'Off') {
+              throw "'{{ vm_name }}' did not reach the Off state within ${timeoutSeconds}s - refusing to delete while its state is uncertain."
+          }
+      }
+
+      Remove-VM -Name '{{ vm_name }}' -Force
+
+      $removedDisks = @()
+      $failedDisks = @()
+      foreach ($path in $diskPaths) {
+          try {
+              Remove-Item -Path $path -Force -ErrorAction Stop
+              $removedDisks += $path
+          } catch {
+              $failedDisks += $path
+          }
+      }
+
+      [PSCustomObject]@{
+          RemovedDisks = $removedDisks
+          FailedDisks  = $failedDisks
+      } | ConvertTo-Json -Compress
+  register: delete_vm_result
+
+- name: Report the deletion
+  vars:
+    delete_vm_parsed: "{{ delete_vm_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' deleted from {{ deletevm_hyperv_host }}. Disk(s)
+      removed: {{ delete_vm_parsed.RemovedDisks | default([]) }}.
+      {{ ('Disk(s) that could NOT be removed (check manually): ' ~ delete_vm_parsed.FailedDisks) if (delete_vm_parsed.FailedDisks | default([]) | length > 0) else '' }}
+
+- name: Fail if any disk file could not be removed
+  vars:
+    delete_vm_parsed: "{{ delete_vm_result.stdout | trim | from_json }}"
+  ansible.builtin.assert:
+    that:
+      - (delete_vm_parsed.FailedDisks | default([])) | length == 0
+    fail_msg: >-
+      '{{ vm_name }}' was removed from Hyper-V, but its disk file(s)
+      {{ delete_vm_parsed.FailedDisks }} could not be deleted (likely a
+      permissions or in-use issue) - the VM registration is gone, but
+      storage was not reclaimed. Remove them manually.
