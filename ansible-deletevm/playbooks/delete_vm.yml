@@ -1,0 +1,96 @@
+---
+# Permanently deletes a VM (VMware or Hyper-V, auto-detected) and its
+# disk files. The most destructive playbook in this series - unlike
+# ansible-resizedisk/ansible-snapshot/ansible-resizecompute, this does
+# NOT require the VM to already be in a particular state: it does not
+# need to be powered off beforehand (this playbook gracefully shuts it
+# down itself, as part of its own execution, if it's still running).
+# Standalone use is fine - running this directly against a running VM
+# works; running decommission_stop.yml first (to stop it and record a
+# scheduled deletion date) is optional, not a prerequisite this playbook
+# checks for or requires.
+#
+# The one hard, non-negotiable gate is confirm_delete=true.
+#
+# Required extra-vars:
+#   vm_name          CI / VM name, as known to vCenter and/or Hyper-V
+#   confirm_delete   must be explicitly true - the playbook refuses
+#                     to run otherwise
+#
+# Optional extra-vars:
+#   hypervisor_type              vmware|hyperv - skip hypervisor auto-detection
+#   managed_by_scvmm             true|false - skip SCVMM auto-detection
+#   deletevm_allow_clustered_vm  true to proceed on a highly-available
+#                                 Hyper-V VM once failover has been
+#                                 coordinated manually (default: refuse)
+#   deletevm_poweroff_timeout_seconds   how long to wait for a graceful
+#                                       shutdown before giving up (default 300)
+#
+# Snapshots/checkpoints are NOT a blocking condition here (unlike every
+# other playbook in this series that touches a disk or a snapshot) -
+# they're reported as a warning and then destroyed along with the VM,
+# since that's the expected outcome of a deletion, not a misconfiguration
+# to guard against.
+#
+# Usage:
+#   ansible-playbook playbooks/delete_vm.yml \
+#     -e vm_name=WINSRV01 -e confirm_delete=true \
+#     --vault-password-file .vault_pass
+
+- name: Permanently delete a VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the target is a VM and identify its hypervisor
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Acquire a per-VM lock (prevents two concurrent runs racing on the same VM)
+      ansible.builtin.include_role:
+        name: delete_vm_lock
+      vars:
+        deletevm_lock_action: acquire
+
+    - name: Delete the VM, releasing the lock afterwards either way
+      block:
+        - name: Require explicit confirmation, block on a clustered VM without sign-off, report snapshots/prior marker
+          ansible.builtin.include_role:
+            name: preflight_delete_constraints
+
+        - name: Delete on VMware
+          ansible.builtin.include_role:
+            name: delete_vm_vmware
+          when: deletevm_hypervisor_type == 'vmware'
+
+        - name: Delete on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: delete_vm_scvmm
+          when:
+            - deletevm_hypervisor_type == 'hyperv'
+            - deletevm_managed_by_scvmm
+
+        - name: Delete on Hyper-V directly
+          ansible.builtin.include_role:
+            name: delete_vm_hyperv
+          when:
+            - deletevm_hypervisor_type == 'hyperv'
+            - not deletevm_managed_by_scvmm
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              deletevm_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ deletevm_hypervisor_type }}"
+                managed_by_scvmm: "{{ deletevm_managed_by_scvmm }}"
+                action: delete
+                deleted: true
+            aggregate: false
+      always:
+        - name: Release the per-VM lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: delete_vm_lock
+          vars:
+            deletevm_lock_action: release

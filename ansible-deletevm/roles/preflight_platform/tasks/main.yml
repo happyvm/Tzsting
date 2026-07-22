@@ -1,0 +1,162 @@
+---
+# Confirms the target named by ServiceNow (vm_name) is actually a VM, and
+# identifies which hypervisor it lives on. Runs entirely delegated (no
+# connection to the guest itself is needed or attempted here) -
+# decommissioning/deletion is purely hypervisor-side.
+#
+# If the caller already knows the platform (ServiceNow CI class maps
+# 1:1 to vmware/hyperv, or a prior discovery step already resolved it),
+# pass hypervisor_type as an extra-var to skip the search and just
+# confirm presence on that one platform.
+
+- name: Assert vm_name is defined and safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+      - vm_name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      vm_name must be supplied (e.g. -e vm_name=WINSRV01), typically the
+      ServiceNow CI name, and may only contain letters, digits, spaces,
+      dot, underscore and hyphen (1-80 chars). This isn't a real naming
+      restriction on VMware/Hyper-V - it's a safety limit here, because
+      vm_name is interpolated into single-quoted PowerShell string
+      literals on Hyper-V/SCVMM; a stray quote or semicolon in it would
+      otherwise be a command injection vector.
+
+- name: Search vCenter for a VM with this name
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: deletevm_vmware_search
+  ignore_errors: true
+  when:
+    - hypervisor_type in ['', 'vmware']
+    - vcenter_hostname is defined
+
+- name: Search each known Hyper-V host for a VM with this name
+  delegate_to: "{{ item }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "SilentlyContinue"
+      $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+      if ($vm) { "FOUND|$($vm.State)" } else { "NOTFOUND" }
+  loop: "{{ groups['hyperv_hypervisor'] | default([]) }}"
+  register: deletevm_hyperv_search
+  changed_when: false
+  ignore_unreachable: true
+  ignore_errors: true
+  when: hypervisor_type in ['', 'hyperv']
+
+- name: Record whether the VM was found in vCenter
+  ansible.builtin.set_fact:
+    deletevm_found_vmware: "{{ (deletevm_vmware_search is defined) and (deletevm_vmware_search is not skipped) and (deletevm_vmware_search is succeeded) }}"
+
+- name: Identify the Hyper-V host reporting a match, if any
+  ansible.builtin.set_fact:
+    deletevm_hyperv_match_results: "{{ deletevm_hyperv_search.results
+                                        | default([])
+                                        | selectattr('stdout', 'defined')
+                                        | selectattr('stdout', 'search', '^FOUND')
+                                        | list }}"
+
+- name: Extract the matching host name(s)
+  ansible.builtin.set_fact:
+    deletevm_hyperv_matches: "{{ deletevm_hyperv_match_results | map(attribute='item') | list }}"
+
+- name: Fail on ambiguous placement (same name found on both platforms)
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' matches a VM in vCenter and on Hyper-V host(s)
+      {{ deletevm_hyperv_matches | join(', ') }}. Refusing to guess -
+      pass hypervisor_type explicitly to disambiguate.
+  when:
+    - deletevm_found_vmware
+    - deletevm_hyperv_matches | length > 0
+
+- name: Set resolved hypervisor_type from the vCenter match
+  ansible.builtin.set_fact:
+    deletevm_hypervisor_type: vmware
+  when: deletevm_found_vmware
+
+- name: Set resolved hypervisor_type, hyperv_host and power state from the Hyper-V match
+  ansible.builtin.set_fact:
+    deletevm_hypervisor_type: hyperv
+    deletevm_hyperv_host: "{{ deletevm_hyperv_matches[0] }}"
+    deletevm_hyperv_power_state: "{{ deletevm_hyperv_match_results[0].stdout.split('|')[1] }}"
+  when: deletevm_hyperv_matches | length > 0
+
+- name: Fail if the CI could not be confirmed as a VM on any managed hypervisor
+  ansible.builtin.fail:
+    msg: >-
+      '{{ vm_name }}' was not found on vCenter ({{ vcenter_hostname | default('not configured') }})
+      nor on any Hyper-V host in the 'hyperv_hypervisor' group
+      ({{ groups['hyperv_hypervisor'] | default([]) | join(', ') }}).
+      It is either not a VM, already deleted, or misnamed - check the CMDB entry.
+  when: deletevm_hypervisor_type is not defined
+
+- name: Report resolved platform
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' confirmed as a VM on {{ deletevm_hypervisor_type }}
+      {{ '(' + deletevm_hyperv_host + ')' if deletevm_hypervisor_type == 'hyperv' else '' }}.
+
+# --- SCVMM management detection (Hyper-V only) ------------------------------
+# deletevm_hyperv_host above is always sourced from our own direct search
+# across the hyperv_hypervisor inventory group - deliberately not
+# overwritten with whatever hostname SCVMM reports, since that name isn't
+# guaranteed to match an inventory_hostname here (FQDN vs short name,
+# admin-console naming, etc.) and delegate_to needs an exact match. SCVMM
+# detection below only ever sets the deletevm_managed_by_scvmm boolean.
+
+- name: Default deletevm_managed_by_scvmm to false
+  ansible.builtin.set_fact:
+    deletevm_managed_by_scvmm: false
+
+- name: Trust an explicit managed_by_scvmm override, if supplied
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - managed_by_scvmm is defined
+  ansible.builtin.set_fact:
+    deletevm_managed_by_scvmm: "{{ managed_by_scvmm | bool }}"
+
+- name: Query SCVMM for this VM, if a server is configured and not already overridden
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - managed_by_scvmm is not defined
+    - scvmm_server is defined
+    - scvmm_server | length > 0
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+      [bool]$vm | ConvertTo-Json -Compress
+  changed_when: false
+  ignore_unreachable: true
+  ignore_errors: true
+  register: deletevm_scvmm_search
+
+- name: Record whether SCVMM manages this VM
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - managed_by_scvmm is not defined
+    - deletevm_scvmm_search is defined
+    - deletevm_scvmm_search is not skipped
+    - deletevm_scvmm_search is succeeded
+  ansible.builtin.set_fact:
+    deletevm_managed_by_scvmm: "{{ (deletevm_scvmm_search.stdout | default('false') | trim | from_json) | bool }}"
+
+- name: Report management plane
+  when: deletevm_hypervisor_type == 'hyperv'
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' will be managed {{ 'via SCVMM' if deletevm_managed_by_scvmm
+      else 'directly via Hyper-V' }} for decommission/deletion.

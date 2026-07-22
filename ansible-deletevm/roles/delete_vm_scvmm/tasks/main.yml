@@ -1,0 +1,53 @@
+---
+# Powers off (gracefully, if running) and permanently deletes the VM via
+# SCVMM (Remove-SCVirtualMachine) instead of the native Hyper-V cmdlets -
+# used instead of delete_vm_hyperv whenever deletevm_managed_by_scvmm is
+# true. Unlike delete_vm_hyperv, this role does not separately track and
+# remove VHD/VHDX files: per Microsoft's own documentation,
+# Remove-SCVirtualMachine (called with no extra switches - see the
+# -Force note below) already "deletes the virtual machine record from
+# the VMM database, deletes all files associated with the virtual
+# machine, and removes the virtual machine from the host" on its own -
+# a different, more complete behavior than the lower-level, config-only
+# Remove-VM on the native Hyper-V path, which is why that role has its
+# own explicit disk cleanup step and this one doesn't need to duplicate it.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+      - vm_name is defined
+      - confirm_delete | bool
+
+- name: Power off and delete the VM via SCVMM
+  delegate_to: "{{ scvmm_server }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ vm_name }}' not found in SCVMM"
+      }
+
+      if ($vm.Status -ne 'PowerOff') {
+          Stop-SCVirtualMachine -VM $vm | Out-Null
+      }
+
+      # No -Force here: on Remove-SCVirtualMachine, -Force means the
+      # opposite of what it means on Remove-VM - it deletes only the
+      # VMM database record and leaves the actual VM/files behind,
+      # exactly what this role must NOT do. Confirmed against current
+      # Microsoft documentation, not assumed. Plain Remove-SCVirtualMachine
+      # (no extra switches) already deletes the VM, its files, and its
+      # database record - -Confirm defaults to $false, so this doesn't
+      # hang on an interactive prompt either.
+      Remove-SCVirtualMachine -VM $vm | Out-Null
+  register: delete_vm_result
+
+- name: Report the deletion
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' deleted via SCVMM ({{ scvmm_server }})."

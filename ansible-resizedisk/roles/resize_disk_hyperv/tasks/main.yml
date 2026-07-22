@@ -26,7 +26,7 @@
 
 - name: Grow the virtual hard disk to the requested size
   when: resizedisk_disk_grow_needed
-  delegate_to: "{{ resizedisk_hyperv_host }}"
+  delegate_to: "{{ resizedisk_hyperv_host | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

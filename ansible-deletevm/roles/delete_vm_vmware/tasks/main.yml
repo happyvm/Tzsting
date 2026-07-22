@@ -1,0 +1,44 @@
+---
+# Powers off (gracefully, if running) and permanently deletes the VM and
+# its disk files from the datastore. Does not require the VM to already
+# be off - that's handled here.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - confirm_delete | bool
+
+- name: Gracefully shut down the guest, if running
+  when: deletevm_vmware_search.instance.hw_power_status == 'poweredOn'
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: shutdown-guest
+    state_change_timeout: "{{ deletevm_poweroff_timeout_seconds }}"
+
+- name: Delete the VM and its disk files
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: absent
+    # force powers the VM off (hard) if it's still running for any reason
+    # at this point (e.g. the graceful shutdown above timed out) rather
+    # than refusing to delete - the graceful attempt above is still the
+    # primary path, this is only a fallback.
+    force: true
+  register: delete_vm_result
+
+- name: Report the deletion
+  ansible.builtin.debug:
+    msg: "'{{ vm_name }}' deleted from vCenter ({{ vcenter_hostname }}) along with its disk files."

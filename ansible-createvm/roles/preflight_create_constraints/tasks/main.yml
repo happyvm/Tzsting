@@ -1,0 +1,237 @@
+---
+# Validates every input for create_vm before anything is actually
+# created: hypervisor_type is one of the two supported values (there's
+# no auto-detection here - the target doesn't exist yet, so the caller
+# must say which platform), vm_name is free (not already in use
+# anywhere on that platform) and safe to interpolate into PowerShell,
+# sizing is within policy caps, and the Hyper-V path has SCVMM
+# configured (a hard requirement for this project - see README).
+
+- name: Assert hypervisor_type is supplied and valid
+  ansible.builtin.assert:
+    that:
+      - hypervisor_type is defined
+      - hypervisor_type in ['vmware', 'hyperv']
+    fail_msg: >-
+      hypervisor_type must be supplied as 'vmware' or 'hyperv' (e.g.
+      -e hypervisor_type=vmware) - there is no existing VM here to
+      auto-detect the platform from.
+
+- name: Assert vm_name is defined and safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+      - vm_name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      vm_name must be supplied (e.g. -e vm_name=WINSRV01), typically the
+      ServiceNow-generated CI name, and may only contain letters,
+      digits, spaces, dot, underscore and hyphen (1-80 chars). This
+      isn't a real naming restriction on VMware/Hyper-V - it's a safety
+      limit here, because vm_name is interpolated into single-quoted
+      PowerShell string literals on Hyper-V/SCVMM; a stray quote or
+      semicolon in it would otherwise be a command injection vector.
+
+- name: Assert template_name is defined
+  ansible.builtin.assert:
+    that:
+      - template_name is defined
+      - template_name | length > 0
+    fail_msg: "template_name must be supplied (e.g. -e template_name='Windows Server 2022 Template')."
+
+- name: Assert guest_os is valid
+  ansible.builtin.assert:
+    that:
+      - guest_os is defined
+      - guest_os in ['windows', 'linux']
+    fail_msg: "guest_os must be 'windows' or 'linux'."
+
+- name: Assert vcpu_count and memory_gb are within policy bounds
+  ansible.builtin.assert:
+    that:
+      - vcpu_count is defined
+      - vcpu_count | int > 0
+      - vcpu_count | int <= (createvm_max_vcpu_count | int)
+      - memory_gb is defined
+      - memory_gb | float > 0
+      - memory_gb | float <= (createvm_max_memory_gb | int)
+    fail_msg: >-
+      vcpu_count (1-{{ createvm_max_vcpu_count }}) and memory_gb
+      (up to {{ createvm_max_memory_gb }}GB) must both be supplied and
+      within the policy caps - raise them deliberately with
+      -e createvm_max_vcpu_count=... / -e createvm_max_memory_gb=... if
+      this is a legitimately large VM.
+
+- name: Assert disk_gb is within policy bounds, if given
+  when: disk_gb is defined
+  ansible.builtin.assert:
+    that:
+      - disk_gb | float >= 0
+      - disk_gb | float <= (createvm_max_disk_gb | int)
+    fail_msg: >-
+      disk_gb must be between 0 and {{ createvm_max_disk_gb }}GB (0/unset
+      leaves the template's own disk size as-is) - raise the cap
+      deliberately with -e createvm_max_disk_gb=... if needed.
+
+- name: Determine the computer name (defaults to vm_name)
+  ansible.builtin.set_fact:
+    computer_name: "{{ computer_name | default(vm_name) }}"
+
+- name: Assert the Windows computer name fits the NetBIOS 15-character limit
+  when: guest_os == 'windows'
+  ansible.builtin.assert:
+    that:
+      - computer_name | length <= 15
+    fail_msg: >-
+      computer_name '{{ computer_name }}' is {{ computer_name | length }}
+      characters - Windows computer names are capped at 15 characters
+      (the legacy NetBIOS limit, still enforced by sysprep). Supply a
+      shorter -e computer_name=... (vm_name itself can stay longer/more
+      descriptive; computer_name is what's actually set inside the
+      guest).
+
+- name: Assert domain-join credentials and workgroup aren't both/neither given
+  when: (domain_name | default('')) | length > 0
+  ansible.builtin.assert:
+    that:
+      - (workgroup_name | default('')) | length == 0
+      - (domain_admin_username | default('')) | length > 0
+      - (domain_admin_password | default('')) | length > 0
+    fail_msg: >-
+      domain_name and workgroup_name are mutually exclusive, and joining
+      a domain needs domain_admin_username/domain_admin_password
+      (vault-sourced) to actually perform the join.
+
+# --- VMware --------------------------------------------------------------
+
+- name: Assert VMware placement variables are defined
+  when: hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - vmware_datastore is defined
+      - vmware_datastore | length > 0
+      - network_name is defined
+      - network_name | length > 0
+      - (vmware_cluster is defined and vmware_cluster | length > 0) or (esxi_host is defined and esxi_host | length > 0)
+    fail_msg: >-
+      VMware VM creation needs vmware_datastore, network_name, and
+      either vmware_cluster or esxi_host (placement) to be supplied.
+
+- name: Refuse to create a VM whose name is already in use (VMware)
+  when: hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: createvm_vmware_existing_search
+  ignore_errors: true
+
+- name: Fail if a VM with this name already exists (VMware)
+  when:
+    - hypervisor_type == 'vmware'
+    - createvm_vmware_existing_search is succeeded
+  ansible.builtin.fail:
+    msg: >-
+      A VM named '{{ vm_name }}' already exists in vCenter
+      ({{ vcenter_hostname }}) - refusing to create a duplicate. Pick a
+      different vm_name, or use ansible-deletevm first if this is meant
+      to replace it.
+
+- name: Confirm the template exists (VMware)
+  when: hypervisor_type == 'vmware'
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ template_name }}"
+  register: createvm_vmware_template_search
+  ignore_errors: true
+
+- name: Fail if the template doesn't exist or isn't a template (VMware)
+  when: hypervisor_type == 'vmware'
+  ansible.builtin.assert:
+    that:
+      - createvm_vmware_template_search is succeeded
+      - createvm_vmware_template_search.instance.hw_is_template
+    fail_msg: >-
+      '{{ template_name }}' was not found in vCenter, or isn't marked as
+      a template - check the name and that it's actually a VM template,
+      not a regular VM.
+
+# --- Hyper-V/SCVMM ---------------------------------------------------------
+
+- name: Refuse Hyper-V creation without SCVMM configured
+  when: hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - scvmm_server is defined
+      - scvmm_server | length > 0
+    fail_msg: >-
+      hypervisor_type=hyperv requires scvmm_server to be configured (see
+      group_vars/all.yml) - native Hyper-V has no template +
+      sysprep/answer-file customization API of its own, only SCVMM does.
+      This is a hard platform wall for this project, not a missing
+      feature - see README.
+
+- name: Assert SCVMM placement variables are defined
+  when: hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - vm_host is defined
+      - vm_host | length > 0
+      - vm_path is defined
+      - vm_path | length > 0
+    fail_msg: "Hyper-V/SCVMM VM creation needs vm_host and vm_path to be supplied."
+
+- name: Refuse to create a VM whose name is already in use (SCVMM)
+  when: hypervisor_type == 'hyperv'
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+      [bool]$vm | ConvertTo-Json -Compress
+  changed_when: false
+  register: createvm_scvmm_existing_search
+
+- name: Fail if a VM with this name already exists (SCVMM)
+  when:
+    - hypervisor_type == 'hyperv'
+    - (createvm_scvmm_existing_search.stdout | trim | from_json) | bool
+  ansible.builtin.fail:
+    msg: >-
+      A VM named '{{ vm_name }}' already exists in SCVMM
+      ({{ scvmm_server }}) - refusing to create a duplicate. Pick a
+      different vm_name, or use ansible-deletevm first if this is meant
+      to replace it.
+
+- name: Confirm the template exists (SCVMM)
+  when: hypervisor_type == 'hyperv'
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+      $template = Get-SCVMTemplate -Name '{{ template_name }}' -ErrorAction SilentlyContinue
+      [bool]$template | ConvertTo-Json -Compress
+  changed_when: false
+  register: createvm_scvmm_template_search
+
+- name: Fail if the template doesn't exist (SCVMM)
+  when: hypervisor_type == 'hyperv'
+  ansible.builtin.assert:
+    that:
+      - (createvm_scvmm_template_search.stdout | trim | from_json) | bool
+    fail_msg: >-
+      '{{ template_name }}' was not found as a VM template in SCVMM
+      ({{ scvmm_server }}) - check the name (Get-SCVMTemplate).

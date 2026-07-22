@@ -1,0 +1,110 @@
+---
+# Creates a new VM by cloning a template (VMware or Hyper-V/SCVMM),
+# sizing, placing and customizing it (sysprep for Windows, cloud-init
+# guestinfo for Linux on VMware / SSH key on SCVMM). Designed to be
+# triggered from a ServiceNow workflow (e.g. via an AWX/Tower job
+# template) - there is no static per-VM inventory: everything about the
+# new VM is passed as extra-vars, resolved from the CMDB CI record /
+# request.
+#
+# Unlike ansible-resizedisk/ansible-snapshot/ansible-resizecompute,
+# there is no existing VM to auto-detect a hypervisor from -
+# hypervisor_type is always required. On Hyper-V, SCVMM is a hard
+# requirement (native Hyper-V has no template + customization API of
+# its own) - see README.
+#
+# Required extra-vars:
+#   hypervisor_type    vmware|hyperv - no auto-detection is possible here
+#   vm_name            name for the new VM/CI
+#   template_name      name of the VM template to clone
+#   guest_os           windows|linux
+#   vcpu_count         vCPU count
+#   memory_gb          memory size in GB
+#
+# VMware placement (required when hypervisor_type=vmware):
+#   vmware_datastore, network_name, and either vmware_cluster or esxi_host
+#
+# Hyper-V/SCVMM placement (required when hypervisor_type=hyperv):
+#   vm_host            SCVMM-managed Hyper-V host to place the VM on
+#   vm_path            storage path for the VM's files
+#
+# Optional extra-vars:
+#   computer_name       in-guest computer name (default: vm_name,
+#                        truncated logic not applied - must fit the
+#                        Windows 15-char NetBIOS limit itself if guest_os=windows)
+#   disk_gb             VMware only - grow the primary disk beyond the
+#                        template's default size (SCVMM: not supported yet)
+#   vcpu_cores_per_socket   VMware only - default 1
+#   domain_name / workgroup_name   mutually exclusive
+#   domain_admin_username / domain_admin_password   required with domain_name
+#   local_admin_password   Windows: sysprep local admin password.
+#                           SCVMM: also accepted for Linux templates that
+#                           support it, ignored otherwise.
+#   product_key         Windows only
+#   vm_timezone          numeric timezone code (VMware and SCVMM both use
+#                        a numeric code, not an IANA tz string - consult
+#                        each platform's own reference table)
+#   ssh_public_key       Linux, SCVMM path only
+#   network_type         VMware only - dhcp (default) or static
+#   ip_address / netmask / gateway / dns_servers   VMware only, static only
+#   cloud_init_userdata / cloud_init_metadata   VMware + guest_os=linux only
+#   wait_for_ip / wait_for_ip_timeout_seconds   VMware only (default true / 600)
+#   createvm_max_vcpu_count / createvm_max_memory_gb / createvm_max_disk_gb
+#     policy caps (see group_vars/all.yml)
+#
+# Usage:
+#   ansible-playbook playbooks/create_vm.yml \
+#     -e hypervisor_type=vmware -e vm_name=WINSRV02 \
+#     -e template_name='Windows Server 2022 Template' -e guest_os=windows \
+#     -e vcpu_count=4 -e memory_gb=16 \
+#     -e vmware_cluster=Prod-Cluster01 -e vmware_datastore=datastore-ssd \
+#     -e network_name=VLAN-Production -e local_admin_password=*** \
+#     --vault-password-file .vault_pass
+
+- name: Create a new VM from a template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Acquire a per-vm_name lock (prevents two concurrent runs creating the same VM)
+      ansible.builtin.include_role:
+        name: create_vm_lock
+      vars:
+        createvm_lock_action: acquire
+
+    - name: Create the VM, releasing the lock afterwards either way
+      block:
+        - name: Validate every input before creating anything
+          ansible.builtin.include_role:
+            name: preflight_create_constraints
+
+        - name: Create the VM on VMware
+          ansible.builtin.include_role:
+            name: create_vm_vmware
+          when: hypervisor_type == 'vmware'
+
+        - name: Create the VM on Hyper-V via SCVMM
+          ansible.builtin.include_role:
+            name: create_vm_scvmm
+          when: hypervisor_type == 'hyperv'
+
+        - name: Expose a machine-readable summary (AWX/Tower job artifact, readable by ServiceNow)
+          ansible.builtin.set_stats:
+            data:
+              createvm_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ hypervisor_type }}"
+                template_name: "{{ template_name }}"
+                guest_os: "{{ guest_os }}"
+                vcpu_count: "{{ vcpu_count }}"
+                memory_gb: "{{ memory_gb }}"
+                computer_name: "{{ computer_name }}"
+                ip_address: "{{ create_vm_result.instance.ipv4 | default('') if hypervisor_type == 'vmware' else '' }}"
+            aggregate: false
+      always:
+        - name: Release the per-vm_name lock (runs on success or failure)
+          ansible.builtin.include_role:
+            name: create_vm_lock
+          vars:
+            createvm_lock_action: release

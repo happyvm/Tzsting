@@ -1,0 +1,68 @@
+---
+# Copy this file to hosts.yml and adapt it to your environment.
+#
+# There is deliberately no per-VM inventory here: the target VM and the
+# decommission/deletion details are supplied as extra-vars at run time
+# (typically by a ServiceNow workflow calling an AWX/Tower job template -
+# see playbooks/decommission_stop.yml / delete_vm.yml for the full list
+# of vars).
+#
+# This inventory only needs to describe the *hypervisor estate* itself:
+# the fleet of Hyper-V hosts the playbook should search when looking for
+# a given VM by name. The vCenter connection is a single set of
+# credentials/endpoint, defined in group_vars/all.yml instead.
+
+all:
+  children:
+
+    hyperv_hypervisor:
+      hosts:
+        hyperv-host01:
+          ansible_host: hyperv-host01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+        hyperv-host02:
+          ansible_host: hyperv-host02.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+        # Cluster nodes work the same way - just list every node. A VM is
+        # found on whichever node currently owns it (Get-VM only shows
+        # VMs actually running on the host it's queried against).
+        hyperv-clu01-node01:
+          ansible_host: hyperv-clu01-node01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+        hyperv-clu01-node02:
+          ansible_host: hyperv-clu01-node02.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+    # Optional: only needed if scvmm_server is set in group_vars/all.yml
+    # to enable SCVMM-managed-VM auto-detection (routes decommission/
+    # deletion through SCVMM cmdlets instead of the native Hyper-V ones).
+    # The inventory hostname here (scvmm01) is what scvmm_server must
+    # reference.
+    scvmm_management:
+      hosts:
+        scvmm01:
+          ansible_host: scvmm01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_scvmm_username }}"
+          ansible_password: "{{ vault_scvmm_password }}"

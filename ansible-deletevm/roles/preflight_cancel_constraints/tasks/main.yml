@@ -1,0 +1,89 @@
+---
+# Reads whichever field decommission_stop wrote its marker into
+# (VMware annotation / Hyper-V Notes / SCVMM Description), parses it,
+# and fails clearly if there's no active decommission to cancel - this
+# is the guardrail against rolling back the wrong VM (e.g. a vm_name
+# typo that happens to match a real, but never-decommissioned, VM).
+#
+# Exposes: deletevm_cancel_raw_field (the field's full current value,
+# reused by the action roles to strip the marker while preserving any
+# other content), deletevm_cancel_date/ticket/was_running/reason (the
+# parsed marker fields).
+
+- name: Read the current annotation (VMware)
+  when: deletevm_hypervisor_type == 'vmware'
+  ansible.builtin.set_fact:
+    deletevm_cancel_raw_field: "{{ deletevm_vmware_search.instance.annotation | default('') }}"
+
+- name: Read the current Notes field (Hyper-V, not SCVMM-managed)
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - not deletevm_managed_by_scvmm
+  delegate_to: "{{ deletevm_hyperv_host | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      (Get-VM -Name '{{ vm_name }}').Notes
+  changed_when: false
+  register: deletevm_cancel_hyperv_notes
+
+- name: Record the current Notes field (Hyper-V, not SCVMM-managed)
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - not deletevm_managed_by_scvmm
+  ansible.builtin.set_fact:
+    deletevm_cancel_raw_field: "{{ deletevm_cancel_hyperv_notes.stdout | default('') | trim }}"
+
+- name: Read the current Description field (SCVMM-managed)
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_managed_by_scvmm
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+      $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+      if (-not $vm) { throw "VM '{{ vm_name }}' not found in SCVMM" }
+      $vm.Description
+  changed_when: false
+  register: deletevm_cancel_scvmm_description
+
+- name: Record the current Description field (SCVMM-managed)
+  when:
+    - deletevm_hypervisor_type == 'hyperv'
+    - deletevm_managed_by_scvmm
+  ansible.builtin.set_fact:
+    deletevm_cancel_raw_field: "{{ deletevm_cancel_scvmm_description.stdout | default('') | trim }}"
+
+- name: Parse the decommission marker, if any
+  ansible.builtin.set_fact:
+    deletevm_cancel_marker: "{{ deletevm_cancel_raw_field
+                                 | regex_search('DECOMMISSION_SCHEDULED:([^:]+):([^:]+):([^:]+):(.*)', '\\1', '\\2', '\\3', '\\4') }}"
+
+- name: Refuse to cancel - no active decommission found for this VM
+  ansible.builtin.assert:
+    that:
+      - deletevm_cancel_marker is not none
+    fail_msg: >-
+      '{{ vm_name }}' has no active DECOMMISSION_SCHEDULED marker - it
+      was never marked by decommission_stop.yml (or the marker was
+      already removed by a prior cancel/delete). Refusing to "roll back"
+      a decommission that isn't in progress - check vm_name.
+
+- name: Record the parsed marker fields
+  ansible.builtin.set_fact:
+    deletevm_cancel_date: "{{ deletevm_cancel_marker[0] }}"
+    deletevm_cancel_ticket: "{{ deletevm_cancel_marker[1] }}"
+    deletevm_cancel_was_running: "{{ deletevm_cancel_marker[2] }}"
+    deletevm_cancel_reason: "{{ deletevm_cancel_marker[3] }}"
+
+- name: Report what's about to be cancelled
+  ansible.builtin.debug:
+    msg: >-
+      Cancelling decommission of '{{ vm_name }}' (was scheduled for
+      {{ deletevm_cancel_date }}, ticket {{ deletevm_cancel_ticket }}).
+      {{ 'Will power it back on (it was running before decommission_stop).'
+         if deletevm_cancel_was_running | bool
+         else 'Will leave it powered off (it was already off before decommission_stop).' }}

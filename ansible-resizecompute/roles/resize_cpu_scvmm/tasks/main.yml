@@ -17,7 +17,7 @@
 
 - name: Power-cycle and apply the vCPU change via SCVMM
   when: compute_cpu_grow or compute_cpu_shrink
-  delegate_to: "{{ scvmm_server }}"
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

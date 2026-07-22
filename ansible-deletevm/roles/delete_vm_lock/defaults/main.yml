@@ -1,0 +1,6 @@
+---
+# How long a lock is honored before it's considered abandoned by a
+# crashed run and can be broken by a new one. A graceful shutdown plus
+# removal can take a few minutes on a slow host - 30 minutes
+# comfortably covers that with margin.
+deletevm_lock_timeout_seconds: 1800

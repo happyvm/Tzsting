@@ -1,0 +1,39 @@
+---
+# Environment-wide defaults. Override per-environment (e.g. group_vars/all.yml
+# per inventory, or -e on the CLI / AWX survey) as needed. Secrets
+# (vcenter_password, vault_* below) belong in ansible-vault or the AWX
+# credential store, never committed in clear text.
+
+# --- Safety net -------------------------------------------------------------
+# Refuse a clustered (highly-available) Hyper-V VM by default - both
+# decommission_stop and delete_vm power off (and delete_vm additionally
+# removes) the VM, and it can fail over mid-operation. Set true per-run
+# (-e deletevm_allow_clustered_vm=true) once an operator has coordinated
+# with the cluster.
+deletevm_allow_clustered_vm: false
+
+# How long to wait for a graceful shutdown to actually reach a stopped
+# state before giving up.
+deletevm_poweroff_timeout_seconds: 300
+
+# --- vCenter connection (single vCenter managing the VMware estate) --------
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false
+
+# --- SCVMM (optional) -------------------------------------------------------
+# Set scvmm_server to an inventory_hostname in the scvmm_management group
+# (see inventory/hosts.yml.example) to enable auto-detection of
+# SCVMM-managed Hyper-V VMs - decommission/deletion then route through
+# SCVMM cmdlets instead of the native Hyper-V ones, so SCVMM's database
+# doesn't drift out of sync. Unlike ansible-createvm, this is optional
+# here (not a hard requirement) - stopping and removing a VM are both
+# things native Hyper-V can do perfectly well on its own; SCVMM is only
+# about keeping its own inventory in sync, not about capability. Leave
+# empty ("") to disable detection entirely (the native Hyper-V cmdlets
+# are always used).
+scvmm_server: ""
+scvmm_username: "{{ vault_scvmm_username | default('') }}"
+scvmm_password: "{{ vault_scvmm_password | default('') }}"

@@ -1,0 +1,5 @@
+---
+# When ServiceNow already knows the CI class (cmdb_ci_vmware_instance vs.
+# cmdb_ci_hyper_v_instance, for example) it can pass hypervisor_type
+# directly as an extra-var and skip the search entirely.
+hypervisor_type: ""

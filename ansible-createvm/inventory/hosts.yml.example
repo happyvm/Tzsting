@@ -1,0 +1,49 @@
+---
+# Copy this file to hosts.yml and adapt it to your environment.
+#
+# There is deliberately no per-VM inventory here: the new VM's
+# attributes are supplied as extra-vars at run time (typically by a
+# ServiceNow workflow calling an AWX/Tower job template - see
+# playbooks/create_vm.yml for the full list of vars).
+#
+# Unlike ansible-resizedisk/ansible-snapshot/ansible-resizecompute, this
+# project never auto-detects a hypervisor by searching an existing VM -
+# there is no existing VM yet. hypervisor_type is always required, and
+# on Hyper-V the target host (vm_host) must be an inventory_hostname
+# listed here so delegate_to can reach it directly.
+
+all:
+  children:
+
+    hyperv_hypervisor:
+      hosts:
+        hyperv-host01:
+          ansible_host: hyperv-host01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+        hyperv-host02:
+          ansible_host: hyperv-host02.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_hyperv_username }}"
+          ansible_password: "{{ vault_hyperv_password }}"
+
+    # Required for this project - see README ("Hyper-V requires SCVMM"):
+    # native Hyper-V has no template + sysprep/answer-file customization
+    # API, so vm_host above is only used for direct delegate_to on the
+    # native power-management paths of the other three projects, not for
+    # VM creation here.
+    scvmm_management:
+      hosts:
+        scvmm01:
+          ansible_host: scvmm01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_scvmm_username }}"
+          ansible_password: "{{ vault_scvmm_password }}"

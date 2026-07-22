@@ -1,0 +1,70 @@
+---
+# Gracefully stops the VM (if running) and records a decommission marker
+# in its annotation (preserving any existing content) - does not delete
+# anything. Re-running this simply updates the marker (e.g. a revised
+# deletion date or ticket), including on a VM that's already stopped.
+#
+# Marker format: DECOMMISSION_SCHEDULED:<date>:<servicenow_ticket>:<was_running>:<reason>
+# <was_running> records the VM's power state *before* this run touches
+# it, so decommission_cancel.yml can restore exactly that state later
+# rather than unconditionally powering the VM back on.
+
+- name: Assert required variables/facts are defined
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_delete_scheduled_at is defined
+      - servicenow_ticket is defined
+      - deletevm_was_running is defined
+
+- name: Gracefully shut down the guest, if running
+  when: deletevm_vmware_search.instance.hw_power_status == 'poweredOn'
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    state: shutdown-guest
+    state_change_timeout: "{{ deletevm_poweroff_timeout_seconds }}"
+
+- name: Read the current annotation
+  delegate_to: localhost
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: decommission_vmware_read
+
+- name: Write the decommission marker (preserving other annotation content)
+  delegate_to: localhost
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+    annotation: >-
+      {{
+        (
+          (decommission_vmware_read.instance.annotation | default(''))
+          | regex_replace('\n?DECOMMISSION_SCHEDULED:\S+:.*', '')
+        )
+        ~ '\nDECOMMISSION_SCHEDULED:' ~ vm_delete_scheduled_at ~ ':' ~ servicenow_ticket ~ ':' ~ deletevm_was_running ~ ':' ~ (decommission_reason | default('no reason given'))
+      }}
+  register: decommission_stop_result
+
+- name: Report the decommission
+  ansible.builtin.debug:
+    msg: >-
+      '{{ vm_name }}' stopped and marked for deletion on
+      {{ vm_delete_scheduled_at }} (ticket {{ servicenow_ticket }}). Run
+      delete_vm.yml against the same vm_name when that window opens to
+      actually remove it, or decommission_cancel.yml to bring it back
+      into service instead.

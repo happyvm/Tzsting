@@ -1,0 +1,18 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `deletevm_` prefix
+  # instead of a per-role prefix on every fact/register - most of the
+  # state here is intentionally read across several roles that are
+  # included separately in the same play, so a per-role prefix would be
+  # actively misleading about where a variable is meant to be read from.
+  - var-naming[no-role-prefix]
+  # The ignore_errors uses in this project are deliberate best-effort
+  # cleanup/release steps where any failure should be silently
+  # swallowed, not reinterpreted via failed_when.
+  - ignore-errors
+
+exclude_paths:
+  - .extracted/
+  - inventory/hosts.yml
