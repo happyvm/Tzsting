@@ -15,7 +15,7 @@
       - snapshot_name is defined
 
 - name: Create the checkpoint via SCVMM
-  delegate_to: "{{ scvmm_server }}"
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

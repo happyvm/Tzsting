@@ -21,7 +21,7 @@
 
 - name: Power-cycle and apply the memory change via SCVMM
   when: compute_ram_grow or compute_ram_shrink
-  delegate_to: "{{ scvmm_server }}"
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

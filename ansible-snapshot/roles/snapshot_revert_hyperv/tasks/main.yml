@@ -7,7 +7,7 @@
       - snapshot_revert_target is defined
 
 - name: Revert the Hyper-V VM to the checkpoint
-  delegate_to: "{{ snapshot_hyperv_host }}"
+  delegate_to: "{{ snapshot_hyperv_host | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

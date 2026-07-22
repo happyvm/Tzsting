@@ -131,7 +131,7 @@
     - managed_by_scvmm is not defined
     - scvmm_server is defined
     - scvmm_server | length > 0
-  delegate_to: "{{ scvmm_server }}"
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

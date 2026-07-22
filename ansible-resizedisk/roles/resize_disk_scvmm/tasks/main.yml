@@ -32,7 +32,7 @@
 
 - name: Grow the virtual disk via SCVMM
   when: resizedisk_disk_grow_needed
-  delegate_to: "{{ scvmm_server }}"
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"

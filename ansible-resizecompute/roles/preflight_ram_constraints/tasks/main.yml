@@ -96,7 +96,7 @@
 
 - name: Gather the current memory size (Hyper-V)
   when: compute_hypervisor_type == 'hyperv'
-  delegate_to: "{{ compute_hyperv_host }}"
+  delegate_to: "{{ compute_hyperv_host | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"
@@ -133,7 +133,7 @@
   when:
     - compute_hypervisor_type == 'hyperv'
     - compute_ram_grow or compute_ram_shrink
-  delegate_to: "{{ compute_hyperv_host }}"
+  delegate_to: "{{ compute_hyperv_host | default('localhost', true) }}"
   ansible.windows.win_shell:
     cmd: |
       $ErrorActionPreference = "Stop"
