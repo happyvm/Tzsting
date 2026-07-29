@@ -9,6 +9,10 @@ Les détails techniques propres à une opération restent documentés dans le
 `README.md` de chaque répertoire : ce guide ne les remplace pas, il les relie
 et fournit une vue d'ensemble cohérente.
 
+L'analyse des phases du cycle de vie **non couvertes** (matériel, OS,
+hyperviseurs) et les options à prévoir sont regroupées dans
+[`CYCLE-DE-VIE-GAPS.md`](CYCLE-DE-VIE-GAPS.md).
+
 ## Sommaire
 
 - [Catalogue des projets](#catalogue-des-projets)
