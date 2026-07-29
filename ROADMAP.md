@@ -18,6 +18,7 @@ concevoir ou développer.
 | Hyperviseurs | [`HYPERVISOR-MAINTENANCE-ROADMAP.md`](HYPERVISOR-MAINTENANCE-ROADMAP.md) | Maintenance VMware/Hyper-V, update VCSA, ESXi et nœuds Hyper-V |
 | CMDB / réseau invité | [`SERVICENOW-CMDB-ROADMAP.md`](SERVICENOW-CMDB-ROADMAP.md) | Synchronisation des interfaces, MAC et IP depuis VMware Tools ou les Integration Services vers ServiceNow IRE |
 | CMDB / réconciliation | [`SERVICENOW-RECONCILIATION-ROADMAP.md`](SERVICENOW-RECONCILIATION-ROADMAP.md) | Classification VM/physique, audits d'orphelins Pure/AD/WSUS/SCCM/Trellix/Trend/Centreon et rapports mail |
+| CMDB / Satellite | [`SERVICENOW-SATELLITE-AUDIT-ROADMAP.md`](SERVICENOW-SATELLITE-AUDIT-ROADMAP.md) | Détection des CI retirés encore enregistrés dans Satellite et des souscriptions/licences potentiellement consommées |
 
 ## Chaîne cible de création d'un serveur
 
@@ -65,12 +66,14 @@ concevoir ou développer.
 1. extraction des CI actifs pour vérifier la classification physique/virtuelle ;
 2. extraction des CI retirés hors période de grâce ;
 3. comparaison en lecture seule avec Pure Storage, AD, WSUS, SCCM, Trellix,
-   Trend et Centreon ;
+   Trend, Centreon et Red Hat Satellite ;
 4. distinction des objets encore actifs, désactivés, stale, ambigus ou absents ;
-5. agrégation par CI et par outil ;
-6. génération d'un rapport HTML/CSV/JSON ;
-7. envoi par mail aux destinataires allowlistés ;
-8. correction CMDB éventuelle uniquement via un workflow approuvé et IRE.
+5. qualification des souscriptions Satellite encore attachées ou potentiellement
+   consommées sous Simple Content Access ;
+6. agrégation par CI et par outil ;
+7. génération d'un rapport HTML/CSV/JSON ;
+8. envoi par mail aux destinataires allowlistés ;
+9. correction CMDB éventuelle uniquement via un workflow approuvé et IRE.
 
 ## Principes communs à toutes les roadmaps
 
