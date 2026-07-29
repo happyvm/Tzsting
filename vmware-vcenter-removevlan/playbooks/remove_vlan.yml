@@ -1,0 +1,37 @@
+---
+# Removes a VLAN from vCenter: optionally removes a VM's network adapter
+# that used it, then removes the Distributed vSwitch portgroup. Mirrors
+# ansible-synergy-vlan-remove's order (detach from profile, then remove
+# the network) - vCenter has no separate "network set" layer to detach
+# from first, a distributed portgroup is used directly by VMs.
+#
+# Usage:
+#   ansible-playbook playbooks/remove_vlan.yml \
+#     -e confirm_vlan_remove=true --vault-password-file .vault_pass
+
+- name: Remove a VLAN from vCenter
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate destructive request
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Remove the VLAN from a VM's network adapter
+      ansible.builtin.include_role:
+        name: vm_network
+
+    - name: Remove the Distributed vSwitch portgroup (VLAN)
+      ansible.builtin.include_role:
+        name: dvs_portgroup
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          vcenter_vlan_remove_summary:
+            vlan: "{{ vcenter_vlan_name }}"
+            switch: "{{ vcenter_switch_name }}"
+            vm_name: "{{ vcenter_vm_name }}"
+        aggregate: false

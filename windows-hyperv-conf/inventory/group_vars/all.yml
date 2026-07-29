@@ -1,0 +1,30 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+hyperv_conf_hostname: hyperv01.example.local
+hyperv_conf_username: "{{ vault_hyperv_conf_username }}"
+hyperv_conf_password: "{{ vault_hyperv_conf_password }}"
+hyperv_conf_winrm_port: 5986
+hyperv_conf_winrm_transport: ntlm
+hyperv_conf_validate_certs: true
+
+# Disabled by default - joining a Hyper-V host to the wrong domain, or with a
+# stale/incorrect payload, is not something to run unattended without review.
+hyperv_conf_ad_enabled: false
+hyperv_conf_ad:
+  domain: example.local
+  username: "{{ vault_hyperv_conf_ad_username }}"
+  password: "{{ vault_hyperv_conf_ad_password }}"
+  ou: "OU=HyperV,OU=Servers,DC=example,DC=local"
+
+hyperv_conf_local_admin:
+  name: svc-ansible
+  password: "{{ vault_hyperv_conf_local_admin_password }}"
+
+hyperv_conf_ntp_servers:
+  - ntp01.example.local
+  - ntp02.example.local
+
+# Windows time zone ID, NOT an IANA name (e.g. "Romance Standard Time" is the
+# Windows ID for the same zone as IANA's Europe/Paris) - see `tzutil /l` on
+# any Windows host for the full list of valid values.
+hyperv_conf_timezone: "Romance Standard Time"

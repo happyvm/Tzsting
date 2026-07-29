@@ -1,0 +1,40 @@
+---
+- name: Detach the VM's network adapter from the VM Network
+  when: scvmm_vm_name | default('') | length > 0
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vm = Get-SCVirtualMachine -Name '{{ scvmm_vm_name }}'
+      if (-not $vm) {
+          throw "VM '{{ scvmm_vm_name }}' not found in SCVMM"
+      }
+
+      $adapters = @(Get-SCVirtualNetworkAdapter -VM $vm)
+      {% if scvmm_vm_network_adapter_name | default('') | length > 0 %}
+      $adapter = $adapters | Where-Object { $_.Name -eq '{{ scvmm_vm_network_adapter_name }}' } | Select-Object -First 1
+      {% else %}
+      $adapter = $adapters | Where-Object { $_.VMNetwork -and $_.VMNetwork.Name -eq '{{ scvmm_vm_network_name }}' } | Select-Object -First 1
+      {% endif %}
+
+      if ($adapter -and $adapter.VMNetwork -and $adapter.VMNetwork.Name -eq '{{ scvmm_vm_network_name }}') {
+          Set-SCVirtualNetworkAdapter -VirtualNetworkAdapter $adapter -NoConnection | Out-Null
+          [PSCustomObject]@{ Changed = $true } | ConvertTo-Json -Compress
+      } else {
+          [PSCustomObject]@{ Changed = $false } | ConvertTo-Json -Compress
+      }
+  register: vm_network_adapter_result
+  changed_when: (vm_network_adapter_result.stdout | trim | from_json).Changed
+
+- name: Report the network adapter detachment
+  when: scvmm_vm_name | default('') | length > 0
+  vars:
+    vm_network_adapter_parsed: "{{ vm_network_adapter_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      '{{ scvmm_vm_name }}' network adapter
+      {{ 'detached from' if vm_network_adapter_parsed.Changed else 'was not attached to' }}
+      VM Network '{{ scvmm_vm_network_name }}'.

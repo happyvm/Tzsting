@@ -1,0 +1,24 @@
+---
+# Copy this file to hosts.yml and adapt it to your environment.
+#
+# There is deliberately no per-VLAN inventory here: the VLAN/network
+# details are supplied as extra-vars at run time - see
+# playbooks/add_vlan.yml for the full list of vars.
+#
+# This inventory only needs to describe the SCVMM management server itself
+# (scvmm_server in group_vars/all.yml must reference an inventory_hostname
+# declared here) - same convention as ansible-createvm/ansible-resizecompute/
+# ansible-resizedisk's scvmm_management group, so an existing inventory for
+# those projects can be reused as-is.
+
+all:
+  children:
+    scvmm_management:
+      hosts:
+        scvmm01:
+          ansible_host: scvmm01.example.local
+          ansible_connection: winrm
+          ansible_winrm_transport: kerberos
+          ansible_port: 5986
+          ansible_user: "{{ vault_scvmm_username }}"
+          ansible_password: "{{ vault_scvmm_password }}"

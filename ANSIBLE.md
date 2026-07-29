@@ -180,6 +180,57 @@ obligatoire des endpoints correspondant à sa version logicielle.
 
 Documentation : [`ansible-hpe-storeonce-conf/README.md`](ansible-hpe-storeonce-conf/README.md).
 
+### `windows-hyperv-conf` / `windows-scvmm-conf`
+
+Configuration des services d’un hôte Windows Server Hyper-V natif, ou du
+serveur de management SCVMM lui-même (jonction Active Directory optionnelle,
+compte local d’automatisation, NTP, timezone), directement via WinRM/PowerShell
+plutôt qu’une API REST. Aucun redémarrage n’est déclenché automatiquement par
+la jonction AD.
+
+Documentation : [`windows-hyperv-conf/README.md`](windows-hyperv-conf/README.md)
+et [`windows-scvmm-conf/README.md`](windows-scvmm-conf/README.md).
+
+### `windows-scvmm-addvlan` / `windows-scvmm-removevlan`
+
+Ajout ou suppression ordonnée d’un VLAN dans le modèle réseau SCVMM (réseau
+logique/site réseau → VM Network → carte réseau de VM), via le module
+PowerShell `virtualmachinemanager` déjà utilisé par `ansible-createvm`/
+`ansible-resizecompute`/`ansible-resizedisk` pour leurs propres opérations
+SCVMM. Réutilise l’inventaire `scvmm_management` de ces projets.
+
+Documentation : [`windows-scvmm-addvlan/README.md`](windows-scvmm-addvlan/README.md)
+et [`windows-scvmm-removevlan/README.md`](windows-scvmm-removevlan/README.md).
+
+### `vmware-esxi-conf`
+
+Configuration d’un hôte ESXi autonome (sans vCenter) : NTP, syslog distant,
+jonction Active Directory optionnelle et compte local d’automatisation, via
+les modules `community.vmware` connectés directement à l’API de gestion de
+l’hôte.
+
+Documentation : [`vmware-esxi-conf/README.md`](vmware-esxi-conf/README.md).
+
+### `vmware-vcenter-conf`
+
+Configuration de l’appliance vCenter Server (VCSA) : NTP, timezone et rotation
+du mot de passe administrateur local via l’API VAMI (aucune collection ne la
+couvre), niveau de journalisation du serveur vCenter via le module réel
+`community.vmware.vmware_vcenter_settings`.
+
+Documentation : [`vmware-vcenter-conf/README.md`](vmware-vcenter-conf/README.md).
+
+### `vmware-vcenter-addvlan` / `vmware-vcenter-removevlan`
+
+Ajout ou suppression ordonnée d’un VLAN dans vCenter sous forme de portgroup
+de Distributed vSwitch, avec rattachement/retrait optionnel de la carte
+réseau d’une VM. Réutilise les mêmes variables de connexion vCenter
+(`vcenter_hostname`/`username`/`password`, `vmware_validate_certs`) que
+`ansible-createvm`/`ansible-resizecompute`/etc.
+
+Documentation : [`vmware-vcenter-addvlan/README.md`](vmware-vcenter-addvlan/README.md)
+et [`vmware-vcenter-removevlan/README.md`](vmware-vcenter-removevlan/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -199,6 +250,14 @@ Documentation : [`ansible-hpe-storeonce-conf/README.md`](ansible-hpe-storeonce-c
 | `ansible-synergy-get` | OneView/Synergy | — | — | API | Non |
 | `ansible-quantum-dxi-conf` | Quantum DXi | — | — | API | Configuration |
 | `ansible-hpe-storeonce-conf` | HPE StoreOnce | — | — | API | Configuration |
+| `windows-hyperv-conf` | — | Oui | — | WinRM | Configuration |
+| `windows-scvmm-conf` | — | — | Oui | WinRM | Configuration |
+| `windows-scvmm-addvlan` | — | — | Oui | WinRM | Réseau |
+| `windows-scvmm-removevlan` | — | — | Oui | WinRM | Oui |
+| `vmware-esxi-conf` | ESXi (autonome) | — | — | API | Configuration |
+| `vmware-vcenter-conf` | vCenter | — | — | API/VAMI | Configuration |
+| `vmware-vcenter-addvlan` | vCenter | — | — | API | Réseau |
+| `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

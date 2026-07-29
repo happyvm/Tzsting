@@ -1,0 +1,25 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+# Same variable names as ansible-createvm/ansible-resizecompute/
+# ansible-resizedisk/etc, so an existing vCenter credential set can be
+# reused as-is.
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vmware_validate_certs: false
+
+vcenter_vlan:
+  name: VLAN123-APP
+  vlan_id: 123
+  switch_name: dvSwitch0
+  port_binding: static
+  num_ports: 8
+  description: "Application VLAN 123"
+
+# Optional: if set, attach this VM's network adapter to the new portgroup.
+# vcenter_vm_network_adapter_label must then also be set (e.g. "Network
+# adapter 1") - required so an existing NIC is reconfigured instead of a
+# new one being added (see community.vmware.vmware_guest_network: without
+# a label or mac_address to match, state=present always creates a NIC).
+vcenter_vm_name: ""
+vcenter_vm_network_adapter_label: ""

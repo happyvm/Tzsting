@@ -1,0 +1,9 @@
+---
+collections:
+  - name: ansible.windows
+    version: ">=2.0.0,<4.0.0"
+
+# No dedicated collection covers AD domain join, NTP client configuration
+# or SCVMM administration on plain Windows Server (only win_user and
+# win_timezone are real modules here) - see roles/ad and roles/ntp for the
+# raw PowerShell fallback and why.

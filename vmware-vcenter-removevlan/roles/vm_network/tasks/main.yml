@@ -1,0 +1,43 @@
+---
+# community.vmware.vmware_guest_network requires a mac_address (not a
+# label) to remove a network adapter (state=absent) - so the label is
+# resolved to a mac_address first via gather_network_info.
+- name: Look up the VM's current network adapters
+  when: vcenter_vm_name | default('') | length > 0
+  delegate_to: localhost
+  community.vmware.vmware_guest_network:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vcenter_vm_name }}"
+    gather_network_info: true
+  register: vm_network_info
+
+- name: Resolve the target adapter's MAC address
+  when: vcenter_vm_name | default('') | length > 0
+  ansible.builtin.set_fact:
+    vm_network_target_mac: "{{ (vm_network_info.network_data.values()
+                                 | selectattr('label', 'equalto', vcenter_vm_network_adapter_label)
+                                 | map(attribute='mac_address') | list | first) | default('') }}"
+
+- name: Fail if the named network adapter was not found on the VM
+  when: vcenter_vm_name | default('') | length > 0
+  ansible.builtin.assert:
+    that:
+      - vm_network_target_mac | length > 0
+    fail_msg: >-
+      No network adapter labeled '{{ vcenter_vm_network_adapter_label }}'
+      was found on '{{ vcenter_vm_name }}'.
+
+- name: Remove the VM's network adapter attached to the VLAN
+  when: vcenter_vm_name | default('') | length > 0
+  delegate_to: localhost
+  community.vmware.vmware_guest_network:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vcenter_vm_name }}"
+    mac_address: "{{ vm_network_target_mac }}"
+    state: absent

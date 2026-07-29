@@ -1,0 +1,13 @@
+---
+profile: basic
+
+skip_list:
+  # This project uses a project-wide `scvmm_conf_` prefix on facts/register
+  # names instead of a per-role prefix - state here (scvmm_conf_ad_result...)
+  # is read across roles included separately in the same play, so a
+  # per-role prefix would be misleading about where a variable is meant to
+  # be read from.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml

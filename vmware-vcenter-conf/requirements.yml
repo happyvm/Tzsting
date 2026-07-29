@@ -1,0 +1,10 @@
+---
+collections:
+  - name: community.vmware
+    version: ">=4.0.0,<7.0.0"
+
+# community.vmware.vmware_vcenter_settings covers general vCenter server
+# settings (logging, SNMP, mail...) but not the vCenter Server Appliance's
+# own NTP/timezone/local-account settings - those live behind the VAMI
+# (appliance management) REST API, which no collection wraps. See
+# roles/ntp, roles/timezone and roles/local_admin.

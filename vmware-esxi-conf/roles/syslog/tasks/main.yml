@@ -1,0 +1,44 @@
+---
+# No dedicated syslog module exists in community.vmware - the remote
+# syslog destination is an advanced system setting
+# (Syslog.global.logHost), set the same way `esxcli system syslog config
+# set --loghost` would from the ESXi shell.
+- name: Configure the ESXi remote syslog destination
+  delegate_to: localhost
+  community.vmware.vmware_host_config_manager:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: "{{ esxi_conf_esxi_hostname }}"
+    options:
+      Syslog.global.logHost: "{{ esxi_conf_syslog_host }}"
+  register: syslog_config_result
+  no_log: true
+
+- name: Ensure the syslog daemon's start policy is enabled
+  delegate_to: localhost
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: "{{ esxi_conf_esxi_hostname }}"
+    service_name: vmsyslogd
+    service_policy: "on"
+    state: start
+  no_log: true
+
+- name: Restart the syslog daemon to apply the new destination, if it changed
+  when: syslog_config_result.changed
+  delegate_to: localhost
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: "{{ esxi_conf_esxi_hostname }}"
+    service_name: vmsyslogd
+    service_policy: "on"
+    state: restart
+  no_log: true

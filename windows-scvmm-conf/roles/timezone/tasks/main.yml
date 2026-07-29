@@ -1,0 +1,5 @@
+---
+- name: Configure the SCVMM management server timezone
+  delegate_to: scvmm_conf_target
+  ansible.windows.win_timezone:
+    timezone: "{{ scvmm_conf_timezone }}"

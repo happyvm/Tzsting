@@ -1,0 +1,21 @@
+---
+- name: Validate vCenter VLAN addition request
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vcenter_vlan.name is match('^[A-Za-z0-9._ -]+$')
+      - vcenter_vlan.vlan_id | int >= 1
+      - vcenter_vlan.vlan_id | int <= 4094
+      - vcenter_vlan.switch_name | length > 0
+      - vcenter_vlan.switch_name is match('^[A-Za-z0-9._ -]+$')
+      - vcenter_vlan.port_binding in ['static', 'ephemeral']
+      - vcenter_vm_name | default('') | length == 0 or vcenter_vm_name is match('^[A-Za-z0-9 ._-]{1,80}$')
+      - vcenter_vm_name | default('') | length == 0 or vcenter_vm_network_adapter_label | default('') | length > 0
+    fail_msg: >-
+      Provide a safe vcenter_vlan.name, VLAN 1..4094, an existing
+      vcenter_vlan.switch_name (distributed vSwitch) and a valid
+      port_binding; if vcenter_vm_name is set,
+      vcenter_vm_network_adapter_label is also required (otherwise a new
+      NIC would be added instead of reconfiguring an existing one).

@@ -1,0 +1,56 @@
+---
+- name: Create or maintain the SCVMM logical network and network site (VLAN)
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $logicalNetworkCreated = $false
+      $logicalNetwork = Get-SCLogicalNetwork -Name '{{ scvmm_vlan.logical_network }}' -ErrorAction SilentlyContinue
+      if (-not $logicalNetwork) {
+          $logicalNetwork = New-SCLogicalNetwork -Name '{{ scvmm_vlan.logical_network }}' `
+              -LogicalNetworkDefinitionIsolation $false -EnableNetworkVirtualization $false -UseGRE $false
+          $logicalNetworkCreated = $true
+      }
+
+      $hostGroup = Get-SCVMHostGroup -Name '{{ scvmm_host_group }}'
+      if (-not $hostGroup) {
+          throw "Host group '{{ scvmm_host_group }}' not found in SCVMM"
+      }
+
+      {% if scvmm_vlan.subnet is defined %}
+      $subnetVlan = New-Object Microsoft.SystemCenter.VirtualMachineManager.SubnetVLan(@("{{ scvmm_vlan.subnet }}"), {{ scvmm_vlan.vlan_id }})
+      {% else %}
+      $subnetVlan = New-Object Microsoft.SystemCenter.VirtualMachineManager.SubnetVLan(@(), {{ scvmm_vlan.vlan_id }})
+      {% endif %}
+
+      $definitionCreated = $false
+      $definition = Get-SCLogicalNetworkDefinition -LogicalNetwork $logicalNetwork |
+          Where-Object { ($_.VMHostGroups.Name -contains '{{ scvmm_host_group }}') -and ($_.SubnetVLans.VLanID -contains {{ scvmm_vlan.vlan_id }}) } |
+          Select-Object -First 1
+      if (-not $definition) {
+          $definition = New-SCLogicalNetworkDefinition -Name '{{ scvmm_vlan.logical_network }} - VLAN {{ scvmm_vlan.vlan_id }}' `
+              -LogicalNetwork $logicalNetwork -VMHostGroup $hostGroup -SubnetVLan $subnetVlan
+          $definitionCreated = $true
+      }
+
+      [PSCustomObject]@{
+          Changed               = ($logicalNetworkCreated -or $definitionCreated)
+          LogicalNetworkCreated = $logicalNetworkCreated
+          DefinitionCreated     = $definitionCreated
+      } | ConvertTo-Json -Compress
+  register: logical_network_result
+  changed_when: (logical_network_result.stdout | trim | from_json).Changed
+
+- name: Report the logical network / network site state
+  vars:
+    logical_network_parsed: "{{ logical_network_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      Logical network '{{ scvmm_vlan.logical_network }}'
+      {{ 'created' if logical_network_parsed.LogicalNetworkCreated else 'already existed' }};
+      network site for VLAN {{ scvmm_vlan.vlan_id }} on host group
+      '{{ scvmm_host_group }}'
+      {{ 'created' if logical_network_parsed.DefinitionCreated else 'already existed' }}.

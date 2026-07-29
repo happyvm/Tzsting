@@ -1,0 +1,44 @@
+---
+# Adds a VLAN to SCVMM's networking model: a logical network + network site
+# (VLAN ID, optional subnet) bound to a host group, a VM Network exposing
+# it to VMs, and optionally attaches one VM's network adapter to it.
+#
+# Mirrors ansible-synergy-vlan-add's three-step shape (ethernet_network ->
+# network_set -> server_profile) for SCVMM's equivalent objects (logical
+# network/network site -> VM Network -> VM network adapter).
+#
+# Usage:
+#   ansible-playbook playbooks/add_vlan.yml --vault-password-file .vault_pass
+
+- name: Add a VLAN to SCVMM and optionally attach it to a VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate request
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Create or maintain the logical network and network site (VLAN)
+      ansible.builtin.include_role:
+        name: logical_network
+
+    - name: Create or maintain the VM Network bound to the logical network
+      ansible.builtin.include_role:
+        name: vm_network
+
+    - name: Attach the VLAN to a VM's network adapter
+      ansible.builtin.include_role:
+        name: vm_network_adapter
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          scvmm_vlan_add_summary:
+            vlan: "{{ scvmm_vlan.name }}"
+            vlan_id: "{{ scvmm_vlan.vlan_id }}"
+            logical_network: "{{ scvmm_vlan.logical_network }}"
+            vm_network: "{{ scvmm_vm_network_name }}"
+            vm_name: "{{ scvmm_vm_name }}"
+        aggregate: false

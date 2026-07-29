@@ -1,0 +1,13 @@
+---
+- name: Create or maintain the local automation account
+  delegate_to: localhost
+  community.vmware.vmware_local_user_manager:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    local_user_name: "{{ esxi_conf_local_user.name }}"
+    local_user_password: "{{ esxi_conf_local_user.password }}"
+    local_user_description: "{{ esxi_conf_local_user.description | default('Ansible automation account') }}"
+    state: present
+  no_log: true

@@ -1,0 +1,15 @@
+---
+scvmm_server: scvmm01
+
+scvmm_vlan_id: 123
+scvmm_logical_network: Production
+scvmm_host_group: "All Hosts"
+scvmm_vm_network_name: VLAN123-APP-Network
+
+# Optional: if set, detach this VM's network adapter from the VM Network
+# before removing it (matches ansible-synergy-vlan-remove's optional
+# profile-connection detach step).
+scvmm_vm_name: ""
+scvmm_vm_network_adapter_name: ""
+
+confirm_vlan_remove: false

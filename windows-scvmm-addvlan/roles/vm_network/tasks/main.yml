@@ -1,0 +1,50 @@
+---
+- name: Create or maintain the SCVMM VM Network bound to the logical network
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $logicalNetwork = Get-SCLogicalNetwork -Name '{{ scvmm_vlan.logical_network }}'
+      if (-not $logicalNetwork) {
+          throw "Logical network '{{ scvmm_vlan.logical_network }}' not found - run the logical_network role first"
+      }
+
+      $vmNetworkCreated = $false
+      $vmNetwork = Get-SCVMNetwork -Name '{{ scvmm_vm_network_name }}' -ErrorAction SilentlyContinue
+      if (-not $vmNetwork) {
+          $vmNetwork = New-SCVMNetwork -Name '{{ scvmm_vm_network_name }}' -LogicalNetwork $logicalNetwork -IsolationType 'NoIsolation'
+          $vmNetworkCreated = $true
+      }
+
+      $vmSubnetCreated = $false
+      {% if scvmm_vlan.subnet is defined %}
+      $definition = Get-SCLogicalNetworkDefinition -LogicalNetwork $logicalNetwork |
+          Where-Object { $_.SubnetVLans.VLanID -contains {{ scvmm_vlan.vlan_id }} } | Select-Object -First 1
+      $vmSubnetName = '{{ scvmm_vm_network_name }} - Subnet'
+      $vmSubnet = Get-SCVMSubnet -Name $vmSubnetName -ErrorAction SilentlyContinue
+      if (-not $vmSubnet -and $definition) {
+          $subnetVlan = $definition.SubnetVLans | Where-Object { $_.VLanID -eq {{ scvmm_vlan.vlan_id }} } | Select-Object -First 1
+          $vmSubnet = New-SCVMSubnet -Name $vmSubnetName -VMNetwork $vmNetwork -LogicalNetworkDefinition $definition -Subnet $subnetVlan.Subnet
+          $vmSubnetCreated = $true
+      }
+      {% endif %}
+
+      [PSCustomObject]@{
+          Changed          = ($vmNetworkCreated -or $vmSubnetCreated)
+          VMNetworkCreated = $vmNetworkCreated
+          VMSubnetCreated  = $vmSubnetCreated
+      } | ConvertTo-Json -Compress
+  register: vm_network_result
+  changed_when: (vm_network_result.stdout | trim | from_json).Changed
+
+- name: Report the VM Network state
+  vars:
+    vm_network_parsed: "{{ vm_network_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      VM Network '{{ scvmm_vm_network_name }}'
+      {{ 'created' if vm_network_parsed.VMNetworkCreated else 'already existed' }}
+      (bound to logical network '{{ scvmm_vlan.logical_network }}').

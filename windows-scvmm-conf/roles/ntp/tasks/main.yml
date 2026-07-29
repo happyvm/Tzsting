@@ -1,0 +1,21 @@
+---
+# No collection module configures the Windows Time service's NTP peer list -
+# this is w32tm, a plain Windows Server built-in, configured the same way
+# any Windows admin would from an elevated prompt. The script compares the
+# desired peer list against the current registry value itself so
+# changed_when reflects a real change, not just "the command ran".
+- name: Configure the Windows Time service NTP peer list
+  delegate_to: scvmm_conf_target
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $desiredPeers = "{{ scvmm_conf_ntp_servers | map('regex_replace', '$', ',0x8') | join(' ') }}"
+    $currentPeers = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters' -Name NtpServer -ErrorAction SilentlyContinue).NtpServer
+    if ($currentPeers -eq $desiredPeers) {
+        [PSCustomObject]@{ Changed = $false } | ConvertTo-Json -Compress
+    } else {
+        w32tm /config /manualpeerlist:"$desiredPeers" /syncfromflags:manual /reliable:YES /update | Out-Null
+        Restart-Service w32time
+        [PSCustomObject]@{ Changed = $true } | ConvertTo-Json -Compress
+    }
+  register: ntp_config_result
+  changed_when: (ntp_config_result.stdout | trim | from_json).Changed

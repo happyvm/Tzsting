@@ -1,0 +1,49 @@
+---
+# Configures a standalone ESXi host directly (no vCenter): NTP, remote
+# syslog, Active Directory join (optional) and a local automation account.
+# Uses the same community.vmware modules ansible-createvm/etc use through
+# vCenter, connected directly to the host's own management API instead -
+# there is no dedicated appliance API here the way there is for
+# ansible-hpe-storeonce-conf/ansible-quantum-dxi-conf.
+#
+# Usage:
+#   ansible-playbook playbooks/configure_esxi.yml --vault-password-file .vault_pass
+
+- name: Configure an ESXi host's identity, authentication and time services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: ntp
+
+    - name: Configure remote syslog
+      ansible.builtin.include_role:
+        name: syslog
+
+    - name: Configure Active Directory
+      ansible.builtin.include_role:
+        name: active_directory
+      when: esxi_conf_ad_enabled | bool
+
+    - name: Maintain the local automation account
+      ansible.builtin.include_role:
+        name: local_user
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          esxi_conf_summary:
+            host: "{{ esxi_conf_hostname }}"
+            ntp_servers: "{{ esxi_conf_ntp_servers }}"
+            syslog_host: "{{ esxi_conf_syslog_host }}"
+            ad_joined: "{{ esxi_conf_ad_enabled | bool }}"
+            ad_domain: "{{ esxi_conf_ad.domain if esxi_conf_ad_enabled | bool else '' }}"
+            local_user: "{{ esxi_conf_local_user.name }}"
+        aggregate: false

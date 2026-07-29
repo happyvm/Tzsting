@@ -1,0 +1,30 @@
+---
+- name: Remove the SCVMM VM Network
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $vmNetwork = Get-SCVMNetwork -Name '{{ scvmm_vm_network_name }}' -ErrorAction SilentlyContinue
+      if ($vmNetwork) {
+          $vmSubnets = @(Get-SCVMSubnet -VMNetwork $vmNetwork -ErrorAction SilentlyContinue)
+          foreach ($subnet in $vmSubnets) {
+              Remove-SCVMSubnet -VMSubnet $subnet | Out-Null
+          }
+          Remove-SCVMNetwork -VMNetwork $vmNetwork | Out-Null
+          [PSCustomObject]@{ Changed = $true } | ConvertTo-Json -Compress
+      } else {
+          [PSCustomObject]@{ Changed = $false } | ConvertTo-Json -Compress
+      }
+  register: vm_network_result
+  changed_when: (vm_network_result.stdout | trim | from_json).Changed
+
+- name: Report the VM Network removal
+  vars:
+    vm_network_parsed: "{{ vm_network_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      VM Network '{{ scvmm_vm_network_name }}'
+      {{ 'removed' if vm_network_parsed.Changed else 'was already absent' }}.

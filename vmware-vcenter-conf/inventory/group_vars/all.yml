@@ -1,0 +1,42 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+# vcenter_hostname/username/password and vmware_validate_certs use the same
+# names as ansible-createvm/ansible-resizecompute/ansible-resizedisk/etc, so
+# an existing vCenter credential set can be reused as-is.
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vmware_validate_certs: false
+
+# VAMI (the vCenter Server Appliance's own management API, distinct from
+# the vCenter/SSO API above) credential - often the same administrator
+# account, but some deployments use a dedicated appliance/root account.
+vcenter_vami_username: "{{ vault_vcenter_vami_username | default(vcenter_username) }}"
+vcenter_vami_password: "{{ vault_vcenter_vami_password | default(vcenter_password) }}"
+vcenter_vami_headers:
+  Accept: application/json
+  Content-Type: application/json
+
+# VAMI REST resource paths/payloads depend on the vCenter release. Set
+# them from the API guide for the target version - see README.
+vcenter_conf_ntp_endpoint: ""
+vcenter_conf_ntp_method: PUT
+vcenter_conf_ntp_configuration:
+  mode: NTP
+  servers:
+    - ntp01.example.local
+    - ntp02.example.local
+
+vcenter_conf_timezone_endpoint: ""
+vcenter_conf_timezone_method: PUT
+vcenter_conf_timezone_configuration:
+  timezone: UTC
+
+vcenter_conf_local_admin_endpoint: ""
+vcenter_conf_local_admin_method: PATCH
+vcenter_conf_local_admin_username: root
+vcenter_conf_local_admin_password: "{{ vault_vcenter_conf_local_admin_password }}"
+
+# Covered by the real community.vmware.vmware_vcenter_settings module -
+# see https://kb.vmware.com choices: none/error/warning/info/verbose/trivia.
+vcenter_conf_logging_options: info

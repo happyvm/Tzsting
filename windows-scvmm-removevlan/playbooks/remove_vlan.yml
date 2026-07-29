@@ -1,0 +1,43 @@
+---
+# Removes a VLAN from SCVMM's networking model: detaches it from a VM's
+# network adapter (if targeted), removes the VM Network, then removes the
+# network site (VLAN) definition from the logical network. The logical
+# network itself is never removed here - it is a shared container that may
+# carry other VLANs/network sites, exactly like ansible-synergy-vlan-remove
+# never removes a Network Set, only the VLAN's membership in it.
+#
+# Usage:
+#   ansible-playbook playbooks/remove_vlan.yml \
+#     -e confirm_vlan_remove=true --vault-password-file .vault_pass
+
+- name: Remove a VLAN from SCVMM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate destructive request
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Detach the VLAN from a VM's network adapter
+      ansible.builtin.include_role:
+        name: vm_network_adapter
+
+    - name: Remove the VM Network
+      ansible.builtin.include_role:
+        name: vm_network
+
+    - name: Remove the network site (VLAN) from the logical network
+      ansible.builtin.include_role:
+        name: logical_network
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          scvmm_vlan_remove_summary:
+            vlan_id: "{{ scvmm_vlan_id }}"
+            logical_network: "{{ scvmm_logical_network }}"
+            vm_network: "{{ scvmm_vm_network_name }}"
+            vm_name: "{{ scvmm_vm_name }}"
+        aggregate: false

@@ -1,0 +1,10 @@
+---
+collections:
+  - name: ansible.windows
+    version: ">=2.0.0,<4.0.0"
+
+# SCVMM's networking model (logical networks, network sites, VM Networks,
+# VM subnets) has no dedicated Ansible collection - configured here through
+# the same virtualmachinemanager PowerShell module already used by
+# ansible-createvm/create_vm_scvmm and the ansible-resizecompute/
+# ansible-resizedisk *_scvmm roles.

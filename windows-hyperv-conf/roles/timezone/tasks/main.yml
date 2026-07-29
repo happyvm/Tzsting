@@ -1,0 +1,5 @@
+---
+- name: Configure the Hyper-V host timezone
+  delegate_to: hyperv_conf_target
+  ansible.windows.win_timezone:
+    timezone: "{{ hyperv_conf_timezone }}"

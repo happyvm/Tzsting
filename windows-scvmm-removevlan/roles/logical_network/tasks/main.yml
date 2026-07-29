@@ -1,0 +1,42 @@
+---
+# Removes only the network site (VLAN definition) that matches
+# scvmm_vlan_id/scvmm_host_group - the logical network itself is left in
+# place, since it may still carry other VLANs/network sites. Matches
+# ansible-synergy-vlan-remove's caution around never deleting a shared
+# Network Set, only the VLAN's membership in it.
+- name: Remove the network site (VLAN definition) from the logical network
+  delegate_to: "{{ scvmm_server | default('localhost', true) }}"
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      Import-Module virtualmachinemanager -ErrorAction SilentlyContinue
+      Get-SCVMMServer -ComputerName '{{ scvmm_server }}' | Out-Null
+
+      $logicalNetwork = Get-SCLogicalNetwork -Name '{{ scvmm_logical_network }}' -ErrorAction SilentlyContinue
+      if (-not $logicalNetwork) {
+          [PSCustomObject]@{ Changed = $false } | ConvertTo-Json -Compress
+          exit 0
+      }
+
+      $definition = Get-SCLogicalNetworkDefinition -LogicalNetwork $logicalNetwork |
+          Where-Object { ($_.VMHostGroups.Name -contains '{{ scvmm_host_group }}') -and ($_.SubnetVLans.VLanID -contains {{ scvmm_vlan_id }}) } |
+          Select-Object -First 1
+
+      if ($definition) {
+          Remove-SCLogicalNetworkDefinition -LogicalNetworkDefinition $definition | Out-Null
+          [PSCustomObject]@{ Changed = $true } | ConvertTo-Json -Compress
+      } else {
+          [PSCustomObject]@{ Changed = $false } | ConvertTo-Json -Compress
+      }
+  register: logical_network_result
+  changed_when: (logical_network_result.stdout | trim | from_json).Changed
+
+- name: Report the network site removal
+  vars:
+    logical_network_parsed: "{{ logical_network_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      Network site for VLAN {{ scvmm_vlan_id }} on host group
+      '{{ scvmm_host_group }}'
+      {{ 'removed' if logical_network_parsed.Changed else 'was already absent' }}
+      (logical network '{{ scvmm_logical_network }}' left in place).
