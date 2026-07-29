@@ -12,6 +12,12 @@
       ansible.builtin.include_role: {name: ad}
     - name: Configure local administrator
       ansible.builtin.include_role: {name: local_admin}
+    - name: Configure remote syslog forwarding
+      ansible.builtin.include_role: {name: syslog}
+    - name: Configure SMTP alert email
+      ansible.builtin.include_role: {name: smtp}
+    - name: Configure SNMPv3
+      ansible.builtin.include_role: {name: snmp}
     - name: Publish AAP artifact
       ansible.builtin.set_stats:
         data:
@@ -21,4 +27,7 @@
             ntp_servers: "{{ oneview_ntp_servers }}"
             ad_configured: "{{ oneview_ad_enabled }}"
             local_admin: "{{ oneview_local_admin.userName }}"
+            syslog_configured: "{{ oneview_syslog_enabled | bool }}"
+            smtp_configured: "{{ oneview_smtp_enabled | bool }}"
+            snmp_configured: "{{ oneview_snmp_enabled | bool }}"
         aggregate: false

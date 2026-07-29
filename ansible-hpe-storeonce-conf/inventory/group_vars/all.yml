@@ -41,3 +41,44 @@ storeonce_timezone_endpoint: ""
 storeonce_timezone_method: PUT
 storeonce_timezone_configuration:
   timezone: Europe/Paris
+
+# Optional - disabled by default, unlike the four settings above which are
+# always applied. Same "leave the endpoint blank until validated" contract.
+storeonce_syslog_enabled: false
+storeonce_syslog_endpoint: ""
+storeonce_syslog_method: PUT
+storeonce_syslog_configuration:
+  enabled: true
+  server: syslog01.example.local
+  port: 514
+  protocol: tcp
+
+storeonce_smtp_enabled: false
+storeonce_smtp_endpoint: ""
+storeonce_smtp_method: PUT
+storeonce_smtp_configuration:
+  enabled: true
+  relay_host: smtp.example.local
+  port: 25
+  sender: storeonce01-alerts@example.local
+  recipients: [storage-alerts@example.local]
+  use_tls: true
+  username: "{{ vault_storeonce_smtp_username | default('') }}"
+  password: "{{ vault_storeonce_smtp_password | default('') }}"
+
+# SNMPv3 (auth+priv) is the recommended contract if the target firmware
+# supports it; check the API guide before assuming - some older StoreOnce
+# releases only expose v1/v2c over this endpoint.
+storeonce_snmp_enabled: false
+storeonce_snmp_endpoint: ""
+storeonce_snmp_method: PUT
+storeonce_snmp_configuration:
+  enabled: true
+  version: v3
+  username: storeonce-snmp-v3
+  auth_protocol: SHA
+  auth_passphrase: "{{ vault_storeonce_snmp_auth_passphrase | default('') }}"
+  privacy_protocol: AES
+  privacy_passphrase: "{{ vault_storeonce_snmp_privacy_passphrase | default('') }}"
+  trap_destination: snmp01.example.local
+  trap_port: 162

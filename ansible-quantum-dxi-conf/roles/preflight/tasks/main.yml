@@ -11,7 +11,13 @@
       - dxi_timezone_endpoint is match('^/[^ ]+$')
       - dxi_local_accounts | length > 0
       - dxi_ntp_configuration.servers | length > 0
-    fail_msg: "Credentials and firmware-specific HTTPS API paths are mandatory. Copy paths/payloads from the API guide for the target release."
+      - not dxi_syslog_enabled | bool or dxi_syslog_endpoint is match('^/[^ ]+$')
+      - not dxi_smtp_enabled | bool or dxi_smtp_endpoint is match('^/[^ ]+$')
+      - not dxi_snmp_enabled | bool or dxi_snmp_endpoint is match('^/[^ ]+$')
+    fail_msg: >-
+      Credentials and firmware-specific HTTPS API paths are mandatory.
+      Copy paths/payloads from the API guide for the target release;
+      enabling syslog/SMTP/SNMP each requires their own validated endpoint.
 
 - name: Validate each local account has a username and password
   ansible.builtin.assert:

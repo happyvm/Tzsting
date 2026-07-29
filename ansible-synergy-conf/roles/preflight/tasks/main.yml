@@ -9,4 +9,17 @@
       - oneview_timezone is match('^[A-Za-z_]+(/[A-Za-z0-9_+.-]+){1,2}$')
       - oneview_local_admin.userName is match('^[A-Za-z0-9._@-]+$')
       - not oneview_ad_enabled | bool or oneview_ad_configuration | length > 0
-    fail_msg: "OneView credentials, NTP, timezone and a valid local admin are required; AD also requires a validated provider payload."
+      - not oneview_syslog_enabled | bool or oneview_syslog_api_path is match('^/[^ ]+$')
+      - not oneview_syslog_enabled | bool or oneview_syslog_configuration | length > 0
+      - not oneview_smtp_enabled | bool or oneview_smtp_api_path is match('^/[^ ]+$')
+      - not oneview_smtp_enabled | bool or oneview_smtp_configuration | length > 0
+      - not oneview_snmp_enabled | bool
+        or (oneview_snmp_v3_users | length > 0 or oneview_snmp_v3_trap_destinations | length > 0)
+      - oneview_snmp_v3_users | map(attribute='name') | list | unique | length == oneview_snmp_v3_users | length
+      - oneview_snmp_v3_trap_destinations | map(attribute='name') | list | unique | length == oneview_snmp_v3_trap_destinations | length
+    fail_msg: >-
+      OneView credentials, NTP, timezone and a valid local admin are
+      required; AD/syslog/SMTP each require a validated provider payload
+      when enabled (copy paths/payloads from the API guide for the target
+      appliance); enabling SNMP requires at least one v3 user or trap
+      destination, each with a unique name.

@@ -1,8 +1,9 @@
 # ansible-synergy-conf
 
 Configuration d'une appliance HPE OneView pilotant une infrastructure Synergy :
-NTP, timezone/locale, fournisseur Active Directory et compte administrateur
-local d'automatisation.
+NTP, timezone/locale, fournisseur Active Directory, compte administrateur
+local d'automatisation, redirection syslog distante, alertes email SMTP et
+SNMPv3 (utilisateurs et destinations de traps).
 
 Le module officiel `hpe.oneview.oneview_appliance_time_and_locale_configuration`
 gère NTP et timezone (`oneview_timezone` accepte les fuseaux IANA à deux ou
@@ -14,6 +15,16 @@ préalablement validé sur l'appliance cible. Ne pas activer un exemple
 générique en production. La session OneView ouverte pour cet appel REST est
 systématiquement refermée (`block`/`always`), même en cas d'échec de la
 configuration.
+
+La redirection syslog et le relais SMTP suivent le même schéma que le rôle
+AD : aucun module `hpe.oneview` ne les couvre, le contrat REST
+(endpoint/payload) dépend de la version OneView, `oneview_syslog_api_path`/
+`oneview_smtp_api_path` sont vides et désactivés par défaut
+(`oneview_syslog_enabled`/`oneview_smtp_enabled: false`). SNMPv3
+(`oneview_snmp_enabled: false` par défaut) utilise les vrais modules
+`oneview_appliance_device_snmp_v3_users`/`_trap_destinations` ; le schéma du
+`data` provient des exemples officiels du module, mais `securityLevel`/les
+protocoles restent à valider selon la génération d'API de l'appliance cible.
 
 Tous les mots de passe viennent de Vault/AAP. L'Execution Environment doit
 faire confiance au certificat TLS OneView.

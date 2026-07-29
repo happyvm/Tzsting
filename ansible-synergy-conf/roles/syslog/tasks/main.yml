@@ -1,0 +1,44 @@
+---
+# No hpe.oneview module covers remote syslog forwarding - same REST session
+# pattern as the ad role (open a login session, configure, always close it).
+- name: Open a OneView API session for syslog configuration
+  ansible.builtin.uri:
+    url: "https://{{ oneview_hostname }}/rest/login-sessions"
+    method: POST
+    validate_certs: true
+    body_format: json
+    body:
+      userName: "{{ oneview_username }}"
+      password: "{{ oneview_password }}"
+      authLoginDomain: "{{ oneview_auth_login_domain }}"
+    return_content: true
+  register: oneview_syslog_login
+  no_log: true
+  when: oneview_syslog_enabled | bool
+
+- name: Configure syslog then always close the OneView session
+  when: oneview_syslog_enabled | bool
+  block:
+    - name: Configure the version-specific OneView remote syslog destination
+      ansible.builtin.uri:
+        url: "https://{{ oneview_hostname }}{{ oneview_syslog_api_path }}"
+        method: "{{ oneview_syslog_method }}"
+        validate_certs: true
+        headers:
+          auth: "{{ oneview_syslog_login.json.sessionID }}"
+          X-API-Version: "{{ oneview_api_version | string }}"
+          If-Match: "*"
+        body_format: json
+        body: "{{ oneview_syslog_configuration }}"
+        status_code: [200, 201, 202]
+      no_log: true
+  always:
+    - name: Close the OneView API session
+      ansible.builtin.uri:
+        url: "https://{{ oneview_hostname }}/rest/login-sessions"
+        method: DELETE
+        validate_certs: true
+        headers:
+          auth: "{{ oneview_syslog_login.json.sessionID }}"
+        status_code: [200, 204]
+      no_log: true

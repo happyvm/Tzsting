@@ -1,0 +1,29 @@
+---
+# purefa_smtp has no way to read back the current relay password to compare
+# against the play's value, so the module always reports changed when
+# credentials are supplied - documented module behavior, not a bug here.
+- name: Configure the FlashArray SMTP relay for alert email
+  when: pure_smtp_enabled | bool
+  purestorage.flasharray.purefa_smtp:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    relay_host: "{{ pure_smtp.relay_host }}"
+    sender: "{{ pure_smtp.sender | default(omit) }}"
+    sender_domain: "{{ pure_smtp.sender_domain }}"
+    encryption_mode: "{{ pure_smtp.encryption_mode | default('starttls') }}"
+    user: "{{ pure_smtp.user | default(omit) }}"
+    password: "{{ pure_smtp.password | default(omit) }}"
+    state: present
+  no_log: true
+
+- name: Create or maintain FlashArray alert email recipients
+  purestorage.flasharray.purefa_alert:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    address: "{{ item.address }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    state: present
+  loop: "{{ pure_alert_recipients }}"
+  loop_control:
+    label: "{{ item.address }}"
+  no_log: true

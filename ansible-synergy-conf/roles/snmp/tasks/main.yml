@@ -1,0 +1,32 @@
+---
+- name: Create or maintain OneView SNMPv3 users
+  when: oneview_snmp_enabled | bool
+  hpe.oneview.oneview_appliance_device_snmp_v3_users:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+  loop: "{{ oneview_snmp_v3_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Create or maintain OneView SNMPv3 trap destinations
+  when: oneview_snmp_enabled | bool
+  hpe.oneview.oneview_appliance_device_snmp_v3_trap_destinations:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+  loop: "{{ oneview_snmp_v3_trap_destinations }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

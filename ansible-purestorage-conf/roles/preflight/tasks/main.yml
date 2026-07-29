@@ -9,4 +9,22 @@
       - pure_local_user.name is match('^[A-Za-z0-9._-]+$')
       - pure_local_user.password | length >= 8
       - not pure_timezone_cli_enabled | bool or pure_timezone is match('^[A-Za-z_]+(/[A-Za-z0-9_+.-]+){1,2}$')
-    fail_msg: "FlashArray endpoint, token, NTP/syslog configuration and protected local-user password are required."
+      - not pure_smtp_enabled | bool or pure_smtp.relay_host | length > 0
+      - not pure_smtp_enabled | bool or pure_smtp.sender_domain | length > 0
+      - pure_alert_recipients | map(attribute='address') | list | unique | length == pure_alert_recipients | length
+      - not pure_snmp_enabled | bool or pure_snmp_manager.name | length > 0
+      - not pure_snmp_enabled | bool or pure_snmp_manager.host | length > 0
+      - not pure_snmp_enabled | bool or pure_snmp_manager.version in ['v2c', 'v3']
+      - not (pure_snmp_enabled | bool and pure_snmp_manager.version == 'v3')
+        or (pure_snmp_manager.user | default('') | length > 0
+            and pure_snmp_manager.auth_passphrase | default('') | length >= 8
+            and pure_snmp_manager.privacy_passphrase | default('') | length >= 8)
+      - not (pure_snmp_enabled | bool and pure_snmp_manager.version == 'v2c')
+        or pure_snmp_manager.community | default('') | length > 0
+    fail_msg: >-
+      FlashArray endpoint, token, NTP/syslog configuration and protected
+      local-user password are required; enabling SMTP requires a relay
+      host and sender domain; alert recipient addresses must be unique;
+      enabling SNMP requires a manager name/host and either a v3
+      user/auth/privacy passphrase (min 8 chars each) or a v2c community
+      string, matching pure_snmp_manager.version.

@@ -40,3 +40,51 @@ pure_timezone: Europe/Paris
 pure_cli_host: pure01.example.local
 pure_cli_user: pureuser
 pure_cli_password: "{{ vault_pure_cli_password }}"
+
+# SMTP alert email relay - disabled by default. The array can send basic
+# alert email over its own default path without this; a relay is only
+# needed for an authenticated/encrypted hop or a specific sender domain.
+pure_smtp_enabled: false
+pure_smtp:
+  relay_host: smtp.example.local
+  sender: pure01-alerts
+  sender_domain: example.local
+  encryption_mode: starttls
+  user: "{{ vault_pure_smtp_user | default('') }}"
+  password: "{{ vault_pure_smtp_password | default('') }}"
+
+# Alert email recipients - independent of pure_smtp_enabled (works over the
+# array's default mail path too).
+pure_alert_recipients: []
+# - {address: storage-alerts@example.local, enabled: true}
+
+# SNMP trap manager (where the array sends traps) - disabled by default.
+# SNMPv3 (auth+priv) is fully supported; set version: v2c to use a
+# community string instead.
+pure_snmp_enabled: false
+pure_snmp_manager:
+  name: primary
+  host: snmp01.example.local
+  version: v3
+  notification: trap
+  # v3 only:
+  user: pure-snmp-v3
+  auth_protocol: SHA
+  auth_passphrase: "{{ vault_pure_snmp_auth_passphrase | default('') }}"
+  privacy_protocol: AES
+  privacy_passphrase: "{{ vault_pure_snmp_privacy_passphrase | default('') }}"
+  # v2c only:
+  community: "{{ vault_pure_snmp_community | default('') }}"
+
+# The array's own SNMP agent (answers inbound polling) - same
+# version/credential model as pure_snmp_manager, configured independently
+# since a manager (outbound traps) and an agent (inbound polling) are
+# different roles and may use different credentials.
+pure_snmp_agent:
+  version: v3
+  user: pure-snmp-v3
+  auth_protocol: SHA
+  auth_passphrase: "{{ vault_pure_snmp_auth_passphrase | default('') }}"
+  privacy_protocol: AES
+  privacy_passphrase: "{{ vault_pure_snmp_privacy_passphrase | default('') }}"
+  community: "{{ vault_pure_snmp_community | default('') }}"

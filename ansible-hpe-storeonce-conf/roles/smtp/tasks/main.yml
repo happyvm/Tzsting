@@ -1,0 +1,17 @@
+---
+- name: Configure HPE StoreOnce SMTP alert email
+  when: storeonce_smtp_enabled | bool
+  ansible.builtin.uri:
+    url: "https://{{ storeonce_hostname }}{{ storeonce_smtp_endpoint }}"
+    method: "{{ storeonce_smtp_method }}"
+    url_username: "{{ storeonce_api_username }}"
+    url_password: "{{ storeonce_api_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ storeonce_validate_certs }}"
+    headers: "{{ storeonce_api_headers }}"
+    body_format: json
+    body: "{{ storeonce_smtp_configuration }}"
+    status_code: [200, 201, 202, 204]
+  register: storeonce_smtp_result
+  changed_when: storeonce_smtp_result.status in [201, 202, 204]
+  no_log: true

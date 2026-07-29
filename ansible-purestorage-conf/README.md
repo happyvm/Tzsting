@@ -1,8 +1,9 @@
 # ansible-purestorage-conf
 
 Configuration déclarative des services d'une baie Pure Storage FlashArray :
-compte Active Directory de la baie, NTP, destinations syslog, fuseau horaire
-et rotation du mot de passe du compte local `pureuser`.
+compte Active Directory de la baie, NTP, destinations syslog, fuseau horaire,
+rotation du mot de passe du compte local `pureuser`, relais SMTP/destinataires
+d'alerte email et SNMP (manager de traps et agent, SNMPv3 ou v2c).
 
 ## Sécurité
 
@@ -34,4 +35,14 @@ ansible-playbook playbooks/configure_array.yml --vault-password-file .vault_pass
 Adapter `inventory/group_vars/all.yml`. La liste `pure_syslog_servers` accepte
 plusieurs destinations `udp`, `tcp` ou `tls`. `pure_local_user.old_password`
 et `password` sont nécessaires à une rotation ; ne pas les mettre en clair.
-Le playbook publie `purestorage_conf_summary` pour AAP/ServiceNow.
+
+SMTP (`pure_smtp_enabled: false` par défaut) et SNMP (`pure_snmp_enabled:
+false` par défaut) sont désactivés par défaut. `pure_snmp_manager` (traps
+sortants) et `pure_snmp_agent` (interrogation entrante) acceptent chacun
+`version: v3` (utilisateur + passphrases d'authentification/confidentialité,
+recommandé) ou `version: v2c` (chaîne de communauté). Les modules
+`purefa_smtp`/`purefa_snmp`/`purefa_snmp_agent` ne peuvent pas relire l'état
+caché (mot de passe SMTP, passphrases SNMP) pour comparer : ils rapportent
+systématiquement un changement quand ces identifiants sont fournis, ce n'est
+pas un bug de ce rôle. Le playbook publie `purestorage_conf_summary` pour
+AAP/ServiceNow.
