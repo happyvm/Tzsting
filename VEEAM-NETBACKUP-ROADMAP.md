@@ -3,22 +3,30 @@
 Ce document complète [`CYCLE-DE-VIE-GAPS.md`](CYCLE-DE-VIE-GAPS.md) pour le
 périmètre sauvegarde. Il décrit les briques autonomes à ajouter au dépôt pour
 permettre à un exploitant de ne récupérer que le code correspondant à son
-logiciel de sauvegarde et à ses besoins.
+logiciel de sauvegarde, à ses agents et à ses cibles de stockage.
 
 Les projets Veeam et NetBackup restent séparés. Ils partagent les mêmes
 principes de sécurité et le même contrat de sortie AAP/ServiceNow, mais ne
 masquent pas les différences fonctionnelles entre les deux produits.
 
+Le périmètre NetBackup couvre uniquement un **primary server et des media
+servers installés sur des systèmes d'exploitation standards**. Les NetBackup
+Appliances sont explicitement hors périmètre.
+
 ## Principes de découpage
 
 - une brique est utilisable indépendamment du reste du dépôt ;
-- Veeam conserve la notion de **job** ;
-- NetBackup conserve la notion de **policy**, même lorsque le service exposé
-  dans ServiceNow est présenté comme une création ou suppression de job ;
-- VMware et Hyper-V sont des plateformes explicites dans les variables et les
-  préflights ;
+- Veeam conserve les notions de **job**, **protection group**, **agent** et
+  **repository** ;
+- NetBackup conserve les notions de **policy**, **client**, **media server**,
+  **storage server**, **disk pool** et **storage unit** ;
+- VMware, Hyper-V et machine physique sont des plateformes explicites dans les
+  variables et les préflights ;
+- les intégrations DXi et StoreOnce ne prétendent pas être identiques : OST,
+  Catalyst, gateway server, LSU, disk pool et storage unit restent visibles ;
 - aucune suppression de données de sauvegarde n'est implicite ;
-- chaque appel API, cmdlet ou commande doit être validé par version de produit ;
+- chaque appel API, cmdlet, plug-in ou commande doit être validé par version de
+  produit, de système d'exploitation et de firmware ;
 - l'API REST est privilégiée, avec PowerShell ou CLI uniquement lorsque l'API
   officielle ne couvre pas l'opération ou le niveau de détail nécessaire.
 
@@ -47,21 +55,150 @@ d'une simple évolution du logiciel de sauvegarde.
 
 #### `ansible-netbackup-conf`
 
-Configuration déclarative d'un primary server NetBackup ou d'une NetBackup
-Appliance :
+Configuration déclarative d'un primary server NetBackup installé sur un OS
+standard :
 
-- mode explicite `software` ou `appliance` ;
 - comptes locaux, groupes et RBAC ;
-- Active Directory/LDAP selon les capacités du mode sélectionné ;
-- NTP, timezone et DNS ;
-- certificats, validation TLS et accès API ;
+- Active Directory/LDAP lorsque la plateforme le permet ;
+- NTP, timezone et DNS du système d'exploitation ;
+- certificats, validation TLS, autorité NetBackup et accès API ;
 - SMTP et destinataires d'alerte ;
 - syslog et niveau de journalisation ;
+- configuration des media servers déclarés ;
 - audit de conformité de la configuration ;
 - artefact AAP : `netbackup_conf_summary`.
 
-Le playbook doit refuser les paramètres propres à l'appliance lorsqu'il cible
-un primary server installé sur un OS standard, et inversement.
+Le playbook ne contient aucun rôle, variable ou chemin propre aux NetBackup
+Appliances. Il doit refuser une cible identifiée comme appliance.
+
+### Déploiement des clients et agents
+
+#### `ansible-netbackup-client-deploy`
+
+Déploiement et mise à niveau contrôlée du client NetBackup sur des serveurs
+Windows ou Linux, physiques ou virtuels :
+
+- détection de l'OS, de l'architecture et de la version déjà installée ;
+- récupération des médias depuis un dépôt interne approuvé, jamais depuis une
+  URL arbitraire fournie à l'exécution ;
+- installation silencieuse Windows avec fichier de réponse ou scripts officiels ;
+- installation Linux avec installateur natif ou script NetBackup selon la
+  distribution et la version ;
+- configuration du primary server, du nom client et des serveurs autorisés ;
+- enrôlement du certificat hôte et gestion du token lorsque nécessaire ;
+- ouverture ou validation des flux nécessaires sans désactiver le pare-feu ;
+- démarrage et contrôle des services NetBackup ;
+- tests `bpclntcmd`, connectivité BPCD et validation de l'identité du client ;
+- mode `install`, `upgrade` et `audit`, avec désinstallation séparée et
+  explicitement destructive ;
+- artefact AAP : `netbackup_client_deploy_summary`.
+
+La création d'une policy n'est pas implicite. Elle reste la responsabilité de
+`ansible-netbackup-policy-create` afin que le déploiement du logiciel et la
+mise en protection puissent utiliser des workflows et des droits distincts.
+
+#### `ansible-veeam-agent-deploy`
+
+Déploiement d'un Veeam Agent managé sur les machines physiques Windows ou Linux :
+
+- détection de l'OS, de l'architecture, du Secure Boot et de la compatibilité du
+  module kernel Linux ;
+- mode centralisé par protection group Veeam ou préinstallation par Veeam
+  Deployment Kit ;
+- transfert sécurisé des packages, du XML de configuration et des certificats
+  temporaires ;
+- installation de Veeam Installer Service sous Windows ou Veeam Deployer
+  Service sous Linux ;
+- rattachement à un protection group pour agents préinstallés ou déclenchement
+  d'un rescan du groupe existant ;
+- remplacement et contrôle du certificat temporaire par l'identité propre à la
+  machine ;
+- installation/mise à niveau de Veeam Agent et Veeam Transport Service ;
+- contrôle des services, de la communication avec VBR et de l'état managé ;
+- redémarrage interdit par défaut et autorisé uniquement par variable explicite ;
+- mode `install`, `upgrade` et `audit` ;
+- artefact AAP : `veeam_agent_deploy_summary`.
+
+Les fichiers du Deployment Kit contiennent du matériel d'amorçage sensible.
+Ils doivent être stockés dans un dépôt protégé, transférés de façon temporaire
+et supprimés du nœud cible dans un bloc `always`.
+
+### Intégration des cibles de stockage
+
+#### `ansible-veeam-repository-dxi`
+
+Intégration d'un Quantum DXi comme repository Veeam dédié :
+
+- découverte du modèle, du firmware et des capacités d'intégration Veeam ;
+- création ou validation de la cible logique requise côté DXi selon le contrat
+  API de la version ;
+- création ou rotation du compte d'accès dédié à Veeam ;
+- enregistrement du DXi comme deduplicating storage appliance dans VBR ;
+- sélection du gateway/mount server et validation de ses flux ;
+- configuration du chemin, de la capacité, des limites de tâches et du débit ;
+- validation de Fast Clone et des paramètres imposés par la version ;
+- rescan du repository et test d'écriture non destructif ;
+- artefact AAP : `veeam_repository_dxi_summary`.
+
+Cette brique ne transforme pas le DXi en repository Linux générique. Elle
+utilise le mode d'intégration DXi supporté par Veeam et publie les limitations
+détectées par version.
+
+#### `ansible-netbackup-storage-dxi`
+
+Intégration d'un Quantum DXi à NetBackup via OpenStorage (OST) :
+
+- création ou validation du storage server OST et de ses LSU côté DXi ;
+- création du compte OST et contrôle des droits ;
+- installation ou mise à niveau du plug-in OST Quantum sur chaque media server
+  Windows ou Linux concerné ;
+- arrêt et redémarrage ordonné des services NetBackup lors d'une évolution du
+  plug-in ;
+- enregistrement du storage server dans NetBackup ;
+- création du disk pool et de la storage unit ;
+- configuration de la concurrence, des media servers autorisés et des seuils ;
+- option séparée pour optimized duplication/réplication OST ;
+- tests de connectivité, inventaire des LSU et test d'écriture ;
+- artefact AAP : `netbackup_storage_dxi_summary`.
+
+Les binaires du plug-in sont validés par checksum et par matrice de
+compatibilité. L'installation sur un media server ne doit jamais être déduite
+du seul fait qu'il apparaît dans l'inventaire NetBackup.
+
+#### `ansible-veeam-repository-storeonce`
+
+Intégration d'un HPE StoreOnce comme repository Veeam Catalyst :
+
+- découverte de la version StoreOnce et des capacités Catalyst disponibles ;
+- création ou validation du Catalyst Store ;
+- création du Catalyst Client Veeam, contrôle d'accès et rotation du secret ;
+- choix explicite du transport Catalyst sur Ethernet ou Fibre Channel ;
+- création du repository HPE StoreOnce dans VBR ;
+- sélection du gateway server et validation du Veeam Data Mover ;
+- configuration de la concurrence, de la limite d'ingestion et de la capacité ;
+- immutabilité activable uniquement lorsque la combinaison StoreOnce/Veeam la
+  supporte ;
+- rescan et test d'écriture non destructif ;
+- artefact AAP : `veeam_repository_storeonce_summary`.
+
+#### `ansible-netbackup-storage-storeonce`
+
+Intégration d'un HPE StoreOnce à NetBackup avec le Catalyst Plug-in OST :
+
+- création ou validation du Catalyst Store et du Catalyst Client NetBackup ;
+- contrôle d'accès au store et choix Ethernet ou Catalyst over Fibre Channel ;
+- installation ou mise à niveau silencieuse du plug-in HPE StoreOnce Catalyst
+  OST sur chaque media server Windows ou Linux ;
+- arrêt/redémarrage ordonné des services NetBackup autour de l'évolution du
+  plug-in ;
+- gestion contrôlée de `plugin.conf`, globale ou ciblée par StoreOnce/store ;
+- enregistrement du storage server, création du disk pool et de la storage unit ;
+- options séparées pour Optimized Duplication, A.I.R., Accelerator et
+  immutabilité lorsqu'elles sont supportées ;
+- contrôle de cohérence de version du plug-in sur tous les media servers d'un
+  même domaine ;
+- test de connectivité, inventaire du store et test d'écriture ;
+- artefact AAP : `netbackup_storage_storeonce_summary`.
 
 ### Cycle de vie des jobs et policies
 
@@ -213,23 +350,39 @@ Restauration granulaire Windows ou Linux depuis une image VMware ou Hyper-V :
 
 ## Matrice cible
 
-| Projet | Veeam | NetBackup | VMware | Hyper-V | Destructif |
-|---|:--:|:--:|:--:|:--:|:--:|
-| `*-conf` | Oui | Oui | N/A | N/A | Configuration |
-| `*-job-create` / `*-policy-create` | Oui | Oui | Oui | Oui | Création |
-| `*-job-remove` / `*-policy-remove` | Oui | Oui | Oui | Oui | Oui, configuration |
-| `*-backup-vm` | Oui | Oui | Oui | Selon capacités/version | Non |
-| `*-restore-vm` | Oui | Oui | Oui | Oui, modes variables | Oui |
-| `*-restore-file` | Oui | Oui | Oui | Oui, prérequis variables | Oui |
+| Projet | Veeam | NetBackup | VMware | Hyper-V | Physique | Destructif |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| `*-conf` | Oui | Oui | N/A | N/A | Serveur de sauvegarde | Configuration |
+| `netbackup-client-deploy` | — | Oui | Invité possible | Invité possible | Oui | Installation |
+| `veeam-agent-deploy` | Oui | — | Hors cible principale | Hors cible principale | Oui | Installation |
+| `veeam-repository-dxi` | Oui | — | N/A | N/A | Cible DXi | Configuration |
+| `netbackup-storage-dxi` | — | Oui | N/A | N/A | Cible DXi | Configuration |
+| `veeam-repository-storeonce` | Oui | — | N/A | N/A | Cible StoreOnce | Configuration |
+| `netbackup-storage-storeonce` | — | Oui | N/A | N/A | Cible StoreOnce | Configuration |
+| `*-job-create` / `*-policy-create` | Oui | Oui | Oui | Oui | Agents via projet dédié | Création |
+| `*-job-remove` / `*-policy-remove` | Oui | Oui | Oui | Oui | Agents via projet dédié | Oui, configuration |
+| `*-backup-vm` | Oui | Oui | Oui | Selon capacités/version | — | Non |
+| `*-restore-vm` | Oui | Oui | Oui | Oui, modes variables | — | Oui |
+| `*-restore-file` | Oui | Oui | Oui | Oui, prérequis variables | Via agent à prévoir | Oui |
 
 ## Variables communes proposées
 
 ```yaml
 backup_provider: veeam  # veeam | netbackup
+protected_workload_type: vm  # vm | physical
 virtualization_platform: vmware  # vmware | hyperv
 backup_server: backup.example.net
 backup_validate_certs: true
 backup_api_version: auto
+
+target_provider: dxi  # dxi | storeonce
+target_transport: ethernet  # ethernet | fibre_channel
+target_name: backup-target-01
+media_servers: []
+gateway_server: null
+
+client_state: present  # present | latest | audit
+allow_reboot: false
 
 vm_name: srv-example
 restore_point_strategy: latest_successful
@@ -239,10 +392,12 @@ operation_timeout_seconds: 14400
 confirm_remove: false
 confirm_overwrite: false
 confirm_delete_backup_data: false
+confirm_uninstall_agent: false
 ```
 
-Les secrets ne doivent jamais être placés dans `group_vars`. Ils sont fournis
-par AAP Credential, Ansible Vault ou un gestionnaire de secrets externe.
+Les secrets, tokens, certificats privés et mots de passe OST/Catalyst ne doivent
+jamais être placés dans `group_vars`. Ils sont fournis par AAP Credential,
+Ansible Vault ou un gestionnaire de secrets externe.
 
 ## Garde-fous communs
 
@@ -250,15 +405,20 @@ Tous les projets doivent intégrer :
 
 1. validation de la version et découverte des capacités réellement disponibles ;
 2. validation TLS activée par défaut ;
-3. recherche non ambiguë des serveurs, jobs/policies, VM et restore points ;
-4. verrou partagé empêchant sauvegarde, suppression et restauration concurrentes
-   sur la même VM ;
-5. refus des opérations destructives sans confirmation explicite ;
-6. vérification de la capacité de destination avant restauration ;
-7. contrôle des jobs/sessions déjà actifs ;
-8. journalisation sans secret et publication d'un artefact `set_stats` stable ;
-9. libération des verrous et fermeture des sessions dans un bloc `always` ;
-10. mode `check` ou `plan` lorsque l'opération peut être simulée sans danger.
+3. recherche non ambiguë des serveurs, clients, agents, jobs/policies, VM,
+   repositories, storage units et restore points ;
+4. validation de checksum et de provenance pour chaque package ou plug-in ;
+5. verrou partagé empêchant sauvegarde, suppression, installation et
+   restauration concurrentes sur une même ressource ;
+6. refus des opérations destructives sans confirmation explicite ;
+7. vérification de la capacité de destination avant restauration ;
+8. contrôle des jobs, sessions et services déjà actifs ;
+9. journalisation sans secret et publication d'un artefact `set_stats` stable ;
+10. libération des verrous, nettoyage des médias temporaires et fermeture des
+    sessions dans un bloc `always` ;
+11. mode `check`, `audit` ou `plan` lorsque l'opération peut être simulée sans
+    danger ;
+12. matrice de compatibilité version logiciel × OS × firmware × plug-in.
 
 ## Ordre de réalisation recommandé
 
@@ -268,26 +428,40 @@ Tous les projets doivent intégrer :
 2. `ansible-netbackup-conf` ;
 3. rôles de découverte de version/capacités et authentification réutilisables.
 
-### Lot 2 — Protection déclarative
+### Lot 2 — Déploiement des clients et agents
 
-4. `ansible-veeam-job-create` et `ansible-veeam-job-remove` ;
-5. `ansible-netbackup-policy-create` et `ansible-netbackup-policy-remove` ;
-6. intégration à `createvm` et `deletevm` pour ajouter ou retirer la protection
-   sans rendre ces projets dépendants du logiciel de sauvegarde.
+4. `ansible-netbackup-client-deploy` ;
+5. `ansible-veeam-agent-deploy` ;
+6. tests d'enrôlement, de certificat et de communication sur Windows et Linux.
 
-### Lot 3 — Exécution à la demande
+### Lot 3 — Intégration des cibles
 
-7. `ansible-veeam-backup-vm` ;
-8. `ansible-netbackup-backup-vm` ;
-9. préflight partagé « dernière sauvegarde valide » pour `deletevm`,
-   `inplace-upgrade` et les futures opérations destructives.
+7. `ansible-veeam-repository-dxi` ;
+8. `ansible-netbackup-storage-dxi` ;
+9. `ansible-veeam-repository-storeonce` ;
+10. `ansible-netbackup-storage-storeonce` ;
+11. tests d'écriture, de rescan et de cohérence multi-media-server.
 
-### Lot 4 — Restauration
+### Lot 4 — Protection déclarative
 
-10. `ansible-veeam-restore-vm` ;
-11. `ansible-netbackup-restore-vm` ;
-12. `ansible-veeam-restore-file` ;
-13. `ansible-netbackup-restore-file`.
+12. `ansible-veeam-job-create` et `ansible-veeam-job-remove` ;
+13. `ansible-netbackup-policy-create` et `ansible-netbackup-policy-remove` ;
+14. intégration à `createvm` et `deletevm` pour ajouter ou retirer la protection
+    sans rendre ces projets dépendants du logiciel de sauvegarde.
+
+### Lot 5 — Exécution à la demande
+
+15. `ansible-veeam-backup-vm` ;
+16. `ansible-netbackup-backup-vm` ;
+17. préflight partagé « dernière sauvegarde valide » pour `deletevm`,
+    `inplace-upgrade` et les futures opérations destructives.
+
+### Lot 6 — Restauration
+
+18. `ansible-veeam-restore-vm` ;
+19. `ansible-netbackup-restore-vm` ;
+20. `ansible-veeam-restore-file` ;
+21. `ansible-netbackup-restore-file`.
 
 La restauration doit être testée avant d'être exposée largement dans
 ServiceNow. Un job de sauvegarde qui réussit sans restauration régulièrement
@@ -298,24 +472,30 @@ testée ne constitue pas une preuve suffisante de récupérabilité.
 Chaque brique doit exposer un Job Template distinct pour séparer les droits :
 
 - configuration de la plateforme ;
+- déploiement ou mise à niveau d'un client/agent ;
+- intégration d'une cible DXi ou StoreOnce ;
 - création de protection ;
 - suppression de protection ;
 - sauvegarde à la demande ;
 - restauration complète ;
 - restauration de fichiers.
 
-Les restaurations et les suppressions doivent utiliser des workflows avec
-approbation, numéro de changement, fenêtre autorisée et journal de résultat.
-Le workflow ServiceNow sélectionne le provider depuis la CMDB ou le catalogue,
-puis appelle uniquement le projet Veeam ou NetBackup correspondant.
+Les restaurations, désinstallations et suppressions doivent utiliser des
+workflows avec approbation, numéro de changement, fenêtre autorisée et journal
+de résultat. Le workflow ServiceNow sélectionne le provider et la cible depuis
+la CMDB ou le catalogue, puis appelle uniquement le projet correspondant.
 
 ## Validation attendue
 
-- tests unitaires des payloads REST et commandes générées ;
+- tests unitaires des payloads REST, fichiers de réponse et commandes générées ;
 - mocks des API pour les erreurs, conflits, timeouts et changements de version ;
-- tests d'idempotence sur les projets `*-conf` et `*-create` ;
+- tests d'idempotence sur les projets `*-conf`, `*-deploy`, `*-repository-*`,
+  `*-storage-*` et `*-create` ;
 - tests de non-régression des recherches ambiguës ;
+- tests d'installation et de mise à niveau des clients Windows/Linux ;
+- tests de cohérence du plug-in OST/Catalyst sur plusieurs media servers ;
 - environnement jetable VMware et Hyper-V pour les tests de restauration ;
+- machines physiques ou bare-metal de test pour Veeam Agent et NetBackup Client ;
 - test périodique de restauration automatisée avec suppression de la VM de test ;
-- matrice publiée des versions Veeam/NetBackup et des plateformes réellement
-  validées.
+- matrice publiée des versions Veeam/NetBackup, DXi/StoreOnce, OS, plug-ins et
+  plateformes réellement validées.
