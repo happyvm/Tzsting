@@ -1,0 +1,22 @@
+---
+- name: Add the target VM to the in-memory inventory
+  ansible.builtin.add_host:
+    name: inplace_upgrade_guest
+    ansible_host: "{{ target_ip | default(vm_name) }}"
+    ansible_connection: "{{ 'winrm' if guest_os == 'windows' else 'ssh' }}"
+    ansible_user: "{{ guest_username }}"
+    ansible_password: "{{ guest_password | default(omit) }}"
+    ansible_ssh_private_key_file: "{{ guest_ssh_private_key_file | default(omit) }}"
+    ansible_winrm_transport: "{{ guest_winrm_transport | default('ntlm') }}"
+    ansible_port: "{{ 5986 if guest_os == 'windows' else 22 }}"
+    ansible_become: "{{ linux_become | default(false) if guest_os == 'redhat' else false }}"
+    ansible_become_password: "{{ linux_become_password | default(omit) }}"
+    ansible_python_interpreter: "{{ linux_python_interpreter | default('/usr/bin/python3') }}"
+    groups: inplace_upgrade_target
+  no_log: true
+
+- name: Wait for guest management connectivity
+  ansible.builtin.wait_for:
+    host: "{{ target_ip | default(vm_name) }}"
+    port: "{{ 5986 if guest_os == 'windows' else 22 }}"
+    timeout: 60

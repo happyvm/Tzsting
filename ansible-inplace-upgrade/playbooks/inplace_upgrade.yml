@@ -1,0 +1,91 @@
+---
+# Required: vm_name, guest_os (windows|redhat), target_major_version,
+# guest_username and guest_password or guest_ssh_private_key_file.
+# Windows also requires windows_media_path (mounted ISO or extracted media).
+- name: Upgrade a Windows or Red Hat VM in place
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate the VM and detect VMware or Hyper-V
+      ansible.builtin.include_role:
+        name: preflight_platform
+
+    - name: Add the guest endpoint to the transient inventory
+      ansible.builtin.include_role:
+        name: prepare_guest
+
+    - name: Acquire the per-VM upgrade lock
+      ansible.builtin.include_role:
+        name: upgrade_lock
+      vars:
+        inplace_upgrade_lock_action: acquire
+
+    - name: Run the guarded in-place upgrade
+      block:
+        - name: Validate release path and guest readiness
+          ansible.builtin.include_role:
+            name: preflight_upgrade_constraints
+
+        - name: Create VMware rollback snapshot
+          community.vmware.vmware_guest_snapshot:
+            hostname: "{{ vcenter_hostname }}"
+            username: "{{ vcenter_username }}"
+            password: "{{ vcenter_password }}"
+            datacenter: "{{ vcenter_datacenter }}"
+            validate_certs: "{{ vmware_validate_certs }}"
+            name: "{{ vm_name }}"
+            state: present
+            snapshot_name: "{{ inplace_upgrade_snapshot_prefix }}-{{ lookup('pipe', 'date -u +%Y%m%d%H%M%S') }}"
+            description: "Automatic rollback point before OS in-place upgrade"
+            quiesce: true
+            memory_dump: false
+          register: inplace_upgrade_snapshot_result
+          when:
+            - inplace_upgrade_require_snapshot | bool
+            - inplace_upgrade_hypervisor_type == 'vmware'
+
+        - name: Create Hyper-V rollback checkpoint
+          ansible.windows.win_powershell:
+            script: |
+              $name = '{{ inplace_upgrade_snapshot_prefix }}-{{ lookup("pipe", "date -u +%Y%m%d%H%M%S") }}'
+              Checkpoint-VM -Name '{{ vm_name }}' -SnapshotName $name -ErrorAction Stop
+              $name
+          delegate_to: "{{ inplace_upgrade_hyperv_host }}"
+          register: inplace_upgrade_snapshot_result
+          when:
+            - inplace_upgrade_require_snapshot | bool
+            - inplace_upgrade_hypervisor_type == 'hyperv'
+
+        - name: Perform Windows in-place upgrade
+          ansible.builtin.include_role:
+            name: upgrade_windows
+          when: guest_os == 'windows'
+
+        - name: Perform Red Hat in-place upgrade
+          ansible.builtin.include_role:
+            name: upgrade_redhat
+          when: guest_os == 'redhat'
+
+        - name: Verify the running target release
+          ansible.builtin.include_role:
+            name: verify_upgrade
+
+        - name: Publish AAP artifact for ServiceNow
+          ansible.builtin.set_stats:
+            data:
+              inplace_upgrade_summary:
+                vm_name: "{{ vm_name }}"
+                hypervisor_type: "{{ inplace_upgrade_hypervisor_type }}"
+                guest_os: "{{ guest_os }}"
+                source_major_version: "{{ inplace_upgrade_source_major }}"
+                target_major_version: "{{ target_major_version }}"
+                verified: true
+            aggregate: false
+      always:
+        - name: Release the per-VM upgrade lock
+          ansible.builtin.include_role:
+            name: upgrade_lock
+          vars:
+            inplace_upgrade_lock_action: release
