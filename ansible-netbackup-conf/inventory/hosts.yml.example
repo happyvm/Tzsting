@@ -1,0 +1,7 @@
+---
+# Copy to hosts.yml. The NetBackup primary server is managed via HTTPS
+# from localhost.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

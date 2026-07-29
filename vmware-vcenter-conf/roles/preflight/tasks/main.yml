@@ -19,6 +19,13 @@
       - not vcenter_conf_snmp_enabled | bool or vcenter_conf_snmp_receivers.snmp_receiver_1_url | length > 0
       - not vcenter_conf_snmp_enabled | bool or vcenter_conf_snmp_receivers.snmp_receiver_1_enabled | bool
       - not vcenter_conf_syslog_enabled | bool or vcenter_conf_syslog_endpoint is match('^/[^ ]+$')
+      - not vcenter_conf_backup_enabled | bool or vcenter_conf_backup_name | length > 0
+      - not vcenter_conf_backup_enabled | bool or vcenter_conf_backup.location_url | length > 0
+      - not vcenter_conf_backup_enabled | bool or vcenter_conf_backup.location_url is match('^(ftps|https|sftp|ftp|nfs|smb|http)://')
+      - not vcenter_conf_backup_enabled | bool or vcenter_conf_backup.retain_count >= 0
+      - not vcenter_conf_backup_enabled | bool or (vcenter_conf_backup.schedule.hour >= 0 and vcenter_conf_backup.schedule.hour <= 23)
+      - not vcenter_conf_backup_enabled | bool or (vcenter_conf_backup.schedule.minute >= 0 and vcenter_conf_backup.schedule.minute <= 59)
+      - not vcenter_conf_backup_enabled | bool or vcenter_conf_backup.schedule.days_of_week | length > 0
     fail_msg: >-
       Credentials and firmware-specific VAMI HTTPS API paths are
       mandatory (copy paths/payloads from the API guide for the target
@@ -26,4 +33,7 @@
       logging_options value; enabling SMTP requires a mail server and
       sender; enabling SNMP requires receiver 1 enabled with a non-empty
       URL (only v1/v2c is supported, no SNMPv3); enabling syslog requires a
-      valid VAMI endpoint path.
+      valid VAMI endpoint path; enabling backup requires a name, a location
+      URL with a supported scheme (ftps/https/sftp/ftp/nfs/smb/http), a
+      non-negative retain_count, a valid hour (0-23)/minute (0-59) and at
+      least one day of week.

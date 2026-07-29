@@ -1,0 +1,15 @@
+---
+- name: Configure VBR global SNMP settings
+  ansible.builtin.uri:
+    url: "https://{{ veeam_conf_hostname }}:{{ veeam_conf_port }}{{ veeam_conf_snmp_endpoint }}"
+    method: "{{ veeam_conf_snmp_method }}"
+    headers:
+      x-api-version: "{{ veeam_conf_api_version }}"
+      Authorization: "Bearer {{ veeam_conf_access_token }}"
+    body_format: json
+    body: "{{ veeam_conf_snmp_configuration }}"
+    validate_certs: "{{ veeam_conf_validate_certs }}"
+    status_code: [200, 201, 202, 204]
+  register: veeam_conf_snmp_result
+  changed_when: veeam_conf_snmp_result.status in [201, 202, 204]
+  no_log: true

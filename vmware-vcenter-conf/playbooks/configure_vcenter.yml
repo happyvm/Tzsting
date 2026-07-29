@@ -1,8 +1,10 @@
 ---
 # Configures vCenter Server Appliance services: NTP, timezone, local
 # appliance admin password rotation (via the VAMI REST API - see README for
-# why) and general vCenter server settings (logging, via the real
-# community.vmware.vmware_vcenter_settings module).
+# why), general vCenter server settings (logging, via the real
+# community.vmware.vmware_vcenter_settings module) and the appliance's own
+# backup schedule (vmware.vmware.vcsa_backup_schedule, disabled by
+# default).
 #
 # Usage:
 #   ansible-playbook playbooks/configure_vcenter.yml --vault-password-file .vault_pass
@@ -38,6 +40,11 @@
       ansible.builtin.include_role:
         name: logging
 
+    - name: Configure the appliance backup schedule
+      ansible.builtin.include_role:
+        name: backup
+      when: vcenter_conf_backup_enabled | bool
+
     - name: Publish AAP artifact
       ansible.builtin.set_stats:
         data:
@@ -50,4 +57,5 @@
             syslog_configured: "{{ vcenter_conf_syslog_enabled | bool }}"
             smtp_configured: "{{ vcenter_conf_smtp_enabled | bool }}"
             snmp_configured: "{{ vcenter_conf_snmp_enabled | bool }}"
+            backup_configured: "{{ vcenter_conf_backup_enabled | bool }}"
         aggregate: false

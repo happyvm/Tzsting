@@ -1,0 +1,6 @@
+---
+collections: []
+# No maintained Ansible collection wraps the Veritas NetBackup REST API -
+# configuration here uses ansible.builtin.uri directly. See roles/auth and
+# the README for the (real, version-pinned) JWT login flow this project
+# authenticates with.

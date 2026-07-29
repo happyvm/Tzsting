@@ -1,0 +1,18 @@
+---
+- name: Validate NetBackup configuration request
+  ansible.builtin.assert:
+    that:
+      - netbackup_conf_hostname | length > 0
+      - netbackup_conf_port > 0
+      - netbackup_conf_username | length > 0
+      - netbackup_conf_password | length > 0
+      - netbackup_conf_media_type | length > 0
+      - netbackup_conf_login_endpoint is match('^/[^ ]+$')
+      - not netbackup_conf_smtp_enabled | bool or netbackup_conf_smtp_endpoint is match('^/[^ ]+$')
+      - not netbackup_conf_snmp_enabled | bool or netbackup_conf_snmp_endpoint is match('^/[^ ]+$')
+    fail_msg: >-
+      Credentials, the exact versioned media type header for the target
+      NetBackup release, a valid login endpoint path, and (when a
+      notification channel is enabled) release-specific REST paths are
+      all mandatory - copy them from the API guide for the target
+      release. See README.

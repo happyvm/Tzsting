@@ -1,0 +1,44 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+netbackup_conf_hostname: nbmaster01.example.local
+netbackup_conf_port: 1556
+netbackup_conf_username: "{{ vault_netbackup_conf_username }}"
+netbackup_conf_password: "{{ vault_netbackup_conf_password }}"
+# Optional (NetBackup accepts a plain local account without either set).
+netbackup_conf_domain_name: ""
+netbackup_conf_domain_type: ""
+netbackup_conf_validate_certs: true
+
+# NetBackup's REST API requires a versioned custom media type on every
+# request (e.g. "application/vnd.netbackup+json;version=10.0") - this
+# changes across NetBackup releases, so it's a required, blank-by-default
+# value rather than a guessed constant. See README.
+netbackup_conf_media_type: ""
+
+# The login resource is documented as POST /login across several
+# NetBackup releases (8.1-10.x); the base path prefix below is this
+# project's best-effort default - confirm it against the "Getting
+# Started" API guide for the target release before relying on it.
+netbackup_conf_login_endpoint: "/netbackup/login"
+
+# REST paths/payloads for the settings below vary by NetBackup release.
+# These paths are intentionally required inventory values: copy them from
+# the API guide shipped with the exact target release instead of guessing
+# in code - see README.
+netbackup_conf_smtp_enabled: false
+netbackup_conf_smtp_endpoint: ""
+netbackup_conf_smtp_method: POST
+netbackup_conf_smtp_configuration:
+  smtpServer: smtp.example.local
+  port: 25
+  senderEmailAddress: "netbackup01-alerts@example.local"
+  recipients: []
+
+netbackup_conf_snmp_enabled: false
+netbackup_conf_snmp_endpoint: ""
+netbackup_conf_snmp_method: POST
+netbackup_conf_snmp_configuration:
+  community: "{{ vault_netbackup_conf_snmp_community | default('') }}"
+  trapDestinations:
+    - hostName: snmp01.example.local
+      port: 162

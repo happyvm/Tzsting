@@ -1,0 +1,16 @@
+---
+- name: Configure NetBackup SMTP notification settings
+  ansible.builtin.uri:
+    url: "https://{{ netbackup_conf_hostname }}:{{ netbackup_conf_port }}{{ netbackup_conf_smtp_endpoint }}"
+    method: "{{ netbackup_conf_smtp_method }}"
+    headers:
+      Content-Type: "{{ netbackup_conf_media_type }}"
+      Accept: "{{ netbackup_conf_media_type }}"
+      Authorization: "Bearer {{ netbackup_conf_access_token }}"
+    body_format: json
+    body: "{{ netbackup_conf_smtp_configuration }}"
+    validate_certs: "{{ netbackup_conf_validate_certs }}"
+    status_code: [200, 201, 202, 204]
+  register: netbackup_conf_smtp_result
+  changed_when: netbackup_conf_smtp_result.status in [201, 202, 204]
+  no_log: true

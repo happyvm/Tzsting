@@ -26,6 +26,16 @@ Ansible, 2 scripts PowerShell de reporting Pure Storage, 6 workflows CI.
 > Windows). Le détail des sections concernées a été annoté ci-dessous;
 > le reste de l'analyse (mobilité, clusters, firmware, patch OS, etc.)
 > reste valide tel quel.
+>
+> **Deuxième mise à jour** : `vmware-vcenter-conf` couvre désormais la
+> planification de sauvegarde native de l'appliance (`vcsa_backup_schedule`
+> - fermeture du dernier point de l'écart 3.5). Deux nouveaux projets ont
+> aussi été ajoutés (25 au total) : `ansible-veeam-conf` et
+> `ansible-netbackup-conf`, qui referment **partiellement** l'écart 4.15
+> (intégration au logiciel de sauvegarde) au niveau notification/alerting
+> du serveur de sauvegarde uniquement - la création de jobs/policies, la
+> restauration et le préflight « sauvegarde valide » (écart 4.16) restent
+> absents et sont, de loin, la partie la plus utile de cet écart.
 
 - [Méthode et légende](#méthode-et-légende)
 - [Vue d'ensemble de la couverture](#vue-densemble-de-la-couverture)
@@ -174,7 +184,7 @@ inventaire de conformité) reste absent.
 | 3.2 | **Pas de configuration réseau/stockage d'hôte** | vSwitch / dvSwitch, port groups, vmkernel, teaming, MTU/jumbo frames, iSCSI/NVMe-oF initiator, rescan HBA, datastore mount/unmount, multipath (PSP/SATP) — alors que `purestorage-volhost-create` provisionne justement le LUN en amont. **La chaîne s'arrête à la baie.** |
 | 3.3 | **Pas de cycle de vie de cluster** | Ajout/retrait d'un hôte d'un cluster, mode maintenance (entrée/sortie, évacuation), EVC, HA/DRS, cluster Hyper-V (drain de nœud, CSV, quorum). |
 | 3.4 | **Pas de mise à jour d'hyperviseur** | Upgrade ESXi (baselines vLCM, images de cluster, remédiation), patch des nœuds Hyper-V (Cluster-Aware Updating), rolling upgrade de cluster. |
-| 3.5 | 🟡 **Configuration des appliances de management — partiellement couvert** | `vmware-vcenter-conf` (NTP, timezone, rotation du mot de passe admin local via VAMI, syslog, journalisation/SMTP/SNMP v1-v2c via `vmware_vcenter_settings`) et `windows-scvmm-conf` (jonction AD, compte local, NTP, timezone, SNMP v1/v2c OS) couvrent désormais l'identité/temps/alerting de base. Restent absents : intégration AD/SSO de vCenter, rôles et permissions, certificats, sauvegarde/restauration de la configuration de l'appliance elle-même. |
+| 3.5 | 🟡 **Configuration des appliances de management — partiellement couvert** | `vmware-vcenter-conf` (NTP, timezone, rotation du mot de passe admin local via VAMI, syslog, journalisation/SMTP/SNMP v1-v2c via `vmware_vcenter_settings`, et désormais la planification de sauvegarde native de l'appliance via `vmware.vmware.vcsa_backup_schedule`) et `windows-scvmm-conf` (jonction AD, compte local, NTP, timezone, SNMP v1/v2c OS) couvrent l'identité/temps/alerting/sauvegarde de base. Restent absents : intégration AD/SSO de vCenter, rôles et permissions, certificats. |
 | 3.6 | **Pas de build d'hyperviseur** | Installation ESXi (kickstart/Auto Deploy/host profile) ou d'un nœud Hyper-V à partir d'une lame nue. C'est le chaînon manquant entre `synergy-*` (matériel) et le reste du dépôt. |
 | 3.7 | **Pas de décommissionnement d'hôte** | Évacuation, retrait du cluster, désenregistrement vCenter/SCVMM, démasquage des LUN, retrait du zoning. |
 | 3.8 | **Pas d'inventaire / conformité d'hyperviseur** | Aucun équivalent de `synergy-get` pour ESXi : version/build, patch level, uptime, HBA/WWN, datastores, VM par hôte, capacité et sur-souscription. |
@@ -238,7 +248,7 @@ le guide API de sa version (choix de conception prudent et bien documenté).
 | # | Écart | Détail |
 |---|---|---|
 | 4.14 | **Pas de configuration fonctionnelle** | Aucun partage NAS/CIFS/NFS, aucun Catalyst Store, aucune VTL, aucune politique de rétention, aucune réplication ni air gap. Les appliances sont configurées « identité et temps » uniquement — elles ne sont pas rendues exploitables. |
-| 4.15 | **Aucune intégration au logiciel de sauvegarde** | NetBackup / Veeam / Commvault absents : pas de création de job, pas de politique, pas de restauration, pas de vérification de sauvegarde avant une opération destructive. |
+| 4.15 | 🟡 **Intégration au logiciel de sauvegarde — partiellement couvert** | `ansible-veeam-conf` et `ansible-netbackup-conf` configurent désormais les réglages de notification (SMTP/SNMP) des serveurs Veeam Backup & Replication et NetBackup, sur le même modèle que les autres projets `*-conf` (identité/alerting d'un équipement). **Restent absents, et c'est le plus gros du sujet** : création/gestion de job ou de policy de sauvegarde, storage lifecycle policies, repositories, restauration, et vérification qu'une sauvegarde valide existe (voir 4.16, qui n'est pas non plus couvert par ces deux projets). Commvault reste totalement absent. |
 | 4.16 | **Pas de chaînage sauvegarde ↔ cycle de vie VM** | `deletevm` et `inplace-upgrade` ne vérifient pas qu'une sauvegarde valide existe, alors que `ANSIBLE.md` insiste sur le fait qu'un snapshot n'est pas une sauvegarde. Le préflight le plus utile du dépôt est celui qui manque. |
 | 4.17 | **Contrat API non implémenté** | Les projets DXi/StoreOnce sont, en l'état, des squelettes : sans les `*_endpoint`, le préflight bloque toute exécution. Il faut une variante validée par version de firmware pour qu'ils soient utilisables. |
 
@@ -296,16 +306,18 @@ un rôle de verrou (`create_vm_lock`, `delete_vm_lock`, `compute_lock`,
 
 ### Tests et CI
 
-- **6 workflows pour 23 projets** (les 8 projets Windows/VMware ajoutés
-  depuis la rédaction initiale n'ont pas non plus de workflow dédié).
-  Aucune CI pour `inplace-upgrade`, `purestorage-conf`,
-  `purestorage-volhost-create`, `purestorage-volhost-remove`,
-  `synergy-conf`, `synergy-get`, `synergy-vlan-add`, `synergy-vlan-remove`,
-  `quantum-dxi-conf`, `hpe-storeonce-conf`, `vmware-esxi-conf`,
-  `vmware-vcenter-conf`, `vmware-vcenter-addvlan`, `vmware-vcenter-removevlan`,
+- **6 workflows pour 25 projets** (les 8 projets Windows/VMware et les 2
+  projets logiciel de sauvegarde ajoutés depuis la rédaction initiale n'ont
+  pas non plus de workflow dédié). Aucune CI pour `inplace-upgrade`,
+  `purestorage-conf`, `purestorage-volhost-create`,
+  `purestorage-volhost-remove`, `synergy-conf`, `synergy-get`,
+  `synergy-vlan-add`, `synergy-vlan-remove`, `quantum-dxi-conf`,
+  `hpe-storeonce-conf`, `vmware-esxi-conf`, `vmware-vcenter-conf`,
+  `vmware-vcenter-addvlan`, `vmware-vcenter-removevlan`,
   `windows-hyperv-conf`, `windows-scvmm-conf`, `windows-scvmm-addvlan`,
-  `windows-scvmm-removevlan` — soit **18 projets sans lint ni syntax-check
-  automatisés**, dont tous les projets matériel et hyperviseur.
+  `windows-scvmm-removevlan`, `ansible-veeam-conf`, `ansible-netbackup-conf`
+  — soit **20 projets sans lint ni syntax-check automatisés**, dont tous
+  les projets matériel et hyperviseur.
 - Pas de Molecule, pas de test d'idempotence, pas de test de préflight en
   `--check`, pas de simulateur (vcsim) : les scénarios listés dans
   `ANSIBLE.md` (« VM jetables ») restent entièrement manuels.
@@ -351,8 +363,9 @@ un rôle de verrou (`create_vm_lock`, `delete_vm_lock`, `compute_lock`,
 | `synergy-get` | Étendre à l'enceinte et au fabric, publier la conformité firmware | S |
 | `dxi-conf` / `storeonce-conf` | Profils d'endpoints validés par version de firmware | M |
 | `esxi-conf` | DNS, mode de verrouillage, pare-feu, `advanced settings` | M |
-| `vcenter-conf` | AD/SSO, rôles et permissions, certificats, sauvegarde de config | M |
+| `vcenter-conf` | AD/SSO, rôles et permissions, certificats (sauvegarde de l'appliance faite) | M |
 | `scvmm-conf` | Rôles et permissions SCVMM, certificats | M |
+| `veeam-conf` / `netbackup-conf` | Jobs/policies de sauvegarde, repositories, restauration | L |
 | Tous | CI (yamllint + ansible-lint + syntax-check) sur les projets non couverts | S |
 | Tous | `vmware_validate_certs: true` par défaut | S |
 | Tous | Collection interne de rôles communs (préflight, verrou, résumé) | L |
@@ -365,7 +378,7 @@ Priorisation par **risque évité × fréquence d'usage**, pas par difficulté.
 
 ### P0 — À traiter en premier
 
-1. **CI sur les 18 projets non couverts** (S). Les projets matériel et
+1. **CI sur les 20 projets non couverts** (S). Les projets matériel et
    hyperviseur, les plus destructeurs, n'ont aucun garde-fou automatisé
    aujourd'hui.
 2. **Préflight « sauvegarde valide » avant `deletevm` et `inplace-upgrade`**
@@ -427,9 +440,11 @@ avant tout développement.
 2. **Patch OS : Ansible ou outil dédié ?** Si un WSUS/Satellite/Ivanti
    existe, le rôle d'Ansible se limite à l'orchestration de la fenêtre et du
    redémarrage — ce qui reste à écrire, et reste beaucoup plus simple.
-3. **Les projets DXi et StoreOnce sont-ils destinés à être exécutés ?** En
-   l'état, ils bloquent au préflight tant que les endpoints ne sont pas
-   renseignés. Soit on livre des profils validés par version, soit on assume
+3. **Les projets DXi, StoreOnce, Veeam et NetBackup sont-ils destinés à
+   être exécutés ?** En l'état, ils bloquent au préflight tant que les
+   endpoints ne sont pas renseignés (et, pour Veeam/NetBackup, tant que
+   l'en-tête de version/média type n'est pas confirmé contre la version
+   cible). Soit on livre des profils validés par version, soit on assume
    qu'il s'agit de canevas.
 4. **Multi-vCenter / multi-baie** : le modèle actuel suppose un vCenter et
    une baie par exécution. Si le parc est multi-site, cela impose un

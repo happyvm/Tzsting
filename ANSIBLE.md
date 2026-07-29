@@ -233,7 +233,10 @@ du mot de passe administrateur local et redirection syslog en option via
 l’API VAMI (aucune collection ne la couvre), niveau de journalisation,
 alertes SMTP et destinataires SNMP (v1/v2c uniquement, ces deux derniers en
 option) du serveur vCenter via le module réel
-`community.vmware.vmware_vcenter_settings`.
+`community.vmware.vmware_vcenter_settings`, et planification de la
+sauvegarde native de l’appliance elle-même (en option) via le module réel
+`vmware.vmware.vcsa_backup_schedule` - pas une sauvegarde des VM invitées,
+voir `ansible-veeam-conf`/`ansible-netbackup-conf` pour cette partie.
 
 Documentation : [`vmware-vcenter-conf/README.md`](vmware-vcenter-conf/README.md).
 
@@ -247,6 +250,26 @@ réseau d’une VM. Réutilise les mêmes variables de connexion vCenter
 
 Documentation : [`vmware-vcenter-addvlan/README.md`](vmware-vcenter-addvlan/README.md)
 et [`vmware-vcenter-removevlan/README.md`](vmware-vcenter-removevlan/README.md).
+
+### `ansible-veeam-conf`
+
+Configuration des réglages de notification globaux (email, SNMP) d’un
+serveur **Veeam Backup & Replication**, via son API REST réelle
+(authentification OAuth 2.0 - `POST /api/oauth2/token`, pas d’auth
+basique). Ne couvre ni les jobs de sauvegarde, ni les repositories, ni les
+restaurations - voir le README pour le périmètre exact et son lien avec
+l’écart 4.15/4.16 de `CYCLE-DE-VIE-GAPS.md`.
+
+Documentation : [`ansible-veeam-conf/README.md`](ansible-veeam-conf/README.md).
+
+### `ansible-netbackup-conf`
+
+Équivalent pour un serveur primaire **Veritas NetBackup** : réglages de
+notification SMTP et SNMP via son API REST réelle (authentification par
+jeton JWT - `POST /netbackup/login`, pas d’auth basique). Même périmètre
+volontairement restreint que `ansible-veeam-conf`.
+
+Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
 ## Matrice fonctionnelle
 
@@ -275,6 +298,8 @@ et [`vmware-vcenter-removevlan/README.md`](vmware-vcenter-removevlan/README.md).
 | `vmware-vcenter-conf` | vCenter | — | — | API/VAMI | Configuration |
 | `vmware-vcenter-addvlan` | vCenter | — | — | API | Réseau |
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
+| `ansible-veeam-conf` | — | — | — | API | Configuration |
+| `ansible-netbackup-conf` | — | — | — | API | Configuration |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

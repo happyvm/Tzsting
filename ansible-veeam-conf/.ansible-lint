@@ -1,0 +1,15 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `veeam_conf_` prefix
+  # instead of a per-role prefix on register/set_fact vars:
+  # veeam_conf_access_token is set once by roles/auth and read by
+  # roles/notifications_email and roles/notifications_snmp in the same
+  # play, so a per-role prefix would be actively misleading about where
+  # it's meant to be read from.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - .extracted/
+  - inventory/hosts.yml

@@ -101,3 +101,39 @@ vcenter_conf_syslog_configuration:
   hostname: syslog01.example.local
   port: 514
   protocol: TCP
+
+# Disabled by default. Configures the VCSA's own file-based backup schedule
+# via the real vmware.vmware.vcsa_backup_schedule module (vSphere
+# Automation API - uses vcenter_hostname/username/password above, not the
+# VAMI credential). A backup server/share must already exist and be
+# reachable by the appliance; this only points the appliance at it - see
+# README. Only one schedule can exist per appliance ("default" is what the
+# UI creates, kept here so this role manages the same schedule the web UI
+# would).
+vcenter_conf_backup_enabled: false
+vcenter_conf_backup_name: default
+vcenter_conf_backup:
+  # Supported schemes: FTPS, HTTPS, SFTP, FTP, NFS, SMB, HTTP.
+  location_url: "sftp://backup01.example.local/vcenter/{{ vcenter_hostname }}"
+  location_username: "{{ vault_vcenter_conf_backup_location_username | default('') }}"
+  location_password: "{{ vault_vcenter_conf_backup_location_password | default('') }}"
+  # Unset (empty string) leaves the backup unencrypted - set to enable it.
+  encryption_password: "{{ vault_vcenter_conf_backup_encryption_password | default('') }}"
+  retain_count: 3
+  db_fast_backup: false
+  include_stats_events_and_tasks: true
+  include_supervisors_control_plane: true
+  schedule:
+    hour: 23
+    minute: 30
+    days_of_week:
+      - SATURDAY
+
+# The module has no way to verify the *current* value of a write-only
+# password field, so it can only either always report changed when a
+# password is set, or always keep applying it silently without ever
+# reporting the difference. Kept false here (only report changed when a
+# non-password field actually differs) to avoid false "changed" runs; the
+# tradeoff is that a password rotated in isolation won't be flagged as a
+# change - see README.
+vcenter_conf_backup_always_update_password: false

@@ -1,0 +1,42 @@
+---
+# Configures Veeam Backup & Replication (VBR) server-level notification
+# settings (global email, global SNMP) over its real REST API. This does
+# NOT create/manage backup jobs, policies, repositories, or perform
+# restores - see README for exactly what this project covers and what it
+# deliberately leaves out.
+#
+# Usage:
+#   ansible-playbook playbooks/configure_veeam.yml --vault-password-file .vault_pass
+
+- name: Configure Veeam Backup & Replication server notification settings
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Authenticate to the VBR REST API
+      ansible.builtin.include_role:
+        name: auth
+
+    - name: Configure global email notification settings
+      ansible.builtin.include_role:
+        name: notifications_email
+      when: veeam_conf_email_notifications_enabled | bool
+
+    - name: Configure global SNMP settings
+      ansible.builtin.include_role:
+        name: notifications_snmp
+      when: veeam_conf_snmp_enabled | bool
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          veeam_conf_summary:
+            server: "{{ veeam_conf_hostname }}"
+            email_notifications_configured: "{{ veeam_conf_email_notifications_enabled | bool }}"
+            snmp_configured: "{{ veeam_conf_snmp_enabled | bool }}"
+        aggregate: false
