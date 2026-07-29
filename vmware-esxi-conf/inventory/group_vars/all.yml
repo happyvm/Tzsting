@@ -33,3 +33,16 @@ esxi_conf_local_user:
   name: svc-ansible
   password: "{{ vault_esxi_conf_local_user_password }}"
   description: "Ansible automation account"
+
+# Disabled by default. community.vmware.vmware_host_snmp only implements
+# SNMP v1/v2c (community strings) - its own documentation states SNMP v3
+# configuration isn't implemented yet. Use SNMPv3 elsewhere (vCenter/array/
+# appliance conf projects) if this is a hard requirement for this host.
+esxi_conf_snmp_enabled: false
+esxi_conf_snmp:
+  communities:
+    - "{{ vault_esxi_conf_snmp_community | default('') }}"
+  trap_targets:
+    - hostname: snmp01.example.local
+      port: 162
+      community: "{{ vault_esxi_conf_snmp_community | default('') }}"

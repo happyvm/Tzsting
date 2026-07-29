@@ -14,8 +14,16 @@
       - vcenter_conf_local_admin_username | length > 0
       - vcenter_conf_local_admin_password | length >= 8
       - vcenter_conf_logging_options in ['none', 'error', 'warning', 'info', 'verbose', 'trivia']
+      - not vcenter_conf_smtp_enabled | bool or vcenter_conf_smtp.server | length > 0
+      - not vcenter_conf_smtp_enabled | bool or vcenter_conf_smtp.sender | length > 0
+      - not vcenter_conf_snmp_enabled | bool or vcenter_conf_snmp_receivers.snmp_receiver_1_url | length > 0
+      - not vcenter_conf_snmp_enabled | bool or vcenter_conf_snmp_receivers.snmp_receiver_1_enabled | bool
+      - not vcenter_conf_syslog_enabled | bool or vcenter_conf_syslog_endpoint is match('^/[^ ]+$')
     fail_msg: >-
       Credentials and firmware-specific VAMI HTTPS API paths are
       mandatory (copy paths/payloads from the API guide for the target
       vCenter release), along with a valid local admin password and
-      logging_options value.
+      logging_options value; enabling SMTP requires a mail server and
+      sender; enabling SNMP requires receiver 1 enabled with a non-empty
+      URL (only v1/v2c is supported, no SNMPv3); enabling syslog requires a
+      valid VAMI endpoint path.

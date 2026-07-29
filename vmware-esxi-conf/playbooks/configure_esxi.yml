@@ -36,6 +36,11 @@
       ansible.builtin.include_role:
         name: local_user
 
+    - name: Configure SNMP
+      ansible.builtin.include_role:
+        name: snmp
+      when: esxi_conf_snmp_enabled | bool
+
     - name: Publish AAP artifact
       ansible.builtin.set_stats:
         data:
@@ -46,4 +51,5 @@
             ad_joined: "{{ esxi_conf_ad_enabled | bool }}"
             ad_domain: "{{ esxi_conf_ad.domain if esxi_conf_ad_enabled | bool else '' }}"
             local_user: "{{ esxi_conf_local_user.name }}"
+            snmp_configured: "{{ esxi_conf_snmp_enabled | bool }}"
         aggregate: false
