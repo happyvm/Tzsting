@@ -20,6 +20,7 @@ concevoir ou développer.
 | CMDB / réconciliation | [`SERVICENOW-RECONCILIATION-ROADMAP.md`](SERVICENOW-RECONCILIATION-ROADMAP.md) | Classification VM/physique, audits d'orphelins Pure/AD/WSUS/SCCM/Trellix/Trend/Centreon et rapports mail |
 | CMDB / Satellite | [`SERVICENOW-SATELLITE-AUDIT-ROADMAP.md`](SERVICENOW-SATELLITE-AUDIT-ROADMAP.md) | Détection des CI retirés encore enregistrés dans Satellite et des souscriptions/licences potentiellement consommées |
 | CMDB / couverture | [`SERVICENOW-COVERAGE-AUDIT-ROADMAP.md`](SERVICENOW-COVERAGE-AUDIT-ROADMAP.md) | CI retirés encore présents dans VMware/Hyper-V, couverture Veeam/NetBackup, outils obligatoires manquants et cohérence DNS |
+| CMDB / métadonnées | [`SERVICENOW-VIRTUALIZATION-METADATA-ROADMAP.md`](SERVICENOW-VIRTUALIZATION-METADATA-ROADMAP.md) | Synchronisation environnement, SLA, GxP et DR level vers les Custom Properties SCVMM et tags vCenter |
 
 ## Chaîne cible de création d'un serveur
 
@@ -34,7 +35,8 @@ concevoir ou développer.
 9. collecte des interfaces, MAC et IP depuis les outils invités ;
 10. réconciliation du CI dans ServiceNow via IRE et publication de l'état final ;
 11. vérification facultative de la classification serveur physique/virtuel ;
-12. contrôle différé de la couverture effective, du premier backup et de la résolution DNS.
+12. synchronisation des métadonnées environnement, SLA, GxP et DR vers SCVMM/vCenter ;
+13. contrôle différé de la couverture effective, du premier backup et de la résolution DNS.
 
 ## Chaîne cible de maintenance
 
@@ -48,8 +50,10 @@ concevoir ou développer.
 8. suppression de la downtime ;
 9. nouvelle collecte réseau après changement d'adresse, de carte, de VLAN,
    restauration ou migration ;
-10. contrôle DNS et couverture des outils après modification structurante ;
-11. mise à jour de la conformité et de la CMDB.
+10. resynchronisation des métadonnées après changement d'environnement, SLA, GxP
+    ou niveau de DR ;
+11. contrôle DNS et couverture des outils après modification structurante ;
+12. mise à jour de la conformité et de la CMDB.
 
 ## Chaîne cible de décommissionnement
 
@@ -68,22 +72,24 @@ concevoir ou développer.
 ## Boucle périodique de réconciliation
 
 1. extraction des CI actifs avec leur profil de couverture et leurs exemptions ;
-2. vérification de la présence attendue dans Centreon, SCCM, WSUS, Satellite,
+2. audit de dérive des métadonnées SCVMM/vCenter par rapport à ServiceNow ;
+3. vérification de la présence attendue dans Centreon, SCCM, WSUS, Satellite,
    Trellix et Trend ;
-3. vérification de la couverture effective Veeam/NetBackup et de l'existence d'un
+4. vérification de la couverture effective Veeam/NetBackup et de l'existence d'un
    backup récent exploitable ;
-4. contrôle DNS actif : nom, FQDN, aliases, A/AAAA et PTR ;
-5. extraction des CI retirés hors période de grâce ;
-6. comparaison en lecture seule avec VMware, Hyper-V, Pure Storage, AD, WSUS,
+5. contrôle DNS actif : nom, FQDN, aliases, A/AAAA et PTR ;
+6. extraction des CI retirés hors période de grâce ;
+7. comparaison en lecture seule avec VMware, Hyper-V, Pure Storage, AD, WSUS,
    SCCM, Trellix, Trend, Centreon et Red Hat Satellite ;
-7. contrôle des résidus DNS des CI retirés ;
-8. qualification des souscriptions Satellite encore attachées ou potentiellement
+8. contrôle des résidus DNS des CI retirés ;
+9. qualification des souscriptions Satellite encore attachées ou potentiellement
    consommées sous Simple Content Access ;
-9. distinction des objets présents, absents, stale, ambigus ou non attendus ;
-10. agrégation par CI et par outil ;
-11. génération d'un rapport HTML/CSV/JSON ;
-12. envoi par mail aux destinataires allowlistés ;
-13. correction CMDB éventuelle uniquement via un workflow approuvé et IRE.
+10. distinction des objets présents, absents, stale, ambigus ou non attendus ;
+11. agrégation par CI et par outil ;
+12. génération d'un rapport HTML/CSV/JSON ;
+13. envoi par mail aux destinataires allowlistés ;
+14. correction CMDB ou resynchronisation des métadonnées uniquement via un workflow
+    approuvé.
 
 ## Principes communs à toutes les roadmaps
 
