@@ -1,0 +1,53 @@
+---
+- name: Validate request identifiers
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - vm_name | length > 0
+      - vm_name is match('^[A-Za-z0-9._ -]+$')
+      - guest_os in ['windows', 'redhat']
+      - target_major_version is defined
+      - target_major_version | string is match('^[0-9]+$')
+    fail_msg: "Supply a safe vm_name, guest_os=windows|redhat, and numeric target_major_version."
+
+- name: Search vCenter
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vm_name }}"
+  register: inplace_upgrade_vmware_search
+  failed_when: false
+  when:
+    - hypervisor_type | default('') in ['', 'vmware']
+    - vcenter_hostname | default('') | length > 0
+
+- name: Search Hyper-V hosts
+  ansible.windows.win_shell: |
+    $vm = Get-VM -Name '{{ vm_name }}' -ErrorAction SilentlyContinue
+    if ($null -eq $vm) { 'NOTFOUND' } else { "FOUND|$($vm.State)" }
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['hyperv_hypervisor'] | default([]) }}"
+  register: inplace_upgrade_hyperv_search
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  when: hypervisor_type | default('') in ['', 'hyperv']
+
+- name: Resolve platform matches
+  ansible.builtin.set_fact:
+    inplace_upgrade_found_vmware: "{{ inplace_upgrade_vmware_search is defined and inplace_upgrade_vmware_search is succeeded and not (inplace_upgrade_vmware_search.skipped | default(false)) and inplace_upgrade_vmware_search.instance is defined }}"
+    inplace_upgrade_hyperv_matches: "{{ inplace_upgrade_hyperv_search.results | default([]) | selectattr('stdout', 'defined') | selectattr('stdout', 'search', '^FOUND') | map(attribute='item') | list }}"
+
+- name: Require exactly one platform match
+  ansible.builtin.assert:
+    that:
+      - (inplace_upgrade_found_vmware | int) + (inplace_upgrade_hyperv_matches | length) == 1
+    fail_msg: "{{ vm_name }} must resolve to exactly one VM across vCenter and Hyper-V; matches are ambiguous or absent."
+
+- name: Record resolved platform
+  ansible.builtin.set_fact:
+    inplace_upgrade_hypervisor_type: "{{ 'vmware' if inplace_upgrade_found_vmware else 'hyperv' }}"
+    inplace_upgrade_hyperv_host: "{{ inplace_upgrade_hyperv_matches[0] if inplace_upgrade_hyperv_matches | length == 1 else '' }}"

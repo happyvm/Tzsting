@@ -1,0 +1,37 @@
+---
+- name: Ensure lock action is valid
+  ansible.builtin.assert:
+    that: inplace_upgrade_lock_action in ['acquire', 'release']
+
+- name: Create lock directory
+  ansible.builtin.file:
+    path: "{{ inplace_upgrade_lock_dir }}"
+    state: directory
+    mode: "0700"
+  when: inplace_upgrade_lock_action == 'acquire'
+
+- name: Check existing lock
+  ansible.builtin.stat:
+    path: "{{ inplace_upgrade_lock_dir }}/{{ vm_name | hash('sha256') }}.lock"
+  register: inplace_upgrade_lock_stat
+  when: inplace_upgrade_lock_action == 'acquire'
+
+- name: Refuse a concurrent upgrade
+  ansible.builtin.assert:
+    that:
+      - not inplace_upgrade_lock_stat.stat.exists or ((lookup('pipe', 'date +%s') | int - inplace_upgrade_lock_stat.stat.mtime | int) > inplace_upgrade_lock_stale_minutes | int * 60)
+    fail_msg: "An upgrade lock already exists for {{ vm_name }}. Remove it only after confirming no upgrade is running."
+  when: inplace_upgrade_lock_action == 'acquire'
+
+- name: Write upgrade lock
+  ansible.builtin.copy:
+    dest: "{{ inplace_upgrade_lock_dir }}/{{ vm_name | hash('sha256') }}.lock"
+    content: "vm={{ vm_name }} job={{ tower_job_id | default('cli') }}\n"
+    mode: "0600"
+  when: inplace_upgrade_lock_action == 'acquire'
+
+- name: Release upgrade lock
+  ansible.builtin.file:
+    path: "{{ inplace_upgrade_lock_dir }}/{{ vm_name | hash('sha256') }}.lock"
+    state: absent
+  when: inplace_upgrade_lock_action == 'release'

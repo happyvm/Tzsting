@@ -1,0 +1,2 @@
+---
+inplace_upgrade_lock_dir: /tmp/ansible-inplace-upgrade-locks
