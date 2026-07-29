@@ -1,0 +1,41 @@
+---
+# Windows Server's legacy "SNMP Service" feature (backing
+# community.windows.win_snmp) has never supported SNMPv3 - confirmed via
+# `ansible-doc -j`, whose argspec only exposes read-only community strings
+# and permitted managers (v1/v2c only). Trap destinations aren't covered by
+# any Ansible module, so they're set directly via the documented
+# TrapConfiguration registry path instead.
+- name: Install the Windows SNMP Service feature
+  delegate_to: hyperv_conf_target
+  ansible.windows.win_feature:
+    name: SNMP-Service
+    state: present
+
+- name: Configure SNMP community strings and permitted managers
+  delegate_to: hyperv_conf_target
+  community.windows.win_snmp:
+    community_strings: "{{ hyperv_conf_snmp_community_strings }}"
+    permitted_managers: "{{ hyperv_conf_snmp_permitted_managers }}"
+    action: set
+  no_log: true
+
+- name: Configure SNMP trap destinations
+  delegate_to: hyperv_conf_target
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\SNMP\Parameters\TrapConfiguration\{{ hyperv_conf_snmp_trap_community }}'
+    name: "{{ idx + 1 }}"
+    data: "{{ item }}"
+    type: string
+  loop: "{{ hyperv_conf_snmp_trap_destinations }}"
+  loop_control:
+    index_var: idx
+  no_log: true
+
+- name: Remove unused SNMP trap destination slots
+  delegate_to: hyperv_conf_target
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\SNMP\Parameters\TrapConfiguration\{{ hyperv_conf_snmp_trap_community }}'
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ range(hyperv_conf_snmp_trap_destinations | length + 1, hyperv_conf_snmp_max_trap_slots + 1) | list }}"
+  no_log: true

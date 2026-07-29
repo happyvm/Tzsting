@@ -51,6 +51,11 @@
       ansible.builtin.include_role:
         name: timezone
 
+    - name: Configure SNMP
+      ansible.builtin.include_role:
+        name: snmp
+      when: hyperv_conf_snmp_enabled | bool
+
     - name: Publish AAP artifact
       ansible.builtin.set_stats:
         data:
@@ -61,4 +66,5 @@
             local_admin: "{{ hyperv_conf_local_admin.name }}"
             ntp_servers: "{{ hyperv_conf_ntp_servers }}"
             timezone: "{{ hyperv_conf_timezone }}"
+            snmp_configured: "{{ hyperv_conf_snmp_enabled | bool }}"
         aggregate: false

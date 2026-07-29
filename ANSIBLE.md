@@ -195,9 +195,12 @@ Documentation : [`ansible-hpe-storeonce-conf/README.md`](ansible-hpe-storeonce-c
 
 Configuration des services d’un hôte Windows Server Hyper-V natif, ou du
 serveur de management SCVMM lui-même (jonction Active Directory optionnelle,
-compte local d’automatisation, NTP, timezone), directement via WinRM/PowerShell
-plutôt qu’une API REST. Aucun redémarrage n’est déclenché automatiquement par
-la jonction AD.
+compte local d’automatisation, NTP, timezone, SNMP en option), directement
+via WinRM/PowerShell plutôt qu’une API REST. Aucun redémarrage n’est
+déclenché automatiquement par la jonction AD. Le SNMP embarqué de Windows
+Server (`community.windows.win_snmp`) ne supporte que v1/v2c - aucune option
+SNMPv3 n’existe pour ce composant ; il n’y a par ailleurs aucun mécanisme
+SMTP ou syslog natif au niveau de l’OS (voir les README respectifs).
 
 Documentation : [`windows-hyperv-conf/README.md`](windows-hyperv-conf/README.md)
 et [`windows-scvmm-conf/README.md`](windows-scvmm-conf/README.md).
