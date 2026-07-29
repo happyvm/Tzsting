@@ -12,6 +12,13 @@ d'une baie Pure Storage FlashArray avec `purestorage.flasharray`.
    (`purefa_hg`) ;
 5. connexions directes host-volume facultatives, avec LUN facultatif.
 
+Le préflight valide l'endpoint et le token même si `pure_volumes`,
+`pure_hosts` et `pure_hostgroups` sont tous vides (par exemple un run qui ne
+fait que des connexions directes via `pure_host_volume_connections`), et
+vérifie que les noms `host`/`volume` de ces connexions respectent le même
+format sûr que les autres objets FlashArray. Ces échecs sont affichés
+clairement (`no_log` n'est pas utilisé sur la validation).
+
 Le playbook ne réduit pas volontairement les volumes. Les listes vides ne font
 rien et ne suppriment aucun objet absent de la déclaration : la suppression
 reste séparée dans `ansible-purestorage-volhost-remove`.

@@ -6,7 +6,7 @@
     password: "{{ oneview_password }}"
     auth_login_domain: "{{ oneview_auth_login_domain }}"
     api_version: "{{ oneview_api_version }}"
-    name: "{{ oneview_vlan.name if oneview_vlan is defined else oneview_vlan_name }}"
+    name: "{{ oneview_vlan.name }}"
   no_log: true
 
 - name: Require the target Ethernet network

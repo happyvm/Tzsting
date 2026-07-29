@@ -1,2 +1,3 @@
 ---
-inplace_upgrade_lock_dir: /tmp/ansible-inplace-upgrade-locks
+# The lock file itself now lives on the guest (inplace_upgrade_guest), not
+# the control node - see tasks/main.yml for why.

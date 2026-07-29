@@ -10,6 +10,10 @@ storeonce_api_headers:
 # StoreOnce REST resource paths/payloads depend on the software branch and
 # appliance/federation mode. Set them from the API guide for the target system.
 storeonce_local_accounts_endpoint: ""
+# POST is not idempotent against most REST APIs: re-running the playbook
+# against an account that already exists will fail unless the target
+# firmware's endpoint accepts POST as an upsert. Use PUT/PATCH here instead
+# if the API guide documents an idempotent update-by-username operation.
 storeonce_local_accounts_method: POST
 storeonce_local_accounts:
   - username: svc-ansible

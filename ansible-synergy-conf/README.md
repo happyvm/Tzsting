@@ -5,11 +5,15 @@ NTP, timezone/locale, fournisseur Active Directory et compte administrateur
 local d'automatisation.
 
 Le module officiel `hpe.oneview.oneview_appliance_time_and_locale_configuration`
-gère NTP et timezone ; `oneview_user` maintient le compte local. Le schéma des
-fournisseurs AD varie selon la génération et la version API OneView : le rôle
-AD utilise l'API REST, reste désactivé par défaut et exige un payload
-`oneview_ad_configuration` préalablement validé sur l'appliance cible. Ne pas
-activer un exemple générique en production.
+gère NTP et timezone (`oneview_timezone` accepte les fuseaux IANA à deux ou
+trois niveaux, ex. `America/Argentina/Buenos_Aires`) ; `oneview_user`
+maintient le compte local. Le schéma des fournisseurs AD varie selon la
+génération et la version API OneView : le rôle AD utilise l'API REST, reste
+désactivé par défaut et exige un payload `oneview_ad_configuration`
+préalablement validé sur l'appliance cible. Ne pas activer un exemple
+générique en production. La session OneView ouverte pour cet appel REST est
+systématiquement refermée (`block`/`always`), même en cas d'échec de la
+configuration.
 
 Tous les mots de passe viennent de Vault/AAP. L'Execution Environment doit
 faire confiance au certificat TLS OneView.

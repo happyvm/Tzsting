@@ -36,3 +36,17 @@
       - guest_os != 'windows' or not inplace_upgrade_windows_preflight.output[0].PendingReboot
       - guest_os != 'windows' or windows_media_path is defined
     fail_msg: "Unsupported path, insufficient free space, pending reboot, or missing Windows media. See the preflight policy."
+
+- name: Assert Windows media path and dynamic update option are safe to interpolate into PowerShell
+  when: guest_os == 'windows'
+  ansible.builtin.assert:
+    that:
+      - windows_media_path is regex('^[A-Za-z]:\\\\[A-Za-z0-9 ._\\\\-]*$')
+      - windows_dynamic_update | default('disable') is regex('^[A-Za-z]+$')
+    fail_msg: >-
+      windows_media_path must be a local Windows path (e.g. D:\ or
+      D:\media) and windows_dynamic_update must be a single word
+      (enable/disable) - both are interpolated into single-quoted
+      PowerShell string literals / setup.exe arguments in
+      upgrade_windows; anything else is a command/argument injection
+      vector.

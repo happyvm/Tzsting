@@ -46,22 +46,43 @@
     state: shutdown-guest
     state_change_timeout: "{{ compute_poweroff_timeout_seconds }}"
 
-- name: Apply the vCPU change with the VM powered off
+- name: Apply the vCPU change with the VM powered off, restarting it even on failure
   when:
     - compute_cpu_grow or compute_cpu_shrink
     - compute_cpu_requires_powercycle
-  delegate_to: localhost
-  community.vmware.vmware_guest:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    validate_certs: "{{ vmware_validate_certs }}"
-    name: "{{ vm_name }}"
-    hardware:
-      num_cpus: "{{ vcpu_count | int }}"
-      num_cpu_cores_per_socket: "{{ vcpu_cores_per_socket | int }}"
-  register: resize_cpu_result
+  block:
+    - name: Apply the vCPU change with the VM powered off
+      delegate_to: localhost
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        validate_certs: "{{ vmware_validate_certs }}"
+        name: "{{ vm_name }}"
+        hardware:
+          num_cpus: "{{ vcpu_count | int }}"
+          num_cpu_cores_per_socket: "{{ vcpu_cores_per_socket | int }}"
+      register: resize_cpu_result
+  rescue:
+    - name: Power the VM back on after a failed change, before reporting the failure
+      when: compute_cpu_was_running
+      delegate_to: localhost
+      community.vmware.vmware_guest_powerstate:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        validate_certs: "{{ vmware_validate_certs }}"
+        name: "{{ vm_name }}"
+        state: powered-on
+      ignore_errors: true
+
+    - name: Re-raise the original failure
+      ansible.builtin.fail:
+        msg: >-
+          Failed to change vCPU count on '{{ vm_name }}':
+          {{ ansible_failed_result.msg | default('see the task output above') }}
 
 - name: Power the VM back on if it was running before
   when:

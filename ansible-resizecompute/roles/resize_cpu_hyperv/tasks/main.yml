@@ -36,14 +36,19 @@
           }
       }
 
-      Set-VMProcessor -VMName '{{ vm_name }}' -Count {{ vcpu_count }}
-
-      if ($wasRunning) {
-          Start-VM -Name '{{ vm_name }}'
-          $waited = 0
-          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
-              Start-Sleep -Seconds 5
-              $waited += 5
+      try {
+          Set-VMProcessor -VMName '{{ vm_name }}' -Count {{ vcpu_count }}
+      } finally {
+          # Restart even if Set-VMProcessor threw (e.g. requested count
+          # exceeds the host's logical processors) - otherwise a failed
+          # change leaves the VM stranded off.
+          if ($wasRunning -and (Get-VM -Name '{{ vm_name }}').State -ne 'Running') {
+              Start-VM -Name '{{ vm_name }}'
+              $waited = 0
+              while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
+                  Start-Sleep -Seconds 5
+                  $waited += 5
+              }
           }
       }
 

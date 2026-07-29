@@ -75,7 +75,13 @@
       {{ compute_lock_timeout_seconds }}s).
 
 - name: (VMware) Write the updated annotation (lock added or removed)
-  when: compute_hypervisor_type == 'vmware'
+  # On release, only touch the annotation if the current marker is ours
+  # (or absent) - otherwise it belongs to a run that broke our stale lock
+  # and re-acquired since, and blanking it here would reopen the race
+  # this lock exists to prevent.
+  when:
+    - compute_hypervisor_type == 'vmware'
+    - compute_lock_action == 'acquire' or compute_lock_vmware_match is none or compute_lock_vmware_match[1] == compute_lock_run_id
   delegate_to: localhost
   community.vmware.vmware_guest:
     hostname: "{{ vcenter_hostname }}"
@@ -107,8 +113,17 @@
       if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
 
       if ('{{ compute_lock_action }}' -eq 'release') {
-          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
-          "RELEASED"
+          # Only remove the lock if it still holds *our* run id - if it was
+          # broken as stale by another run and re-acquired, the holder is
+          # someone else's active lock now, and deleting it would reopen
+          # the race this lock exists to prevent.
+          $currentHolder = if (Test-Path $lockPath) { Get-Content $lockPath -Raw -ErrorAction SilentlyContinue } else { $null }
+          if ($currentHolder -eq '{{ compute_lock_run_id }}') {
+              Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+              "RELEASED"
+          } else {
+              "SKIPPED:not our lock"
+          }
           exit 0
       }
 

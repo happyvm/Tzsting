@@ -1,37 +1,115 @@
 ---
+# Locked on the guest itself (inplace_upgrade_guest, added to inventory by
+# prepare_guest) rather than on the control node: an AAP execution
+# environment is normally a fresh container per job, so a control-node-local
+# lock (in /tmp) would never actually engage against a second concurrent job.
+# The guest is real, persistent infrastructure that both concurrent runs for
+# the same vm_name would independently connect to, exactly like
+# ansible-snapshot's Hyper-V lock is deliberately placed on the Hyper-V host
+# rather than the control node. Windows uses an atomic FileMode.CreateNew;
+# Linux/Red Hat uses the POSIX noclobber idiom - same two mechanisms already
+# used by ansible-createvm's lock, avoiding the stat-then-copy TOCTOU race a
+# plain file check would have. Stored under C:\ProgramData and /var/tmp
+# specifically (not a temp/tmpfs path) because the guest reboots mid-upgrade
+# (Windows setup.exe, Leapp) while this lock is held across the whole run.
+
 - name: Ensure lock action is valid
   ansible.builtin.assert:
     that: inplace_upgrade_lock_action in ['acquire', 'release']
 
-- name: Create lock directory
-  ansible.builtin.file:
-    path: "{{ inplace_upgrade_lock_dir }}"
-    state: directory
-    mode: "0700"
-  when: inplace_upgrade_lock_action == 'acquire'
+- name: Determine a run identifier for the lock marker
+  ansible.builtin.set_fact:
+    inplace_upgrade_lock_run_id: "{{ inplace_upgrade_lock_run_id | default(lookup('pipe', 'date -u +%s') ~ '-' ~ (999999 | random)) }}"
 
-- name: Check existing lock
-  ansible.builtin.stat:
-    path: "{{ inplace_upgrade_lock_dir }}/{{ vm_name | hash('sha256') }}.lock"
-  register: inplace_upgrade_lock_stat
-  when: inplace_upgrade_lock_action == 'acquire'
+- name: (Windows) Acquire or release the lock file on the guest
+  when: guest_os == 'windows'
+  delegate_to: inplace_upgrade_guest
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $lockDir = "C:\ProgramData\ansible-inplace-upgrade"
+      $lockPath = Join-Path $lockDir "upgrade.lock"
+      if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
 
-- name: Refuse a concurrent upgrade
-  ansible.builtin.assert:
-    that:
-      - not inplace_upgrade_lock_stat.stat.exists or ((lookup('pipe', 'date +%s') | int - inplace_upgrade_lock_stat.stat.mtime | int) > inplace_upgrade_lock_stale_minutes | int * 60)
-    fail_msg: "An upgrade lock already exists for {{ vm_name }}. Remove it only after confirming no upgrade is running."
-  when: inplace_upgrade_lock_action == 'acquire'
+      if ('{{ inplace_upgrade_lock_action }}' -eq 'release') {
+          $currentHolder = if (Test-Path $lockPath) { Get-Content $lockPath -Raw -ErrorAction SilentlyContinue } else { $null }
+          if ($currentHolder -eq '{{ inplace_upgrade_lock_run_id }}') {
+              Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+              "RELEASED"
+          } else {
+              "SKIPPED:not our lock"
+          }
+          exit 0
+      }
 
-- name: Write upgrade lock
-  ansible.builtin.copy:
-    dest: "{{ inplace_upgrade_lock_dir }}/{{ vm_name | hash('sha256') }}.lock"
-    content: "vm={{ vm_name }} job={{ tower_job_id | default('cli') }}\n"
-    mode: "0600"
-  when: inplace_upgrade_lock_action == 'acquire'
+      if (Test-Path $lockPath) {
+          $ageMinutes = ((Get-Date).ToUniversalTime() - (Get-Item $lockPath).LastWriteTimeUtc).TotalMinutes
+          if ($ageMinutes -lt {{ inplace_upgrade_lock_stale_minutes }}) {
+              $holder = Get-Content $lockPath -Raw -ErrorAction SilentlyContinue
+              "LOCKED:$holder"
+              exit 0
+          }
+          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue  # stale, break it
+      }
 
-- name: Release upgrade lock
-  ansible.builtin.file:
-    path: "{{ inplace_upgrade_lock_dir }}/{{ vm_name | hash('sha256') }}.lock"
-    state: absent
-  when: inplace_upgrade_lock_action == 'release'
+      try {
+          $fs = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+          $writer = New-Object System.IO.StreamWriter($fs)
+          $writer.Write("{{ inplace_upgrade_lock_run_id }}")
+          $writer.Close()
+          $fs.Close()
+          "ACQUIRED"
+      } catch [System.IO.IOException] {
+          "LOCKED:race"
+      }
+  changed_when: false
+  register: inplace_upgrade_lock_windows_result
+
+- name: (Linux/Red Hat) Acquire or release the lock file on the guest
+  when: guest_os == 'redhat'
+  delegate_to: inplace_upgrade_guest
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      lockDir=/var/tmp/ansible-inplace-upgrade
+      lock="$lockDir/upgrade.lock"
+      mkdir -p "$lockDir"
+
+      if [ '{{ inplace_upgrade_lock_action }}' = 'release' ]; then
+          if [ -e "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = '{{ inplace_upgrade_lock_run_id }}' ]; then
+              rm -f "$lock"
+              echo RELEASED
+          else
+              echo "SKIPPED:not our lock"
+          fi
+          exit 0
+      fi
+
+      if [ -e "$lock" ]; then
+          age=$(( $(date -u +%s) - $(date -u -r "$lock" +%s) ))
+          if [ "$age" -lt $(( {{ inplace_upgrade_lock_stale_minutes }} * 60 )) ]; then
+              echo "LOCKED:$(cat "$lock")"
+              exit 0
+          fi
+          rm -f "$lock"  # stale, break it
+      fi
+
+      if ( set -o noclobber; echo '{{ inplace_upgrade_lock_run_id }}' > "$lock" ) 2>/dev/null; then
+          echo ACQUIRED
+      else
+          echo "LOCKED:race"
+      fi
+  changed_when: false
+  register: inplace_upgrade_lock_linux_result
+
+- name: Refuse to acquire while a lock is held by another run
+  when:
+    - inplace_upgrade_lock_action == 'acquire'
+    - (inplace_upgrade_lock_windows_result.stdout | default('')) is search('^LOCKED') or (inplace_upgrade_lock_linux_result.stdout | default('')) is search('^LOCKED')
+  ansible.builtin.fail:
+    msg: >-
+      An upgrade for '{{ vm_name }}' already has an active lock on the guest
+      ({{ (inplace_upgrade_lock_windows_result.stdout | default(inplace_upgrade_lock_linux_result.stdout)) | trim }}).
+      Another upgrade looks to be in progress - wait for it to finish, or
+      investigate if it's stuck (locks self-expire after
+      {{ inplace_upgrade_lock_stale_minutes }} minutes).

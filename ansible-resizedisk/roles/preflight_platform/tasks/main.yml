@@ -8,12 +8,20 @@
 # pass hypervisor_type as an extra-var to skip the search and just
 # confirm presence on that one platform.
 
-- name: Assert vm_name is defined
+- name: Assert vm_name is defined and safe to interpolate into PowerShell
   ansible.builtin.assert:
     that:
       - vm_name is defined
       - vm_name | length > 0
-    fail_msg: "vm_name must be supplied (e.g. -e vm_name=WINSRV01), typically the ServiceNow CI name."
+      - vm_name is regex('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      vm_name must be supplied (e.g. -e vm_name=WINSRV01), typically the
+      ServiceNow CI name, and may only contain letters, digits, spaces,
+      dot, underscore and hyphen (1-80 chars). This isn't a real naming
+      restriction on VMware/Hyper-V - it's a safety limit here, because
+      vm_name is interpolated into single-quoted PowerShell string
+      literals on Hyper-V/SCVMM; a stray quote or semicolon in it would
+      otherwise be a command injection vector.
 
 - name: Search vCenter for a VM with this name
   delegate_to: localhost
@@ -60,15 +68,17 @@
   ansible.builtin.set_fact:
     resizedisk_hyperv_matches: "{{ resizedisk_hyperv_match_results | map(attribute='item') | list }}"
 
-- name: Fail on ambiguous placement (same name found on both platforms)
+- name: Fail on ambiguous placement (found on both platforms, or on multiple Hyper-V hosts)
   ansible.builtin.fail:
     msg: >-
-      '{{ vm_name }}' matches a VM in vCenter and on Hyper-V host(s)
-      {{ resizedisk_hyperv_matches | join(', ') }}. Refusing to guess -
-      pass hypervisor_type explicitly to disambiguate.
+      '{{ vm_name }}' is ambiguous:
+      {{ 'found in vCenter and on Hyper-V host(s) ' + (resizedisk_hyperv_matches | join(', ')) if resizedisk_found_vmware
+         else 'found on multiple Hyper-V hosts: ' + (resizedisk_hyperv_matches | join(', ')) }}.
+      Refusing to guess - pass hypervisor_type explicitly (and ensure the
+      VM name is actually unique on the target platform) to disambiguate.
   when:
-    - resizedisk_found_vmware
     - resizedisk_hyperv_matches | length > 0
+    - resizedisk_found_vmware or (resizedisk_hyperv_matches | length > 1)
 
 - name: Set resolved hypervisor_type and hyperv_host from the vCenter match
   ansible.builtin.set_fact:

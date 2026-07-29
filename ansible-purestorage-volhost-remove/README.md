@@ -6,8 +6,12 @@ approbation et un Job Template AAP plus stricts.
 
 ## Garde-fous et ordre
 
-`confirm_remove=true` est obligatoire. L'ordre évite de tenter de supprimer un
-objet encore utilisé :
+`confirm_remove=true` est obligatoire, ainsi qu'au moins un objet ou une
+connexion à retirer (`pure_remove_hostgroups`, `pure_remove_hosts`,
+`pure_remove_volumes` ou `pure_remove_host_volume_connections`) : un run qui
+ne fait que déconnecter des mappings directs, sans supprimer de host, de
+hostgroup ni de volume, est un usage valide et n'est pas bloqué par le
+préflight. L'ordre évite de tenter de supprimer un objet encore utilisé :
 
 1. déconnexion des mappings directs host-volume déclarés ;
 2. suppression des hostgroups (et de leurs associations) ;

@@ -28,6 +28,24 @@
           ansible.builtin.include_role:
             name: preflight_upgrade_constraints
 
+        - name: Refuse a quiesced snapshot without VMware Tools actually running
+          # WinRM/SSH reachability (confirmed by prepare_guest) doesn't
+          # guarantee VMware Tools is running inside the guest - quiescing
+          # without it silently degrades to a crash-consistent snapshot
+          # instead (see ansible-snapshot's matching preflight check).
+          when:
+            - inplace_upgrade_require_snapshot | bool
+            - inplace_upgrade_hypervisor_type == 'vmware'
+          ansible.builtin.assert:
+            that:
+              - inplace_upgrade_vmware_search.instance.guest_tools_status == 'guestToolsRunning'
+            fail_msg: >-
+              A quiesced rollback snapshot was requested for '{{ vm_name }}'
+              but VMware Tools is not reported running
+              ({{ inplace_upgrade_vmware_search.instance.guest_tools_status | default('unknown') }}) -
+              refusing to proceed with a snapshot that would silently
+              degrade to crash-consistent instead of application-consistent.
+
         - name: Create VMware rollback snapshot
           community.vmware.vmware_guest_snapshot:
             hostname: "{{ vcenter_hostname }}"

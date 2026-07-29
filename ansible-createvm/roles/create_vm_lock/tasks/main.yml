@@ -55,8 +55,16 @@
       lock='{{ createvm_lock_vmware_path }}'
 
       if [ '{{ createvm_lock_action }}' = 'release' ]; then
-          rm -f "$lock"
-          echo RELEASED
+          # Only remove the lock if it still holds *our* run id - if it was
+          # broken as stale by another run and re-acquired, the holder is
+          # someone else's active lock now, and deleting it would reopen
+          # the race this lock exists to prevent.
+          if [ -e "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = '{{ createvm_lock_run_id }}' ]; then
+              rm -f "$lock"
+              echo RELEASED
+          else
+              echo "SKIPPED:not our lock (held by: $(cat "$lock" 2>/dev/null || echo 'absent'))"
+          fi
           exit 0
       fi
 
@@ -104,8 +112,17 @@
       if (-not (Test-Path $lockDir)) { New-Item -ItemType Directory -Path $lockDir -Force | Out-Null }
 
       if ('{{ createvm_lock_action }}' -eq 'release') {
-          Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
-          "RELEASED"
+          # Only remove the lock if it still holds *our* run id - if it was
+          # broken as stale by another run and re-acquired, the holder is
+          # someone else's active lock now, and deleting it would reopen
+          # the race this lock exists to prevent.
+          $currentHolder = if (Test-Path $lockPath) { Get-Content $lockPath -Raw -ErrorAction SilentlyContinue } else { $null }
+          if ($currentHolder -eq '{{ createvm_lock_run_id }}') {
+              Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+              "RELEASED"
+          } else {
+              "SKIPPED:not our lock (held by: $(if ($currentHolder) { $currentHolder } else { 'absent' }))"
+          }
           exit 0
       }
 

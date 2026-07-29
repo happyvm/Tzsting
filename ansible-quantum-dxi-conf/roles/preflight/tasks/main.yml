@@ -12,4 +12,13 @@
       - dxi_local_accounts | length > 0
       - dxi_ntp_configuration.servers | length > 0
     fail_msg: "Credentials and firmware-specific HTTPS API paths are mandatory. Copy paths/payloads from the API guide for the target release."
-  no_log: true
+
+- name: Validate each local account has a username and password
+  ansible.builtin.assert:
+    that:
+      - item.username | default('') | length > 0
+      - item.password | default('') | length > 0
+    fail_msg: "Every entry in dxi_local_accounts requires a username and password."
+  loop: "{{ dxi_local_accounts }}"
+  loop_control:
+    label: "{{ item.username | default('(missing username)') }}"

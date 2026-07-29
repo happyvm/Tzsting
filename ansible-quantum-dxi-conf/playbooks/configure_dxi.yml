@@ -20,7 +20,7 @@
           dxi_conf_summary:
             appliance: "{{ dxi_hostname }}"
             local_accounts: "{{ dxi_local_accounts | map(attribute='username') | list }}"
-            ad_domain: "{{ dxi_ad_configuration.domain }}"
+            ad_domain: "{{ dxi_ad_configuration.domain | default('unspecified') }}"
             ntp_servers: "{{ dxi_ntp_configuration.servers }}"
-            timezone: "{{ dxi_timezone_configuration.timezone }}"
+            timezone: "{{ dxi_timezone_configuration.timezone | default('unspecified') }}"
         aggregate: false

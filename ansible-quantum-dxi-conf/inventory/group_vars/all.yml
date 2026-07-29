@@ -11,6 +11,10 @@ dxi_api_headers:
 # paths are intentionally required inventory values: copy them from the API
 # guide shipped with the exact target release instead of guessing in code.
 dxi_local_accounts_endpoint: ""
+# POST is not idempotent against most REST APIs: re-running the playbook
+# against an account that already exists will fail unless the target
+# firmware's endpoint accepts POST as an upsert. Use PUT/PATCH here instead
+# if the API guide documents an idempotent update-by-username operation.
 dxi_local_accounts_method: POST
 dxi_local_accounts:
   - username: svc-ansible

@@ -5,4 +5,5 @@
       - confirm_vlan_remove | bool
       - oneview_vlan_name is match('^[A-Za-z0-9._ -]+$')
       - oneview_network_set_name | length > 0
-    fail_msg: "Set confirm_vlan_remove=true and provide safe VLAN/network-set names."
+      - oneview_server_profile_name | length == 0 or oneview_profile_connection_name | length > 0
+    fail_msg: "Set confirm_vlan_remove=true, provide safe VLAN/network-set names, and a connection name whenever a server profile is targeted."
