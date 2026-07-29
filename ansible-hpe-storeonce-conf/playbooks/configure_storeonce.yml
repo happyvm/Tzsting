@@ -20,7 +20,7 @@
           storeonce_conf_summary:
             appliance: "{{ storeonce_hostname }}"
             local_accounts: "{{ storeonce_local_accounts | map(attribute='username') | list }}"
-            ad_domain: "{{ storeonce_ad_configuration.domain }}"
+            ad_domain: "{{ storeonce_ad_configuration.domain | default('unspecified') }}"
             ntp_servers: "{{ storeonce_ntp_configuration.servers }}"
-            timezone: "{{ storeonce_timezone_configuration.timezone }}"
+            timezone: "{{ storeonce_timezone_configuration.timezone | default('unspecified') }}"
         aggregate: false
