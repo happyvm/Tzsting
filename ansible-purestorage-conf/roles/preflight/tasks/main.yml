@@ -8,5 +8,6 @@
       - pure_syslog_servers | length > 0
       - pure_local_user.name is match('^[A-Za-z0-9._-]+$')
       - pure_local_user.password | length >= 8
-      - not pure_timezone_cli_enabled | bool or pure_timezone is match('^[A-Za-z_]+(/[A-Za-z0-9_+.-]+){1,2}$')
+      - not pure_timezone_cli_enabled | bool or pure_timezone is match('^[A-Za-z_]+/[A-Za-z0-9_+.-]+$')
     fail_msg: "FlashArray endpoint, token, NTP/syslog configuration and protected local-user password are required."
+  no_log: true

@@ -1,0 +1,39 @@
+---
+storeonce_hostname: storeonce01.example.local
+storeonce_validate_certs: true
+storeonce_api_username: "{{ vault_storeonce_api_username }}"
+storeonce_api_password: "{{ vault_storeonce_api_password }}"
+storeonce_api_headers:
+  Accept: application/json
+  Content-Type: application/json
+
+# StoreOnce REST resource paths/payloads depend on the software branch and
+# appliance/federation mode. Set them from the API guide for the target system.
+storeonce_local_accounts_endpoint: ""
+storeonce_local_accounts_method: POST
+storeonce_local_accounts:
+  - username: svc-ansible
+    password: "{{ vault_storeonce_local_admin_password }}"
+    role: administrator
+    enabled: true
+
+storeonce_ad_endpoint: ""
+storeonce_ad_method: PUT
+storeonce_ad_configuration:
+  enabled: true
+  domain: example.local
+  domain_controllers: [dc01.example.local, dc02.example.local]
+  bind_username: "{{ vault_storeonce_ad_username }}"
+  bind_password: "{{ vault_storeonce_ad_password }}"
+  base_dn: DC=example,DC=local
+
+storeonce_ntp_endpoint: ""
+storeonce_ntp_method: PUT
+storeonce_ntp_configuration:
+  enabled: true
+  servers: [ntp01.example.local, ntp02.example.local]
+
+storeonce_timezone_endpoint: ""
+storeonce_timezone_method: PUT
+storeonce_timezone_configuration:
+  timezone: Europe/Paris

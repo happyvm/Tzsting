@@ -5,7 +5,7 @@
       - confirm_remove | bool
       - pure_fa_url | length > 0
       - pure_api_token | length > 0
-      - pure_remove_hostgroups | length + pure_remove_hosts | length + pure_remove_volumes | length
-        + pure_remove_host_volume_connections | length > 0
+      - pure_remove_hostgroups | length + pure_remove_hosts | length + pure_remove_volumes | length > 0
       - not pure_eradicate_volumes | bool or confirm_eradicate | default(false) | bool
-    fail_msg: "Set confirm_remove=true and provide at least one object or connection to remove; permanent eradication additionally requires confirm_eradicate=true."
+    fail_msg: "Set confirm_remove=true; permanent eradication additionally requires confirm_eradicate=true."
+  no_log: true

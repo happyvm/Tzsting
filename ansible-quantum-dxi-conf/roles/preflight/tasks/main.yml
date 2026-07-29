@@ -1,0 +1,15 @@
+---
+- name: Validate Quantum DXi configuration request
+  ansible.builtin.assert:
+    that:
+      - dxi_hostname | length > 0
+      - dxi_api_username | length > 0
+      - dxi_api_password | length > 0
+      - dxi_local_accounts_endpoint is match('^/[^ ]+$')
+      - dxi_ad_endpoint is match('^/[^ ]+$')
+      - dxi_ntp_endpoint is match('^/[^ ]+$')
+      - dxi_timezone_endpoint is match('^/[^ ]+$')
+      - dxi_local_accounts | length > 0
+      - dxi_ntp_configuration.servers | length > 0
+    fail_msg: "Credentials and firmware-specific HTTPS API paths are mandatory. Copy paths/payloads from the API guide for the target release."
+  no_log: true

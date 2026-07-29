@@ -1,0 +1,19 @@
+---
+- name: Create or maintain Quantum DXi local accounts
+  ansible.builtin.uri:
+    url: "https://{{ dxi_hostname }}{{ dxi_local_accounts_endpoint }}"
+    method: "{{ dxi_local_accounts_method }}"
+    url_username: "{{ dxi_api_username }}"
+    url_password: "{{ dxi_api_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ dxi_validate_certs }}"
+    headers: "{{ dxi_api_headers }}"
+    body_format: json
+    body: "{{ item }}"
+    status_code: [200, 201, 202, 204]
+  loop: "{{ dxi_local_accounts }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: dxi_local_accounts_result
+  changed_when: dxi_local_accounts_result.status in [201, 202, 204]
+  no_log: true

@@ -1,0 +1,26 @@
+---
+- name: Configure HPE StoreOnce identity, authentication and time services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate request and release-specific API contract
+      ansible.builtin.include_role: {name: preflight}
+    - name: Maintain local accounts
+      ansible.builtin.include_role: {name: local_accounts}
+    - name: Configure Active Directory
+      ansible.builtin.include_role: {name: active_directory}
+    - name: Configure NTP
+      ansible.builtin.include_role: {name: ntp}
+    - name: Configure timezone
+      ansible.builtin.include_role: {name: timezone}
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          storeonce_conf_summary:
+            appliance: "{{ storeonce_hostname }}"
+            local_accounts: "{{ storeonce_local_accounts | map(attribute='username') | list }}"
+            ad_domain: "{{ storeonce_ad_configuration.domain }}"
+            ntp_servers: "{{ storeonce_ntp_configuration.servers }}"
+            timezone: "{{ storeonce_timezone_configuration.timezone }}"
+        aggregate: false

@@ -166,6 +166,20 @@ Ethernet et WWN/WWPN SAN issues du profil.
 
 Documentation : [`ansible-synergy-get/README.md`](ansible-synergy-get/README.md).
 
+### `ansible-quantum-dxi-conf`
+
+Configuration des comptes locaux, Active Directory, NTP et timezone d’une
+appliance Quantum DXi au moyen de son contrat REST spécifique au firmware.
+
+Documentation : [`ansible-quantum-dxi-conf/README.md`](ansible-quantum-dxi-conf/README.md).
+
+### `ansible-hpe-storeonce-conf`
+
+Configuration équivalente pour une appliance HPE StoreOnce, avec validation
+obligatoire des endpoints correspondant à sa version logicielle.
+
+Documentation : [`ansible-hpe-storeonce-conf/README.md`](ansible-hpe-storeonce-conf/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -183,6 +197,8 @@ Documentation : [`ansible-synergy-get/README.md`](ansible-synergy-get/README.md)
 | `ansible-synergy-vlan-add` | OneView/VC | — | — | API | Réseau |
 | `ansible-synergy-vlan-remove` | OneView/VC | — | — | API | Oui |
 | `ansible-synergy-get` | OneView/Synergy | — | — | API | Non |
+| `ansible-quantum-dxi-conf` | Quantum DXi | — | — | API | Configuration |
+| `ansible-hpe-storeonce-conf` | HPE StoreOnce | — | — | API | Configuration |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de
