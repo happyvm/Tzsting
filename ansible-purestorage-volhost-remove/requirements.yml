@@ -1,0 +1,4 @@
+---
+collections:
+  - name: purestorage.flasharray
+    version: ">=1.45.0,<2.0.0"

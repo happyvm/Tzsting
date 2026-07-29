@@ -1,0 +1,11 @@
+---
+- name: Create or maintain the OneView Ethernet VLAN
+  hpe.oneview.oneview_ethernet_network:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    data: "{{ oneview_vlan }}"
+  no_log: true

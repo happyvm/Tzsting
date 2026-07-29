@@ -1,0 +1,14 @@
+---
+- name: Get HPE Synergy blade MAC and SAN WWN information
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate lookup
+      ansible.builtin.include_role: {name: preflight}
+    - name: Gather blade hardware
+      ansible.builtin.include_role: {name: gather_hardware}
+    - name: Gather assigned profile
+      ansible.builtin.include_role: {name: gather_profile}
+    - name: Publish identity information
+      ansible.builtin.include_role: {name: publish}

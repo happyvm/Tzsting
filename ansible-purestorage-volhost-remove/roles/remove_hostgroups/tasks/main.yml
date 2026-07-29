@@ -1,0 +1,9 @@
+---
+- name: Remove host groups and their group mappings
+  purestorage.flasharray.purefa_hg:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ pure_remove_hostgroups }}"
+  no_log: true

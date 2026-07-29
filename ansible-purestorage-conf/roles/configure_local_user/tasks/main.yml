@@ -1,0 +1,11 @@
+---
+- name: Maintain the local pureuser account and rotate its password
+  purestorage.flasharray.purefa_user:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ pure_local_user.name }}"
+    role: "{{ pure_local_user.role }}"
+    old_password: "{{ pure_local_user.old_password }}"
+    password: "{{ pure_local_user.password }}"
+    state: present
+  no_log: true

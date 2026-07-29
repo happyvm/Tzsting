@@ -1,0 +1,7 @@
+---
+# Copy to hosts.yml. HPE OneView/Synergy is managed through its REST API from
+# the Ansible execution environment; no blade is stored in this inventory.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

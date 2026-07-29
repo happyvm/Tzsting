@@ -1,0 +1,23 @@
+---
+- name: Add a VLAN to HPE Synergy Virtual Connect and a server profile
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate request
+      ansible.builtin.include_role: {name: preflight}
+    - name: Create VLAN
+      ansible.builtin.include_role: {name: ethernet_network}
+    - name: Attach VLAN to VC network set
+      ansible.builtin.include_role: {name: network_set}
+    - name: Attach VLAN to the blade profile
+      ansible.builtin.include_role: {name: server_profile}
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          synergy_vlan_add_summary:
+            vlan: "{{ oneview_vlan.name }}"
+            vlan_id: "{{ oneview_vlan.vlanId }}"
+            network_set: "{{ oneview_network_set_name }}"
+            server_profile: "{{ oneview_server_profile_name }}"
+        aggregate: false

@@ -1,0 +1,42 @@
+---
+pure_fa_url: pure01.example.local
+pure_api_token: "{{ vault_pure_api_token }}"
+
+pure_ad:
+  name: ARRAY-AD
+  computer: PURE01
+  domain: example.local
+  directory_servers:
+    - ldaps://dc01.example.local
+    - ldaps://dc02.example.local
+  kerberos_servers:
+    - dc01.example.local
+    - dc02.example.local
+  join_ou: "OU=Storage,OU=Servers,DC=example,DC=local"
+  username: "{{ vault_pure_ad_username }}"
+  password: "{{ vault_pure_ad_password }}"
+  tls: true
+
+pure_ntp_servers:
+  - ntp01.example.local
+  - ntp02.example.local
+
+pure_syslog_servers:
+  - name: siem-primary
+    address: syslog01.example.local
+    protocol: tls
+    port: "6514"
+
+pure_local_user:
+  name: pureuser
+  role: array_admin
+  old_password: "{{ vault_pureuser_old_password }}"
+  password: "{{ vault_pureuser_new_password }}"
+
+# The collection API has no timezone module. Enable this explicit SSH/CLI
+# fallback only when required and supported by the target Purity release.
+pure_timezone_cli_enabled: false
+pure_timezone: Europe/Paris
+pure_cli_host: pure01.example.local
+pure_cli_user: pureuser
+pure_cli_password: "{{ vault_pure_cli_password }}"

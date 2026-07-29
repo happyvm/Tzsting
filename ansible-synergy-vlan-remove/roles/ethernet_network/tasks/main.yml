@@ -1,0 +1,12 @@
+---
+- name: Remove the Ethernet VLAN after all references
+  hpe.oneview.oneview_ethernet_network:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: absent
+    data:
+      name: "{{ oneview_vlan_name }}"
+  no_log: true

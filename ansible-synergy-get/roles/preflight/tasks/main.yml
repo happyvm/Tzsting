@@ -1,0 +1,10 @@
+---
+- name: Validate blade lookup
+  ansible.builtin.assert:
+    that:
+      - oneview_server_hardware_name | length > 0
+      - oneview_hostname | length > 0
+      - oneview_username | length > 0
+      - oneview_password | length > 0
+    fail_msg: "OneView credentials and the exact blade/server-hardware name are required."
+  no_log: true

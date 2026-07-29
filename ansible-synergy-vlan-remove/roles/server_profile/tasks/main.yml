@@ -1,0 +1,26 @@
+---
+- name: Read the server profile before changing its connections
+  hpe.oneview.oneview_server_profile_facts:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    name: "{{ oneview_server_profile_name }}"
+  no_log: true
+  when: oneview_server_profile_name | length > 0
+
+- name: Remove the named connection from the blade profile
+  hpe.oneview.oneview_server_profile:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    data:
+      name: "{{ oneview_server_profile_name }}"
+      connectionSettings:
+        connections: "{{ server_profiles[0].connectionSettings.connections | rejectattr('name', 'equalto', oneview_profile_connection_name) | list }}"
+  no_log: true
+  when: oneview_server_profile_name | length > 0

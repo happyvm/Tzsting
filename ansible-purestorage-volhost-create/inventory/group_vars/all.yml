@@ -1,0 +1,11 @@
+---
+pure_fa_url: pure01.example.local
+pure_api_token: "{{ vault_pure_api_token }}"
+pure_volumes: []
+# - {name: app01-data, size: 500G, with_default_protection: true}
+pure_hosts: []
+# - {name: esx01, personality: esxi, wwns: ['10:00:00:00:00:00:00:01']}
+pure_hostgroups: []
+# - {name: esx-cluster01, hosts: [esx01, esx02], volumes: [app01-data]}
+pure_host_volume_connections: []
+# - {host: linux01, volume: app01-data, lun: 10}

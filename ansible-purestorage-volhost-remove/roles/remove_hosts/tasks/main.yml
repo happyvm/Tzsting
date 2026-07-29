@@ -1,0 +1,9 @@
+---
+- name: Remove hosts after mappings and host groups
+  purestorage.flasharray.purefa_host:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ pure_remove_hosts }}"
+  no_log: true

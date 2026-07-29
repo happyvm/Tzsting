@@ -1,0 +1,24 @@
+---
+- name: Configure HPE Synergy OneView appliance services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate request
+      ansible.builtin.include_role: {name: preflight}
+    - name: Configure time and NTP
+      ansible.builtin.include_role: {name: time_ntp}
+    - name: Configure Active Directory
+      ansible.builtin.include_role: {name: ad}
+    - name: Configure local administrator
+      ansible.builtin.include_role: {name: local_admin}
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          synergy_conf_summary:
+            appliance: "{{ oneview_hostname }}"
+            timezone: "{{ oneview_timezone }}"
+            ntp_servers: "{{ oneview_ntp_servers }}"
+            ad_configured: "{{ oneview_ad_enabled }}"
+            local_admin: "{{ oneview_local_admin.userName }}"
+        aggregate: false

@@ -114,6 +114,58 @@ Playbook : `ansible-inplace-upgrade/playbooks/inplace_upgrade.yml`.
 Documentation complète :
 [`ansible-inplace-upgrade/README.md`](ansible-inplace-upgrade/README.md).
 
+### `ansible-purestorage-conf`
+
+Configuration des services d’une baie FlashArray : Active Directory, NTP,
+syslog, timezone et rotation du mot de passe du compte local `pureuser`.
+
+Playbook : `ansible-purestorage-conf/playbooks/configure_array.yml`.
+
+Documentation complète :
+[`ansible-purestorage-conf/README.md`](ansible-purestorage-conf/README.md).
+
+### `ansible-purestorage-volhost-create`
+
+Création et maintien déclaratif des volumes, hosts FC/iSCSI/NVMe, hostgroups et
+connexions host-volume d’une baie FlashArray.
+
+Playbook : `ansible-purestorage-volhost-create/playbooks/maintain_storage.yml`.
+
+Documentation complète :
+[`ansible-purestorage-volhost-create/README.md`](ansible-purestorage-volhost-create/README.md).
+
+### `ansible-purestorage-volhost-remove`
+
+Suppression ordonnée des mappings, hostgroups, hosts et volumes, avec double
+confirmation pour l’éradication irréversible.
+
+Playbook : `ansible-purestorage-volhost-remove/playbooks/remove_storage.yml`.
+
+Documentation complète :
+[`ansible-purestorage-volhost-remove/README.md`](ansible-purestorage-volhost-remove/README.md).
+
+### `ansible-synergy-conf`
+
+Configuration NTP, timezone, Active Directory et administrateur local d’une
+appliance HPE OneView/Synergy.
+
+Documentation : [`ansible-synergy-conf/README.md`](ansible-synergy-conf/README.md).
+
+### `ansible-synergy-vlan-add` / `ansible-synergy-vlan-remove`
+
+Ajout ou suppression ordonnée d’un VLAN dans OneView, un Network Set Virtual
+Connect et le Server Profile affecté à une lame.
+
+Documentation : [`ansible-synergy-vlan-add/README.md`](ansible-synergy-vlan-add/README.md)
+et [`ansible-synergy-vlan-remove/README.md`](ansible-synergy-vlan-remove/README.md).
+
+### `ansible-synergy-get`
+
+Inventaire en lecture seule d’une lame : identité, état, port map, adresses MAC
+Ethernet et WWN/WWPN SAN issues du profil.
+
+Documentation : [`ansible-synergy-get/README.md`](ansible-synergy-get/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -124,6 +176,13 @@ Documentation complète :
 | `ansible-resizedisk` | Oui | Oui | Oui | WinRM/SSH | Extension uniquement |
 | `ansible-snapshot` | Oui | Oui | Oui pour mutation | Non | Selon l'action |
 | `ansible-inplace-upgrade` | Oui | Oui | VM accessible via Hyper-V | WinRM/SSH | Upgrade OS |
+| `ansible-purestorage-conf` | FlashArray | — | — | API/SSH optionnel | Configuration |
+| `ansible-purestorage-volhost-create` | FlashArray | — | — | API | Provisionnement |
+| `ansible-purestorage-volhost-remove` | FlashArray | — | — | API | Oui |
+| `ansible-synergy-conf` | OneView/Synergy | — | — | API | Configuration |
+| `ansible-synergy-vlan-add` | OneView/VC | — | — | API | Réseau |
+| `ansible-synergy-vlan-remove` | OneView/VC | — | — | API | Oui |
+| `ansible-synergy-get` | OneView/Synergy | — | — | API | Non |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

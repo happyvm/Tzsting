@@ -1,0 +1,13 @@
+---
+- name: Validate desired FlashArray storage objects
+  ansible.builtin.assert:
+    that:
+      - pure_fa_url | length > 0
+      - pure_api_token | length > 0
+      - pure_volumes | map(attribute='name') | list | unique | length == pure_volumes | length
+      - pure_hosts | map(attribute='name') | list | unique | length == pure_hosts | length
+      - pure_hostgroups | map(attribute='name') | list | unique | length == pure_hostgroups | length
+      - item.name is match('^[A-Za-z0-9._-]+$')
+    fail_msg: "Endpoints, token, unique object names and safe FlashArray names are required."
+  loop: "{{ pure_volumes + pure_hosts + pure_hostgroups }}"
+  no_log: true
