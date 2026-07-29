@@ -1,0 +1,38 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+veeam_conf_hostname: vbr01.example.local
+veeam_conf_port: 9419
+veeam_conf_username: "{{ vault_veeam_conf_username }}"
+veeam_conf_password: "{{ vault_veeam_conf_password }}"
+veeam_conf_validate_certs: true
+
+# Every VBR REST API request must carry this header, and its value
+# changes across VBR releases (e.g. "1.3-rev1" for VBR 13's API 1.3
+# revision 1) - copy the exact revision string from the Swagger/API
+# reference page for the target server. There is no safe default; a
+# stale value fails closed rather than silently hitting the wrong schema.
+veeam_conf_api_version: ""
+
+# REST paths and payload schemas for the settings below vary by VBR
+# release. These paths are intentionally required inventory values: copy
+# them from the API guide/Swagger page for the exact target release
+# instead of guessing in code - see README.
+veeam_conf_email_notifications_enabled: false
+veeam_conf_email_notifications_endpoint: ""
+veeam_conf_email_notifications_method: PUT
+veeam_conf_email_notifications_configuration:
+  isEnabled: true
+  smtpServer: smtp.example.local
+  port: 587
+  from: "vbr01-alerts@example.local"
+  recipients: []
+
+veeam_conf_snmp_enabled: false
+veeam_conf_snmp_endpoint: ""
+veeam_conf_snmp_method: PUT
+veeam_conf_snmp_configuration:
+  isEnabled: true
+  communityString: "{{ vault_veeam_conf_snmp_community | default('') }}"
+  receivers:
+    - hostName: snmp01.example.local
+      port: 162

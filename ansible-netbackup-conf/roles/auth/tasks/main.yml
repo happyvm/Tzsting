@@ -1,0 +1,29 @@
+---
+# NetBackup authenticates via a JWT login call - POST to the login
+# endpoint with a JSON body (userName/password/domainName/domainType),
+# returning a JWT `token` (and `refreshToken`) to use as
+# `Authorization: Bearer <token>` on subsequent requests. Every request -
+# including this one - must also carry NetBackup's versioned custom media
+# type header (netbackup_conf_media_type) - see README.
+- name: Log in to the NetBackup REST API
+  ansible.builtin.uri:
+    url: "https://{{ netbackup_conf_hostname }}:{{ netbackup_conf_port }}{{ netbackup_conf_login_endpoint }}"
+    method: POST
+    headers:
+      Content-Type: "{{ netbackup_conf_media_type }}"
+      Accept: "{{ netbackup_conf_media_type }}"
+    body_format: json
+    body:
+      userName: "{{ netbackup_conf_username }}"
+      password: "{{ netbackup_conf_password }}"
+      domainName: "{{ netbackup_conf_domain_name | default(omit, true) }}"
+      domainType: "{{ netbackup_conf_domain_type | default(omit, true) }}"
+    validate_certs: "{{ netbackup_conf_validate_certs }}"
+    status_code: [200, 201]
+  register: netbackup_conf_auth_result
+  no_log: true
+
+- name: Store the access token for the rest of this play
+  ansible.builtin.set_fact:
+    netbackup_conf_access_token: "{{ netbackup_conf_auth_result.json.token }}"
+  no_log: true

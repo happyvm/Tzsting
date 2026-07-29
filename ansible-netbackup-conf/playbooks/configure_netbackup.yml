@@ -1,0 +1,42 @@
+---
+# Configures Veritas NetBackup primary server notification settings (SMTP,
+# SNMP) over its real REST API. Does NOT create/manage backup policies,
+# storage lifecycle policies, clients, or perform restores - see README
+# for exactly what this project covers and what it deliberately leaves
+# out.
+#
+# Usage:
+#   ansible-playbook playbooks/configure_netbackup.yml --vault-password-file .vault_pass
+
+- name: Configure NetBackup primary server notification settings
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Authenticate to the NetBackup REST API
+      ansible.builtin.include_role:
+        name: auth
+
+    - name: Configure SMTP notification settings
+      ansible.builtin.include_role:
+        name: notifications_smtp
+      when: netbackup_conf_smtp_enabled | bool
+
+    - name: Configure SNMP notification settings
+      ansible.builtin.include_role:
+        name: notifications_snmp
+      when: netbackup_conf_snmp_enabled | bool
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          netbackup_conf_summary:
+            server: "{{ netbackup_conf_hostname }}"
+            smtp_configured: "{{ netbackup_conf_smtp_enabled | bool }}"
+            snmp_configured: "{{ netbackup_conf_snmp_enabled | bool }}"
+        aggregate: false

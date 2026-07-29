@@ -29,3 +29,21 @@ scvmm_conf_ntp_servers:
 # Windows ID for the same zone as IANA's Europe/Paris) - see `tzutil /l` on
 # any Windows host for the full list of valid values.
 scvmm_conf_timezone: "Romance Standard Time"
+
+# Disabled by default. Installs the legacy Windows "SNMP Service" feature and
+# configures it - v1/v2c only, this feature has never supported SNMPv3.
+# There is no OS-level SMTP alerting mechanism on Windows Server (no
+# persistent config object equivalent to a mail relay setting - Task
+# Scheduler's email action was removed years ago) and no native syslog
+# client, so neither is offered here - see README.
+scvmm_conf_snmp_enabled: false
+scvmm_conf_snmp_community_strings:
+  - "{{ vault_scvmm_conf_snmp_community | default('') }}"
+scvmm_conf_snmp_permitted_managers:
+  - snmp-manager01.example.local
+# Trap destinations aren't covered by community.windows.win_snmp - they're
+# set directly via the registry (see roles/snmp), keyed by community name.
+scvmm_conf_snmp_trap_community: "{{ vault_scvmm_conf_snmp_community | default('') }}"
+scvmm_conf_snmp_trap_destinations:
+  - snmp01.example.local
+scvmm_conf_snmp_max_trap_slots: 8

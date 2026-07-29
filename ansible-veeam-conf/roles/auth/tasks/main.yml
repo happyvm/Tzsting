@@ -1,0 +1,27 @@
+---
+# VBR authenticates via OAuth 2.0 password grant - POST to
+# /api/oauth2/token as application/x-www-form-urlencoded, with the
+# x-api-version header - not HTTP basic auth. This role exchanges the
+# configured credentials for a bearer access token once per run; every
+# other role in this project reads veeam_conf_access_token set here
+# instead of re-authenticating.
+- name: Request a VBR REST API access token
+  ansible.builtin.uri:
+    url: "https://{{ veeam_conf_hostname }}:{{ veeam_conf_port }}/api/oauth2/token"
+    method: POST
+    headers:
+      x-api-version: "{{ veeam_conf_api_version }}"
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      username: "{{ veeam_conf_username }}"
+      password: "{{ veeam_conf_password }}"
+    validate_certs: "{{ veeam_conf_validate_certs }}"
+    status_code: [200]
+  register: veeam_conf_auth_result
+  no_log: true
+
+- name: Store the access token for the rest of this play
+  ansible.builtin.set_fact:
+    veeam_conf_access_token: "{{ veeam_conf_auth_result.json.access_token }}"
+  no_log: true

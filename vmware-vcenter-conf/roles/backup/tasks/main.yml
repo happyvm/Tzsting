@@ -1,0 +1,31 @@
+---
+# vmware.vmware.vcsa_backup_schedule manages the VCSA's own file-based
+# backup (distinct from a VM-level backup product - this backs up the
+# appliance's config/inventory/database, not guest VMs). It only points
+# the appliance at an existing, already-reachable backup server/share; it
+# does not create that share.
+- name: Configure the VCSA appliance backup schedule
+  delegate_to: localhost
+  vmware.vmware.vcsa_backup_schedule:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    name: "{{ vcenter_conf_backup_name }}"
+    state: present
+    enabled: true
+    location:
+      url: "{{ vcenter_conf_backup.location_url }}"
+      username: "{{ vcenter_conf_backup.location_username | default(omit, true) }}"
+      password: "{{ vcenter_conf_backup.location_password | default(omit, true) }}"
+    encryption_password: "{{ vcenter_conf_backup.encryption_password | default(omit, true) }}"
+    retain_count: "{{ vcenter_conf_backup.retain_count }}"
+    db_fast_backup: "{{ vcenter_conf_backup.db_fast_backup }}"
+    include_stats_events_and_tasks: "{{ vcenter_conf_backup.include_stats_events_and_tasks }}"
+    include_supervisors_control_plane: "{{ vcenter_conf_backup.include_supervisors_control_plane }}"
+    schedule:
+      hour: "{{ vcenter_conf_backup.schedule.hour }}"
+      minute: "{{ vcenter_conf_backup.schedule.minute }}"
+      days_of_week: "{{ vcenter_conf_backup.schedule.days_of_week }}"
+    always_update_password: "{{ vcenter_conf_backup_always_update_password | bool }}"
+  no_log: true

@@ -2,12 +2,44 @@
 
 Configuration déclarative des services d'un hôte Windows Server Hyper-V
 natif : jonction Active Directory (optionnelle), compte local
-d'automatisation, NTP et fuseau horaire. Contrairement à
+d'automatisation, NTP, fuseau horaire et SNMP (en option). Contrairement à
 `ansible-createvm`/`ansible-resizecompute`/etc., ce projet ne gère aucune
 VM : il configure le système d'exploitation de l'hôte Hyper-V lui-même,
 exactement comme `ansible-synergy-conf` ou `ansible-hpe-storeonce-conf` le
 font pour leurs appliances respectives, mais via WinRM/PowerShell plutôt
 qu'une API REST.
+
+## Syslog, SMTP, SNMP : ce qui est possible et ce qui ne l'est pas
+
+Le rôle Hyper-V lui-même n'a pas plus de fonctionnalité native de SMTP ou de
+SNMP que SCVMM (voir `windows-scvmm-conf/README.md`) : pas de réglage
+d'alerting propre à Hyper-V, l'intégration de monitoring passant par SCOM
+(produit séparé, hors périmètre). Le SNMP ci-dessous est donc l'agent SNMP
+générique de l'OS Windows Server, pas une alerte applicative de Hyper-V sur
+l'état des VM :
+
+- **SNMP** (`hyperv_conf_snmp_enabled: false` par défaut) : installe la
+  fonctionnalité Windows historique « SNMP Service » et la configure via le
+  vrai module `community.windows.win_snmp` (chaînes de communauté en
+  lecture seule + managers autorisés, confirmé par `ansible-doc -j`) - ce
+  module et cette fonctionnalité **ne supportent pas SNMPv3** (v1/v2c
+  uniquement, aucune option pour l'activer). Les destinations de trap ne
+  sont couvertes par aucun module Ansible : elles sont positionnées
+  directement via la clé de registre documentée
+  `HKLM:\SYSTEM\CurrentControlSet\Services\SNMP\Parameters\TrapConfiguration\<communauté>`,
+  avec un nettoyage des anciens emplacements non utilisés (jusqu'à
+  `hyperv_conf_snmp_max_trap_slots`, 8 par défaut) pour rester déclaratif.
+- **SMTP** : Windows Server n'expose aucun mécanisme de niveau OS pour
+  l'envoi d'alertes email - contrairement à un tableau FlashArray ou à
+  vCenter, il n'y a pas d'objet de configuration persistant équivalent à
+  un relais SMTP. L'action « Envoyer un e-mail » du Planificateur de tâches
+  a été retirée il y a plusieurs versions, et `Send-MailMessage` en
+  PowerShell est un simple cmdlet ad hoc (marqué obsolète), pas un service
+  à configurer. Ce projet n'offre donc pas de rôle SMTP.
+- **Syslog** : aucun client syslog natif sur Windows Server. Une
+  redirection nécessiterait soit un agent tiers, soit le transfert
+  d'événements Windows (WEF/WEC) vers un collecteur - hors du périmètre de
+  ce projet.
 
 ## Sécurité
 
@@ -39,4 +71,6 @@ Aucun inventaire statique par hôte : l'hôte cible est ajouté dynamiquement
 `password`. Adapter `inventory/group_vars/all.yml`. La jonction AD est
 désactivée par défaut (`hyperv_conf_ad_enabled: false`) - l'activer
 explicitement et valider le payload avant utilisation en production. Le
-playbook publie `hyperv_conf_summary` pour AAP/ServiceNow.
+SNMP est également désactivé par défaut
+(`hyperv_conf_snmp_enabled: false`). Le playbook publie
+`hyperv_conf_summary` pour AAP/ServiceNow.

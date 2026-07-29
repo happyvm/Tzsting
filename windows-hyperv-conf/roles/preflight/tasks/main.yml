@@ -12,7 +12,15 @@
       - not hyperv_conf_ad_enabled | bool or hyperv_conf_ad.domain | length > 0
       - not hyperv_conf_ad_enabled | bool or hyperv_conf_ad.username | length > 0
       - not hyperv_conf_ad_enabled | bool or hyperv_conf_ad.password | length > 0
+      - not hyperv_conf_snmp_enabled | bool or hyperv_conf_snmp_community_strings | map('length') | select('greaterthan', 0) | list | length > 0
+      - not hyperv_conf_snmp_enabled | bool or hyperv_conf_snmp_permitted_managers | length > 0
+      - not hyperv_conf_snmp_enabled | bool or hyperv_conf_snmp_trap_community | length > 0
+      - not hyperv_conf_snmp_enabled | bool or hyperv_conf_snmp_trap_destinations | length > 0
+      - not hyperv_conf_snmp_enabled | bool or hyperv_conf_snmp_trap_destinations | length <= hyperv_conf_snmp_max_trap_slots
     fail_msg: >-
       hyperv_conf_hostname/username/password, NTP servers, timezone and a
       valid local automation account are required; enabling AD also
-      requires a domain, username and password.
+      requires a domain, username and password; enabling SNMP also
+      requires at least one non-empty community string, permitted manager,
+      a trap community and 1-8 trap destinations (v1/v2c only, no SNMPv3 -
+      see README).

@@ -2,9 +2,10 @@
 
 Configuration des services de l'appliance vCenter Server (VCSA) : NTP,
 fuseau horaire, rotation du mot de passe administrateur local de
-l'appliance, redirection syslog (VAMI, en option), et réglages généraux du
+l'appliance, redirection syslog (VAMI, en option), réglages généraux du
 serveur vCenter (journalisation, alertes SMTP et destinataires SNMP, ces
-deux derniers en option).
+deux derniers en option), et planification de la sauvegarde de
+l'appliance elle-même (en option).
 
 ## Contrat API VAMI
 
@@ -46,6 +47,40 @@ catégories à chaque exécution :
   dont le récepteur SNMP 1 par défaut est étonnamment `enabled: true` vers
   `localhost:162`), pour garantir un état désactivé sans dépendre d'un
   défaut non documenté.
+
+## Sauvegarde de l'appliance (rôle `backup`)
+
+`vcenter_conf_backup_enabled: false` par défaut. Ce rôle configure la
+planification de sauvegarde **native de l'appliance VCSA elle-même**
+(configuration, inventaire, base de données) via le vrai module
+`vmware.vmware.vcsa_backup_schedule` (collection `vmware.vmware`, API
+vCenter standard - pas VAMI). **Ce n'est pas une sauvegarde des VM
+invitées** : voir `ansible-veeam-conf`/`ansible-netbackup-conf` pour cette
+partie-là, hors périmètre de ce projet.
+
+Points importants :
+
+- Le module ne fait que **pointer** l'appliance vers un serveur/partage de
+  sauvegarde déjà existant et joignable (FTPS, HTTPS, SFTP, FTP, NFS, SMB ou
+  HTTP) - il ne crée pas ce serveur/partage.
+- Une seule planification peut exister par appliance
+  (`vcenter_conf_backup_name`, `default` si créée depuis l'UI web).
+- Si `vcenter_conf_backup.encryption_password` est vide, la sauvegarde
+  n'est pas chiffrée (comportement du module, pas un oubli) ; le renseigner
+  pour l'activer.
+- Comme pour les modules Pure Storage SNMP/SMTP, il n'existe aucun moyen de
+  vérifier la valeur **actuelle** d'un mot de passe côté module. Le module
+  expose `always_update_password` pour choisir le compromis :
+  `true` = toujours réappliquer/rapporter un changement dès qu'un mot de
+  passe est renseigné (bruyant), `false` = ne réappliquer les mots de passe
+  que si un autre champ a changé (silencieux, mais un mot de passe tourné
+  isolément ne sera pas détecté). Ce rôle utilise `false`
+  (`vcenter_conf_backup_always_update_password`) pour éviter les faux
+  positifs de `changed` - documenté ici pour que ce compromis soit un choix
+  explicite, pas une surprise.
+- Désactiver `vcenter_conf_backup_enabled` **n'annule pas** une
+  planification existante (le rôle est simplement ignoré) : il n'y a pas de
+  suppression implicite d'une sauvegarde déjà configurée.
 
 ## Sécurité
 
