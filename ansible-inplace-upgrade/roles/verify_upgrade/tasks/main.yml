@@ -1,0 +1,24 @@
+---
+- name: Read upgraded Windows release
+  ansible.windows.win_powershell:
+    script: |
+      $build = [int](Get-CimInstance Win32_OperatingSystem).BuildNumber
+      if ($build -le 14393) { '2016' } elseif ($build -le 17763) { '2019' } elseif ($build -le 20348) { '2022' } else { '2025' }
+  delegate_to: inplace_upgrade_guest
+  register: inplace_upgrade_windows_version
+  when: guest_os == 'windows'
+
+- name: Read upgraded Red Hat release
+  ansible.builtin.shell: ". /etc/os-release && printf '%s' \"${VERSION_ID%%.*}\""
+  args:
+    executable: /bin/bash
+  delegate_to: inplace_upgrade_guest
+  register: inplace_upgrade_redhat_version
+  changed_when: false
+  when: guest_os == 'redhat'
+
+- name: Verify requested release is active
+  ansible.builtin.assert:
+    that:
+      - (inplace_upgrade_windows_version.output[0] if guest_os == 'windows' else inplace_upgrade_redhat_version.stdout) | string == target_major_version | string
+    fail_msg: "The guest returned, but its active major version does not match target_major_version."
