@@ -19,5 +19,7 @@ ansible-playbook playbooks/add_vlan.yml --vault-password-file .vault_pass
 
 Configurer `oneview_vlan`, `oneview_network_set_name` et, si nécessaire,
 `oneview_server_profile_name`/`oneview_profile_connection`. L'identifiant de
-connexion doit être unique dans le profil. Le résultat AAP est
-`synergy_vlan_add_summary`.
+connexion doit être unique dans le profil. Si `oneview_server_profile_name`
+est renseigné mais ne résout à aucun profil unique, le rôle échoue clairement
+avant toute modification plutôt que d'échouer sur un accès à un profil vide.
+Le résultat AAP est `synergy_vlan_add_summary`.

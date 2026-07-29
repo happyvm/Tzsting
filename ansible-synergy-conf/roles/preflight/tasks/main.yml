@@ -6,8 +6,7 @@
       - oneview_username | length > 0
       - oneview_password | length > 0
       - oneview_ntp_servers | length > 0
-      - oneview_timezone is match('^[A-Za-z_]+/[A-Za-z0-9_+.-]+$')
+      - oneview_timezone is match('^[A-Za-z_]+(/[A-Za-z0-9_+.-]+){1,2}$')
       - oneview_local_admin.userName is match('^[A-Za-z0-9._@-]+$')
       - not oneview_ad_enabled | bool or oneview_ad_configuration | length > 0
     fail_msg: "OneView credentials, NTP, timezone and a valid local admin are required; AD also requires a validated provider payload."
-  no_log: true

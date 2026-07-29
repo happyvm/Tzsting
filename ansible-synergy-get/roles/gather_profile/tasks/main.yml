@@ -1,7 +1,7 @@
 ---
 - name: Resolve assigned profile name when not supplied
   ansible.builtin.set_fact:
-    synergy_resolved_profile_name: "{{ oneview_server_profile_name if oneview_server_profile_name | length > 0 else (server_hardwares[0].serverProfileName | default('')) }}"
+    synergy_resolved_profile_name: "{{ oneview_server_profile_name if oneview_server_profile_name | length > 0 else (server_hardwares[0].serverProfileName | default('', true)) }}"
 
 - name: Retrieve assigned server profile facts
   hpe.oneview.oneview_server_profile_facts:

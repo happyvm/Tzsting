@@ -17,4 +17,7 @@ ansible-playbook playbooks/remove_vlan.yml \
 ```
 
 Renseigner le nom du VLAN, du Network Set, et facultativement le profil et le
-nom exact de sa connexion. Le résultat est `synergy_vlan_remove_summary`.
+nom exact de sa connexion : si `oneview_server_profile_name` est fourni,
+`oneview_profile_connection_name` devient obligatoire, et le profil doit se
+résoudre de façon unique (échec explicite sinon, avant toute modification).
+Le résultat est `synergy_vlan_remove_summary`.

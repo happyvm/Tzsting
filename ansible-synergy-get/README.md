@@ -16,8 +16,10 @@ ansible-playbook playbooks/get_blade.yml \
 ```
 
 Le profil est facultatif et est résolu depuis les faits matériels lorsqu'ils
-exposent `serverProfileName`. Pour garantir la récupération des MAC/WWN
-logiques, le fournir explicitement. `synergy_get_summary` est publié comme
+exposent `serverProfileName`, y compris lorsque OneView renvoie ce champ à
+`null` pour une lame sans profil assigné (traité comme absent, sans échec).
+Pour garantir la récupération des MAC/WWN logiques, le fournir explicitement.
+`synergy_get_summary` est publié comme
 artefact AAP/ServiceNow ; `physical_port_map` et
 `mac_and_wwn_connections` conservent la structure native OneView pour ne pas
 perdre d'identifiants spécifiques aux générations de cartes.
