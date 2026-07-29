@@ -10,9 +10,21 @@ cette partie.
 
 ## Syslog, SMTP, SNMP : ce qui est possible et ce qui ne l'est pas
 
-SCVMM lui-même (l'application) ne publie pas d'API/module Ansible pour du
-syslog/SMTP/SNMP - ce qui suit concerne le système d'exploitation Windows
-du serveur SCVMM, comme pour `windows-hyperv-conf` :
+**SCVMM (l'application VMM elle-même) n'a aucune fonctionnalité native de
+SMTP ou de SNMP** : ni réglage dans la console/le module PowerShell
+`virtualmachinemanager` (`Get-SCNotification` concerne les notifications de
+mise à jour d'un service template, pas l'email), ni génération de trap SNMP
+propre à VMM. La seule intégration d'alerting de VMM est via **System
+Center Operations Manager (SCOM)**, un produit à part entière (PRO tips) -
+c'est SCOM, pas VMM, qui a un vrai canal de notification email ; SCOM n'a
+pas de canal SNMP natif documenté non plus (nécessiterait un connecteur
+tiers). Déployer/configurer SCOM est hors périmètre de ce projet.
+
+Ce qui suit ne concerne donc **pas** l'application SCVMM mais le système
+d'exploitation Windows du serveur qui l'héberge, comme pour
+`windows-hyperv-conf` - le SNMP ci-dessous est l'agent SNMP générique de
+l'OS (interrogeable, et capable de relayer les traps que Windows lui-même
+génère), pas une alerte applicative de VMM sur l'état des VM/hôtes :
 
 - **SNMP** (`scvmm_conf_snmp_enabled: false` par défaut) : installe la
   fonctionnalité Windows historique « SNMP Service » et la configure via le

@@ -11,6 +11,13 @@ qu'une API REST.
 
 ## Syslog, SMTP, SNMP : ce qui est possible et ce qui ne l'est pas
 
+Le rôle Hyper-V lui-même n'a pas plus de fonctionnalité native de SMTP ou de
+SNMP que SCVMM (voir `windows-scvmm-conf/README.md`) : pas de réglage
+d'alerting propre à Hyper-V, l'intégration de monitoring passant par SCOM
+(produit séparé, hors périmètre). Le SNMP ci-dessous est donc l'agent SNMP
+générique de l'OS Windows Server, pas une alerte applicative de Hyper-V sur
+l'état des VM :
+
 - **SNMP** (`hyperv_conf_snmp_enabled: false` par défaut) : installe la
   fonctionnalité Windows historique « SNMP Service » et la configure via le
   vrai module `community.windows.win_snmp` (chaînes de communauté en
