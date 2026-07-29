@@ -22,6 +22,12 @@
     - name: Rotate local user password
       ansible.builtin.include_role:
         name: configure_local_user
+    - name: Configure SMTP alert email
+      ansible.builtin.include_role:
+        name: configure_smtp
+    - name: Configure SNMP
+      ansible.builtin.include_role:
+        name: configure_snmp
     - name: Publish AAP artifact
       ansible.builtin.set_stats:
         data:
@@ -32,4 +38,8 @@
             syslog_servers: "{{ pure_syslog_servers | map(attribute='name') | list }}"
             timezone: "{{ pure_timezone if pure_timezone_cli_enabled | bool else 'unchanged' }}"
             local_user: "{{ pure_local_user.name }}"
+            smtp_enabled: "{{ pure_smtp_enabled | bool }}"
+            alert_recipients: "{{ pure_alert_recipients | map(attribute='address') | list }}"
+            snmp_enabled: "{{ pure_snmp_enabled | bool }}"
+            snmp_version: "{{ pure_snmp_manager.version if pure_snmp_enabled | bool else '' }}"
         aggregate: false

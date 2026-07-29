@@ -1,0 +1,17 @@
+---
+- name: Configure HPE StoreOnce remote syslog forwarding
+  when: storeonce_syslog_enabled | bool
+  ansible.builtin.uri:
+    url: "https://{{ storeonce_hostname }}{{ storeonce_syslog_endpoint }}"
+    method: "{{ storeonce_syslog_method }}"
+    url_username: "{{ storeonce_api_username }}"
+    url_password: "{{ storeonce_api_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ storeonce_validate_certs }}"
+    headers: "{{ storeonce_api_headers }}"
+    body_format: json
+    body: "{{ storeonce_syslog_configuration }}"
+    status_code: [200, 201, 202, 204]
+  register: storeonce_syslog_result
+  changed_when: storeonce_syslog_result.status in [201, 202, 204]
+  no_log: true

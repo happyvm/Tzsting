@@ -121,7 +121,9 @@ Documentation complète :
 ### `ansible-purestorage-conf`
 
 Configuration des services d’une baie FlashArray : Active Directory, NTP,
-syslog, timezone et rotation du mot de passe du compte local `pureuser`.
+syslog, timezone, rotation du mot de passe du compte local `pureuser`, relais
+SMTP/destinataires d’alerte email et SNMP (manager de traps et agent,
+SNMPv3 ou v2c).
 
 Playbook : `ansible-purestorage-conf/playbooks/configure_array.yml`.
 
@@ -151,7 +153,8 @@ Documentation complète :
 ### `ansible-synergy-conf`
 
 Configuration NTP, timezone, Active Directory et administrateur local d’une
-appliance HPE OneView/Synergy.
+appliance HPE OneView/Synergy, plus redirection syslog, alertes SMTP et
+SNMPv3 (utilisateurs et destinations de traps) en options.
 
 Documentation : [`ansible-synergy-conf/README.md`](ansible-synergy-conf/README.md).
 
@@ -173,14 +176,18 @@ Documentation : [`ansible-synergy-get/README.md`](ansible-synergy-get/README.md)
 ### `ansible-quantum-dxi-conf`
 
 Configuration des comptes locaux, Active Directory, NTP et timezone d’une
-appliance Quantum DXi au moyen de son contrat REST spécifique au firmware.
+appliance Quantum DXi au moyen de son contrat REST spécifique au firmware,
+plus redirection syslog, alertes SMTP et SNMP (v3 recommandé selon le
+firmware) en options.
 
 Documentation : [`ansible-quantum-dxi-conf/README.md`](ansible-quantum-dxi-conf/README.md).
 
 ### `ansible-hpe-storeonce-conf`
 
 Configuration équivalente pour une appliance HPE StoreOnce, avec validation
-obligatoire des endpoints correspondant à sa version logicielle.
+obligatoire des endpoints correspondant à sa version logicielle, plus
+redirection syslog, alertes SMTP et SNMP (v3 recommandé, v1/v2c selon le
+firmware) en options.
 
 Documentation : [`ansible-hpe-storeonce-conf/README.md`](ansible-hpe-storeonce-conf/README.md).
 

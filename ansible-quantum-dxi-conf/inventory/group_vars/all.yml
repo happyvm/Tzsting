@@ -42,3 +42,44 @@ dxi_timezone_endpoint: ""
 dxi_timezone_method: PUT
 dxi_timezone_configuration:
   timezone: Europe/Paris
+
+# Optional - disabled by default, unlike the four settings above which are
+# always applied. Same "leave the endpoint blank until validated" contract.
+dxi_syslog_enabled: false
+dxi_syslog_endpoint: ""
+dxi_syslog_method: PUT
+dxi_syslog_configuration:
+  enabled: true
+  server: syslog01.example.local
+  port: 514
+  protocol: tcp
+
+dxi_smtp_enabled: false
+dxi_smtp_endpoint: ""
+dxi_smtp_method: PUT
+dxi_smtp_configuration:
+  enabled: true
+  relay_host: smtp.example.local
+  port: 25
+  sender: dxi01-alerts@example.local
+  recipients: [backup-alerts@example.local]
+  use_tls: true
+  username: "{{ vault_dxi_smtp_username | default('') }}"
+  password: "{{ vault_dxi_smtp_password | default('') }}"
+
+# SNMPv3 (auth+priv) is the recommended contract if the target firmware
+# supports it; check the API guide before assuming - some older DXi
+# releases only expose v1/v2c over this endpoint.
+dxi_snmp_enabled: false
+dxi_snmp_endpoint: ""
+dxi_snmp_method: PUT
+dxi_snmp_configuration:
+  enabled: true
+  version: v3
+  username: dxi-snmp-v3
+  auth_protocol: SHA
+  auth_passphrase: "{{ vault_dxi_snmp_auth_passphrase | default('') }}"
+  privacy_protocol: AES
+  privacy_passphrase: "{{ vault_dxi_snmp_privacy_passphrase | default('') }}"
+  trap_destination: snmp01.example.local
+  trap_port: 162

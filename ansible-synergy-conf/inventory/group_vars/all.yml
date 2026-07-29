@@ -23,3 +23,39 @@ oneview_ad_enabled: false
 oneview_ad_api_path: /rest/authn/providers
 oneview_ad_method: POST
 oneview_ad_configuration: {}
+
+# Remote syslog forwarding - no hpe.oneview module covers this; the REST
+# contract (endpoint/payload) is release-specific, left blank until
+# validated against the target appliance (same reasoning as the AD role).
+oneview_syslog_enabled: false
+oneview_syslog_api_path: ""
+oneview_syslog_method: PUT
+oneview_syslog_configuration: {}
+
+# SMTP alert email - same reasoning as syslog above.
+oneview_smtp_enabled: false
+oneview_smtp_api_path: ""
+oneview_smtp_method: PUT
+oneview_smtp_configuration: {}
+
+# SNMPv3 users and trap destinations, via the real hpe.oneview modules. The
+# data payload shapes below match the modules' own documented examples, but
+# securityLevel/protocol values still depend on the OneView API generation -
+# validate before enabling.
+oneview_snmp_enabled: false
+oneview_snmp_v3_users: []
+# - name: pure-snmp-v3
+#   data:
+#     type: Users
+#     userName: pure-snmp-v3
+#     securityLevel: AuthAndPrivacy
+#     authenticationProtocol: SHA512
+#     authenticationPassphrase: "{{ vault_oneview_snmp_auth_passphrase }}"
+#     privacyProtocol: AES256
+#     privacyPassphrase: "{{ vault_oneview_snmp_privacy_passphrase }}"
+oneview_snmp_v3_trap_destinations: []
+# - name: snmp01.example.local
+#   data:
+#     destinationAddress: snmp01.example.local
+#     port: 162
+#     userName: pure-snmp-v3

@@ -1,0 +1,37 @@
+---
+# purefa_snmp/purefa_snmp_agent have no way to read back hidden
+# authentication/privacy state to compare against the play's value, so
+# both modules always report changed when v3 credentials are supplied -
+# documented module behavior, not a bug here.
+- name: Configure the FlashArray SNMP trap manager
+  when: pure_snmp_enabled | bool
+  purestorage.flasharray.purefa_snmp:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ pure_snmp_manager.name }}"
+    host: "{{ pure_snmp_manager.host }}"
+    version: "{{ pure_snmp_manager.version }}"
+    notification: "{{ pure_snmp_manager.notification | default('trap') }}"
+    community: "{{ pure_snmp_manager.community | default(omit) if pure_snmp_manager.version == 'v2c' else omit }}"
+    user: "{{ pure_snmp_manager.user | default(omit) if pure_snmp_manager.version == 'v3' else omit }}"
+    auth_protocol: "{{ pure_snmp_manager.auth_protocol | default(omit) if pure_snmp_manager.version == 'v3' else omit }}"
+    auth_passphrase: "{{ pure_snmp_manager.auth_passphrase | default(omit) if pure_snmp_manager.version == 'v3' else omit }}"
+    privacy_protocol: "{{ pure_snmp_manager.privacy_protocol | default(omit) if pure_snmp_manager.version == 'v3' else omit }}"
+    privacy_passphrase: "{{ pure_snmp_manager.privacy_passphrase | default(omit) if pure_snmp_manager.version == 'v3' else omit }}"
+    state: present
+  no_log: true
+
+- name: Configure the FlashArray's own SNMP agent (inbound polling)
+  when: pure_snmp_enabled | bool
+  purestorage.flasharray.purefa_snmp_agent:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    version: "{{ pure_snmp_agent.version }}"
+    community: "{{ pure_snmp_agent.community | default(omit) if pure_snmp_agent.version == 'v2c' else omit }}"
+    user: "{{ pure_snmp_agent.user | default(omit) if pure_snmp_agent.version == 'v3' else omit }}"
+    auth_protocol: "{{ pure_snmp_agent.auth_protocol | default(omit) if pure_snmp_agent.version == 'v3' else omit }}"
+    auth_passphrase: "{{ pure_snmp_agent.auth_passphrase | default(omit) if pure_snmp_agent.version == 'v3' else omit }}"
+    privacy_protocol: "{{ pure_snmp_agent.privacy_protocol | default(omit) if pure_snmp_agent.version == 'v3' else omit }}"
+    privacy_passphrase: "{{ pure_snmp_agent.privacy_passphrase | default(omit) if pure_snmp_agent.version == 'v3' else omit }}"
+    state: present
+  no_log: true

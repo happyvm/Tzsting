@@ -1,0 +1,44 @@
+---
+# No hpe.oneview module covers SMTP alert email configuration - same REST
+# session pattern as the ad/syslog roles.
+- name: Open a OneView API session for SMTP configuration
+  ansible.builtin.uri:
+    url: "https://{{ oneview_hostname }}/rest/login-sessions"
+    method: POST
+    validate_certs: true
+    body_format: json
+    body:
+      userName: "{{ oneview_username }}"
+      password: "{{ oneview_password }}"
+      authLoginDomain: "{{ oneview_auth_login_domain }}"
+    return_content: true
+  register: oneview_smtp_login
+  no_log: true
+  when: oneview_smtp_enabled | bool
+
+- name: Configure SMTP then always close the OneView session
+  when: oneview_smtp_enabled | bool
+  block:
+    - name: Configure the version-specific OneView SMTP relay
+      ansible.builtin.uri:
+        url: "https://{{ oneview_hostname }}{{ oneview_smtp_api_path }}"
+        method: "{{ oneview_smtp_method }}"
+        validate_certs: true
+        headers:
+          auth: "{{ oneview_smtp_login.json.sessionID }}"
+          X-API-Version: "{{ oneview_api_version | string }}"
+          If-Match: "*"
+        body_format: json
+        body: "{{ oneview_smtp_configuration }}"
+        status_code: [200, 201, 202]
+      no_log: true
+  always:
+    - name: Close the OneView API session
+      ansible.builtin.uri:
+        url: "https://{{ oneview_hostname }}/rest/login-sessions"
+        method: DELETE
+        validate_certs: true
+        headers:
+          auth: "{{ oneview_smtp_login.json.sessionID }}"
+        status_code: [200, 204]
+      no_log: true
