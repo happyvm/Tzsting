@@ -29,7 +29,12 @@
       ansible.builtin.include_role:
         name: local_admin
 
-    - name: Configure vCenter server logging level
+    - name: Configure remote syslog forwarding
+      ansible.builtin.include_role:
+        name: syslog
+      when: vcenter_conf_syslog_enabled | bool
+
+    - name: Configure vCenter server settings (logging, mail, SNMP receivers)
       ansible.builtin.include_role:
         name: logging
 
@@ -42,4 +47,7 @@
             timezone: "{{ vcenter_conf_timezone_configuration.timezone }}"
             local_admin: "{{ vcenter_conf_local_admin_username }}"
             logging_options: "{{ vcenter_conf_logging_options }}"
+            syslog_configured: "{{ vcenter_conf_syslog_enabled | bool }}"
+            smtp_configured: "{{ vcenter_conf_smtp_enabled | bool }}"
+            snmp_configured: "{{ vcenter_conf_snmp_enabled | bool }}"
         aggregate: false

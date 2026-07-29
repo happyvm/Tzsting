@@ -40,3 +40,64 @@ vcenter_conf_local_admin_password: "{{ vault_vcenter_conf_local_admin_password }
 # Covered by the real community.vmware.vmware_vcenter_settings module -
 # see https://kb.vmware.com choices: none/error/warning/info/verbose/trivia.
 vcenter_conf_logging_options: info
+
+# Disabled by default. vmware_vcenter_settings applies mail, SNMP receivers
+# and logging_options together in one call - see roles/logging/tasks/main.yml
+# for why disabling below still runs the task (with explicit blank/disabled
+# values) rather than skipping it.
+vcenter_conf_smtp_enabled: false
+vcenter_conf_smtp:
+  server: smtp.example.local
+  sender: "vcenter01-alerts@example.local"
+
+# Only v1/v2c (community string) receivers exist in this module - there is
+# no SNMPv3 support for vCenter server alerts in community.vmware.
+vcenter_conf_snmp_enabled: false
+vcenter_conf_snmp_receivers:
+  snmp_receiver_1_url: snmp01.example.local
+  snmp_receiver_1_enabled: true
+  snmp_receiver_1_port: 162
+  snmp_receiver_1_community: "{{ vault_vcenter_conf_snmp_community | default('') }}"
+  snmp_receiver_2_url: ""
+  snmp_receiver_2_enabled: false
+  snmp_receiver_2_port: 162
+  snmp_receiver_2_community: ""
+  snmp_receiver_3_url: ""
+  snmp_receiver_3_enabled: false
+  snmp_receiver_3_port: 162
+  snmp_receiver_3_community: ""
+  snmp_receiver_4_url: ""
+  snmp_receiver_4_enabled: false
+  snmp_receiver_4_port: 162
+  snmp_receiver_4_community: ""
+
+# Explicit all-disabled/blank payload submitted instead when SNMP is
+# disabled - do not rely on the module's own defaults, whose receiver 1
+# default is "enabled: true" pointing at localhost:162/public.
+vcenter_conf_snmp_receivers_disabled:
+  snmp_receiver_1_url: ""
+  snmp_receiver_1_enabled: false
+  snmp_receiver_1_port: 162
+  snmp_receiver_1_community: ""
+  snmp_receiver_2_url: ""
+  snmp_receiver_2_enabled: false
+  snmp_receiver_2_port: 162
+  snmp_receiver_2_community: ""
+  snmp_receiver_3_url: ""
+  snmp_receiver_3_enabled: false
+  snmp_receiver_3_port: 162
+  snmp_receiver_3_community: ""
+  snmp_receiver_4_url: ""
+  snmp_receiver_4_enabled: false
+  snmp_receiver_4_port: 162
+  snmp_receiver_4_community: ""
+
+# Disabled by default. VAMI REST resource path/payload depends on the
+# vCenter release, same convention as NTP/timezone/local_admin above.
+vcenter_conf_syslog_enabled: false
+vcenter_conf_syslog_endpoint: ""
+vcenter_conf_syslog_method: PUT
+vcenter_conf_syslog_configuration:
+  hostname: syslog01.example.local
+  port: 514
+  protocol: TCP

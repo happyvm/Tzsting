@@ -209,17 +209,20 @@ et [`windows-scvmm-removevlan/README.md`](windows-scvmm-removevlan/README.md).
 ### `vmware-esxi-conf`
 
 Configuration d’un hôte ESXi autonome (sans vCenter) : NTP, syslog distant,
-jonction Active Directory optionnelle et compte local d’automatisation, via
-les modules `community.vmware` connectés directement à l’API de gestion de
-l’hôte.
+jonction Active Directory optionnelle, compte local d’automatisation et SNMP
+en option (v1/v2c uniquement - le module `community.vmware.vmware_host_snmp`
+n’implémente pas SNMPv3), via les modules `community.vmware` connectés
+directement à l’API de gestion de l’hôte.
 
 Documentation : [`vmware-esxi-conf/README.md`](vmware-esxi-conf/README.md).
 
 ### `vmware-vcenter-conf`
 
-Configuration de l’appliance vCenter Server (VCSA) : NTP, timezone et rotation
-du mot de passe administrateur local via l’API VAMI (aucune collection ne la
-couvre), niveau de journalisation du serveur vCenter via le module réel
+Configuration de l’appliance vCenter Server (VCSA) : NTP, timezone, rotation
+du mot de passe administrateur local et redirection syslog en option via
+l’API VAMI (aucune collection ne la couvre), niveau de journalisation,
+alertes SMTP et destinataires SNMP (v1/v2c uniquement, ces deux derniers en
+option) du serveur vCenter via le module réel
 `community.vmware.vmware_vcenter_settings`.
 
 Documentation : [`vmware-vcenter-conf/README.md`](vmware-vcenter-conf/README.md).

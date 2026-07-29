@@ -1,10 +1,20 @@
 # vmware-esxi-conf
 
 Configuration déclarative des services d'un hôte ESXi **autonome** (sans
-vCenter) : NTP, syslog distant, jonction Active Directory (optionnelle) et
-compte local d'automatisation. Utilise les mêmes modules
-`community.vmware` que les autres projets de ce dépôt, connectés
+vCenter) : NTP, syslog distant, jonction Active Directory (optionnelle),
+compte local d'automatisation et SNMP (optionnel). Utilise les mêmes
+modules `community.vmware` que les autres projets de ce dépôt, connectés
 directement à l'API de gestion de l'hôte ESXi plutôt qu'à un vCenter.
+
+## SNMP
+
+`esxi_conf_snmp_enabled: false` par défaut. Le module
+`community.vmware.vmware_host_snmp` qui pilote l'agent SNMP embarqué de
+l'hôte **n'implémente pas SNMPv3** (limitation documentée du module
+lui-même) : seules les communautés v1/v2c et les cibles de trap sont
+supportées. Il n'existe pas d'alternative SNMPv3 pour l'agent SNMP natif
+ESXi dans `community.vmware` à ce jour ; si SNMPv3 est requis au niveau de
+l'hôte, il faut passer par un outil tiers hors du périmètre de ce dépôt.
 
 ## Sécurité
 

@@ -13,7 +13,11 @@
       - not esxi_conf_ad_enabled | bool or esxi_conf_ad.domain | length > 0
       - not esxi_conf_ad_enabled | bool or esxi_conf_ad.username | length > 0
       - not esxi_conf_ad_enabled | bool or esxi_conf_ad.password | length > 0
+      - not esxi_conf_snmp_enabled | bool or esxi_conf_snmp.communities | map('length') | select('greaterthan', 0) | list | length > 0
+      - not esxi_conf_snmp_enabled | bool or esxi_conf_snmp.trap_targets | length > 0
     fail_msg: >-
       ESXi endpoint/credentials, NTP servers, a valid syslog destination
       (proto://host:port) and a valid local automation account are
-      required; enabling AD also requires a domain, username and password.
+      required; enabling AD also requires a domain, username and password;
+      enabling SNMP also requires at least one non-empty community string
+      and trap target (v3 isn't supported by this module - see README).

@@ -1,5 +1,16 @@
 ---
-- name: Configure vCenter server logging level
+# community.vmware.vmware_vcenter_settings manages logging, mail and SNMP
+# receivers as a single vCenter settings API call: every parameter it
+# accepts always carries a value (its own hardcoded default whenever a
+# param isn't passed), so mail/snmp_receivers must be supplied together
+# with logging_options on every run - passing only logging_options would
+# silently reset mail and SNMP receivers to the module's blank/localhost
+# defaults each time this role executes. When
+# vcenter_conf_smtp_enabled/vcenter_conf_snmp_enabled are false, this task
+# deliberately submits explicit blank/disabled values rather than rely on
+# the module's own defaults (whose SNMP receiver 1 default is inconsistently
+# "enabled: true" pointing at localhost) - see README.
+- name: Configure vCenter server settings (logging, mail, SNMP receivers)
   delegate_to: localhost
   community.vmware.vmware_vcenter_settings:
     hostname: "{{ vcenter_hostname }}"
@@ -7,4 +18,6 @@
     password: "{{ vcenter_password }}"
     validate_certs: "{{ vmware_validate_certs }}"
     logging_options: "{{ vcenter_conf_logging_options }}"
+    mail: "{{ vcenter_conf_smtp if vcenter_conf_smtp_enabled | bool else {'server': '', 'sender': ''} }}"
+    snmp_receivers: "{{ vcenter_conf_snmp_receivers if vcenter_conf_snmp_enabled | bool else vcenter_conf_snmp_receivers_disabled }}"
   no_log: true

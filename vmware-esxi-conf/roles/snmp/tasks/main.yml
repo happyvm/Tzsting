@@ -1,0 +1,17 @@
+---
+# community.vmware.vmware_host_snmp configures the ESXi embedded SNMP agent.
+# Its own documentation states SNMP v3 configuration isn't implemented yet -
+# only community strings (v1/v2c) and trap targets are supported here.
+- name: Configure the ESXi embedded SNMP agent
+  when: esxi_conf_snmp_enabled | bool
+  delegate_to: localhost
+  community.vmware.vmware_host_snmp:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: ["{{ esxi_conf_esxi_hostname }}"]
+    state: enabled
+    community: "{{ esxi_conf_snmp.communities }}"
+    trap_targets: "{{ esxi_conf_snmp.trap_targets }}"
+  no_log: true
