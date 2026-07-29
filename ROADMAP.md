@@ -16,7 +16,7 @@ concevoir ou développer.
 | Gestion Linux | [`SATELLITE-ROADMAP.md`](SATELLITE-ROADMAP.md) | Red Hat Satellite, activation keys, enregistrement, host groups et content views |
 | Bases de données | [`SQL-SERVER-ROADMAP.md`](SQL-SERVER-ROADMAP.md) | Installation SQL Server standalone et prérequis des futurs projets HA |
 | Hyperviseurs | [`HYPERVISOR-MAINTENANCE-ROADMAP.md`](HYPERVISOR-MAINTENANCE-ROADMAP.md) | Maintenance VMware/Hyper-V, update VCSA, ESXi et nœuds Hyper-V |
-| CMDB / inventaire invité | [`SERVICENOW-CMDB-ROADMAP.md`](SERVICENOW-CMDB-ROADMAP.md) | Synchronisation des IP, interfaces et OS depuis VMware Tools ou les Integration Services vers ServiceNow IRE |
+| CMDB / réseau invité | [`SERVICENOW-CMDB-ROADMAP.md`](SERVICENOW-CMDB-ROADMAP.md) | Synchronisation des interfaces, MAC et IP depuis VMware Tools ou les Integration Services vers ServiceNow IRE |
 
 ## Chaîne cible de création d'un serveur
 
@@ -28,7 +28,7 @@ concevoir ou développer.
 6. installation du client/agent de sauvegarde ;
 7. affectation aux groupes, collections, jobs et policies ;
 8. création ou mise à jour de l'objet Centreon ;
-9. collecte des IP/interfaces et de l'OS depuis les outils invités ;
+9. collecte des interfaces, MAC et IP depuis les outils invités ;
 10. réconciliation du CI dans ServiceNow via IRE et publication de l'état final.
 
 ## Chaîne cible de maintenance
@@ -41,14 +41,15 @@ concevoir ou développer.
 6. contrôles techniques et fonctionnels ;
 7. sortie de maintenance ;
 8. suppression de la downtime ;
-9. nouvelle collecte des IP et de l'OS après changement réseau ou upgrade ;
+9. nouvelle collecte réseau après changement d'adresse, de carte, de VLAN,
+   restauration ou migration ;
 10. mise à jour de la conformité et de la CMDB.
 
 ## Chaîne cible de décommissionnement
 
 1. arrêt logique et période de grâce ;
 2. vérification de la dernière sauvegarde et de la rétention ;
-3. dernière collecte CMDB de l'identité réseau et de l'OS ;
+3. dernière collecte CMDB de l'identité réseau ;
 4. retrait Centreon, SCCM/WSUS, Satellite, Azure Arc et Flexera ;
 5. retrait des jobs/policies de sauvegarde sans purge implicite des données ;
 6. désinstallation explicite des agents lorsque demandée ;
