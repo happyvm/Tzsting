@@ -1,0 +1,10 @@
+---
+- name: Validate VLAN addition request
+  ansible.builtin.assert:
+    that:
+      - oneview_vlan.name is match('^[A-Za-z0-9._ -]+$')
+      - oneview_vlan.vlanId | int >= 1
+      - oneview_vlan.vlanId | int <= 4094
+      - oneview_network_set_name | length > 0
+      - oneview_server_profile_name | length == 0 or oneview_profile_connection.name | length > 0
+    fail_msg: "Provide VLAN 1..4094, a safe name, a VC network set and an optional complete profile connection."

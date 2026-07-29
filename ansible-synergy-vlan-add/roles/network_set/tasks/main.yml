@@ -1,0 +1,43 @@
+---
+- name: Resolve the Ethernet network URI
+  hpe.oneview.oneview_ethernet_network_facts:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    name: "{{ oneview_vlan.name if oneview_vlan is defined else oneview_vlan_name }}"
+  no_log: true
+
+- name: Require the target Ethernet network
+  ansible.builtin.assert:
+    that: ethernet_networks | length == 1
+    fail_msg: "The target Ethernet network was not found uniquely."
+
+- name: Read the Virtual Connect network set
+  hpe.oneview.oneview_network_set_facts:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    name: "{{ oneview_network_set_name }}"
+  no_log: true
+
+- name: Require the target network set
+  ansible.builtin.assert:
+    that: network_sets | length == 1
+    fail_msg: "Network set {{ oneview_network_set_name }} was not found uniquely."
+
+- name: Add the VLAN to the Virtual Connect network set
+  hpe.oneview.oneview_network_set:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    data:
+      name: "{{ oneview_network_set_name }}"
+      networkUris: "{{ (network_sets[0].networkUris | default([]) + [ethernet_networks[0].uri]) | unique }}"
+  no_log: true

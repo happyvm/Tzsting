@@ -1,0 +1,31 @@
+---
+- name: Install Leapp tooling
+  ansible.builtin.dnf:
+    name:
+      - leapp-upgrade
+      - leapp-data-{{ 'rhel' + target_major_version | string }}
+    state: present
+  delegate_to: inplace_upgrade_guest
+
+- name: Run Leapp pre-upgrade assessment
+  ansible.builtin.command: leapp preupgrade
+  delegate_to: inplace_upgrade_guest
+  changed_when: false
+
+- name: Check for Leapp inhibitors
+  ansible.builtin.shell: "set -o pipefail; test ! -f /var/log/leapp/leapp-report.txt || ! grep -q 'Risk Factor: high (inhibitor)' /var/log/leapp/leapp-report.txt"
+  args:
+    executable: /bin/bash
+  delegate_to: inplace_upgrade_guest
+  changed_when: false
+
+- name: Stage the Red Hat upgrade
+  ansible.builtin.command: leapp upgrade
+  delegate_to: inplace_upgrade_guest
+  register: inplace_upgrade_leapp
+  changed_when: true
+
+- name: Reboot into the Leapp upgrade environment
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ inplace_upgrade_reboot_timeout }}"
+  delegate_to: inplace_upgrade_guest

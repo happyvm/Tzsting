@@ -1,0 +1,23 @@
+---
+- name: Build blade identity summary
+  ansible.builtin.set_fact:
+    synergy_blade_summary:
+      name: "{{ server_hardwares[0].name }}"
+      serial_number: "{{ server_hardwares[0].serialNumber | default('') }}"
+      model: "{{ server_hardwares[0].model | default('') }}"
+      power_state: "{{ server_hardwares[0].powerState | default('') }}"
+      status: "{{ server_hardwares[0].status | default('') }}"
+      server_profile: "{{ synergy_resolved_profile_name }}"
+      mac_and_wwn_connections: "{{ server_profiles[0].connectionSettings.connections | default([]) if server_profiles | length > 0 else [] }}"
+      physical_port_map: "{{ server_hardwares[0].portMap | default({}) }}"
+      physical_server_hardware: "{{ server_hardware_physical_server_hardware | default({}) }}"
+
+- name: Display blade identity and network/SAN addresses
+  ansible.builtin.debug:
+    var: synergy_blade_summary
+
+- name: Publish AAP artifact
+  ansible.builtin.set_stats:
+    data:
+      synergy_get_summary: "{{ synergy_blade_summary }}"
+    aggregate: false

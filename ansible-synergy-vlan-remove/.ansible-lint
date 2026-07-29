@@ -1,0 +1,24 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `resizedisk_` prefix
+  # (plus a few genuinely role-local helper vars) instead of a
+  # per-role prefix on every fact/register - most of the state here
+  # (resizedisk_hypervisor_type, resizedisk_guest_os,
+  # resizedisk_disk_grow_needed...) is intentionally read across several
+  # roles that are included separately in the same play, so a per-role
+  # prefix would be actively misleading about where a variable is meant
+  # to be read from.
+  - var-naming[no-role-prefix]
+  # The three ignore_errors uses in this project are deliberate
+  # best-effort cleanup/release steps (temp file cleanup in the guest,
+  # releasing the VMware lock annotation) where any failure should be
+  # silently swallowed, not reinterpreted via failed_when - that's a
+  # different rule (redefining what counts as a failure), not what's
+  # wanted here.
+  - ignore-errors
+
+exclude_paths:
+  - .extracted/
+  - inventory/hosts.yml

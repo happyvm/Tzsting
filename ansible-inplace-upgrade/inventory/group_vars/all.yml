@@ -1,0 +1,23 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_datacenter: DC01
+vmware_validate_certs: false
+
+# Upgrade policy. Every requested source->target pair must be explicitly allowed.
+inplace_upgrade_allowed_windows_paths:
+  - "2016->2019"
+  - "2019->2022"
+  - "2022->2025"
+inplace_upgrade_allowed_redhat_paths:
+  - "7->8"
+  - "8->9"
+
+inplace_upgrade_min_free_gb_windows: 40
+inplace_upgrade_min_free_gb_redhat: 10
+inplace_upgrade_require_snapshot: true
+inplace_upgrade_snapshot_prefix: pre-inplace-upgrade
+inplace_upgrade_reboot_timeout: 7200
+inplace_upgrade_lock_stale_minutes: 720

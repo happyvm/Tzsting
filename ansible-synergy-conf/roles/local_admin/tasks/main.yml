@@ -1,0 +1,11 @@
+---
+- name: Create or maintain the local automation administrator
+  hpe.oneview.oneview_user:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    data: "{{ oneview_local_admin }}"
+  no_log: true

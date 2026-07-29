@@ -1,0 +1,16 @@
+---
+- name: Join and configure the FlashArray Active Directory account
+  purestorage.flasharray.purefa_ad:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ pure_ad.name }}"
+    computer: "{{ pure_ad.computer }}"
+    domain: "{{ pure_ad.domain }}"
+    directory_servers: "{{ pure_ad.directory_servers }}"
+    kerberos_servers: "{{ pure_ad.kerberos_servers | default(omit) }}"
+    join_ou: "{{ pure_ad.join_ou | default(omit) }}"
+    username: "{{ pure_ad.username }}"
+    password: "{{ pure_ad.password }}"
+    tls: "{{ pure_ad.tls | default(true) }}"
+    state: present
+  no_log: true

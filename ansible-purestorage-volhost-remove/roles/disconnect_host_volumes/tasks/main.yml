@@ -1,0 +1,12 @@
+---
+- name: Disconnect direct host-volume mappings first
+  purestorage.flasharray.purefa_host:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item.host }}"
+    volume: "{{ item.volume }}"
+    state: absent
+  loop: "{{ pure_remove_host_volume_connections }}"
+  loop_control:
+    label: "{{ item.host }} -/-> {{ item.volume }}"
+  no_log: true

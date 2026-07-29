@@ -1,0 +1,25 @@
+---
+oneview_hostname: oneview.example.local
+oneview_username: "{{ vault_oneview_username }}"
+oneview_password: "{{ vault_oneview_password }}"
+oneview_auth_login_domain: LOCAL
+oneview_api_version: 3000
+oneview_locale: fr_FR.UTF-8
+oneview_timezone: Europe/Paris
+oneview_ntp_servers:
+  - ntp01.example.local
+  - ntp02.example.local
+oneview_local_admin:
+  userName: svc-ansible
+  password: "{{ vault_oneview_local_admin_password }}"
+  fullName: Ansible automation account
+  emailAddress: storage@example.local
+  enabled: true
+  permissions:
+    - roleName: Infrastructure administrator
+# Directory/authentication provider schemas differ by OneView API generation.
+# Supply the payload validated for your appliance; keep disabled until then.
+oneview_ad_enabled: false
+oneview_ad_api_path: /rest/authn/providers
+oneview_ad_method: POST
+oneview_ad_configuration: {}

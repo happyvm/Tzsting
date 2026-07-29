@@ -1,0 +1,25 @@
+---
+- name: Create and maintain Pure Storage volumes, hosts and host groups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role: {name: preflight}
+    - name: Create or maintain volumes
+      ansible.builtin.include_role: {name: volumes}
+    - name: Create or maintain hosts
+      ansible.builtin.include_role: {name: hosts}
+    - name: Create or maintain host groups
+      ansible.builtin.include_role: {name: hostgroups}
+    - name: Create direct mappings
+      ansible.builtin.include_role: {name: mappings}
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          purestorage_create_summary:
+            array: "{{ pure_fa_url }}"
+            volumes: "{{ pure_volumes | map(attribute='name') | list }}"
+            hosts: "{{ pure_hosts | map(attribute='name') | list }}"
+            hostgroups: "{{ pure_hostgroups | map(attribute='name') | list }}"
+        aggregate: false

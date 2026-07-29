@@ -1,0 +1,19 @@
+---
+- name: Add the optional FlashArray SSH endpoint
+  ansible.builtin.add_host:
+    name: pure_timezone_cli
+    ansible_host: "{{ pure_cli_host }}"
+    ansible_connection: ssh
+    ansible_user: "{{ pure_cli_user }}"
+    ansible_password: "{{ pure_cli_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=yes"
+  no_log: true
+  when: pure_timezone_cli_enabled | bool
+
+- name: Configure timezone through the Purity CLI
+  ansible.builtin.raw: "pureadmin setattr --timezone '{{ pure_timezone }}'"
+  delegate_to: pure_timezone_cli
+  register: pure_timezone_result
+  changed_when: pure_timezone_result.rc == 0
+  no_log: true
+  when: pure_timezone_cli_enabled | bool

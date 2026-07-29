@@ -1,0 +1,11 @@
+---
+oneview_hostname: oneview.example.local
+oneview_username: "{{ vault_oneview_username }}"
+oneview_password: "{{ vault_oneview_password }}"
+oneview_auth_login_domain: LOCAL
+oneview_api_version: 3000
+oneview_vlan_name: VLAN_123_APP
+oneview_network_set_name: VC-NETWORK-SET
+oneview_server_profile_name: ""
+oneview_profile_connection_name: VLAN_123_APP
+confirm_vlan_remove: false

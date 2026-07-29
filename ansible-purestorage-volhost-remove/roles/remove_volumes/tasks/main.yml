@@ -1,0 +1,10 @@
+---
+- name: Remove volumes last
+  purestorage.flasharray.purefa_volume:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item }}"
+    eradicate: "{{ pure_eradicate_volumes }}"
+    state: absent
+  loop: "{{ pure_remove_volumes }}"
+  no_log: true

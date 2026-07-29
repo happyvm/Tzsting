@@ -1,0 +1,35 @@
+---
+- name: Configure common Pure Storage FlashArray services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+    - name: Configure Active Directory
+      ansible.builtin.include_role:
+        name: configure_ad
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: configure_ntp
+    - name: Configure syslog
+      ansible.builtin.include_role:
+        name: configure_syslog
+    - name: Configure timezone
+      ansible.builtin.include_role:
+        name: configure_timezone
+    - name: Rotate local user password
+      ansible.builtin.include_role:
+        name: configure_local_user
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          purestorage_conf_summary:
+            array: "{{ pure_fa_url }}"
+            ad_account: "{{ pure_ad.name }}"
+            ntp_servers: "{{ pure_ntp_servers }}"
+            syslog_servers: "{{ pure_syslog_servers | map(attribute='name') | list }}"
+            timezone: "{{ pure_timezone if pure_timezone_cli_enabled | bool else 'unchanged' }}"
+            local_user: "{{ pure_local_user.name }}"
+        aggregate: false

@@ -1,0 +1,14 @@
+---
+- name: Configure appliance locale, timezone and NTP
+  hpe.oneview.oneview_appliance_time_and_locale_configuration:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    state: present
+    data:
+      locale: "{{ oneview_locale }}"
+      timezone: "{{ oneview_timezone }}"
+      ntpServers: "{{ oneview_ntp_servers }}"
+  no_log: true

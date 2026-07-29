@@ -1,0 +1,38 @@
+---
+- name: Collect Windows preflight facts
+  ansible.windows.win_powershell:
+    script: |
+      $os = Get-CimInstance Win32_OperatingSystem
+      $drive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+      $build = [int]$os.BuildNumber
+      $release = if ($build -le 14393) { '2016' } elseif ($build -le 17763) { '2019' } elseif ($build -le 20348) { '2022' } else { '2025' }
+      [pscustomobject]@{ Major = $release; Caption = $os.Caption; FreeGB = [math]::Round($drive.FreeSpace / 1GB, 2); PendingReboot = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') }
+  delegate_to: inplace_upgrade_guest
+  register: inplace_upgrade_windows_preflight
+  when: guest_os == 'windows'
+
+- name: Collect Red Hat preflight facts
+  ansible.builtin.shell: |
+    set -o pipefail
+    source /etc/os-release
+    printf '{"id":"%s","major":"%s","free_gb":%s}\n' "$ID" "${VERSION_ID%%.*}" "$(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
+  args:
+    executable: /bin/bash
+  delegate_to: inplace_upgrade_guest
+  register: inplace_upgrade_redhat_preflight
+  changed_when: false
+  when: guest_os == 'redhat'
+
+- name: Normalize current release
+  ansible.builtin.set_fact:
+    inplace_upgrade_source_major: "{{ inplace_upgrade_windows_preflight.output[0].Major if guest_os == 'windows' else (inplace_upgrade_redhat_preflight.stdout | from_json).major }}"
+    inplace_upgrade_free_gb: "{{ inplace_upgrade_windows_preflight.output[0].FreeGB if guest_os == 'windows' else (inplace_upgrade_redhat_preflight.stdout | from_json).free_gb }}"
+
+- name: Enforce supported path and free-space policy
+  ansible.builtin.assert:
+    that:
+      - (inplace_upgrade_source_major | string) + '->' + (target_major_version | string) in (inplace_upgrade_allowed_windows_paths if guest_os == 'windows' else inplace_upgrade_allowed_redhat_paths)
+      - inplace_upgrade_free_gb | float >= (inplace_upgrade_min_free_gb_windows if guest_os == 'windows' else inplace_upgrade_min_free_gb_redhat) | float
+      - guest_os != 'windows' or not inplace_upgrade_windows_preflight.output[0].PendingReboot
+      - guest_os != 'windows' or windows_media_path is defined
+    fail_msg: "Unsupported path, insufficient free space, pending reboot, or missing Windows media. See the preflight policy."

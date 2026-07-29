@@ -1,0 +1,17 @@
+---
+- name: Retrieve Synergy blade hardware facts
+  hpe.oneview.oneview_server_hardware_facts:
+    hostname: "{{ oneview_hostname }}"
+    username: "{{ oneview_username }}"
+    password: "{{ oneview_password }}"
+    auth_login_domain: "{{ oneview_auth_login_domain }}"
+    api_version: "{{ oneview_api_version }}"
+    name: "{{ oneview_server_hardware_name }}"
+    options:
+      - physicalServerHardware
+  no_log: true
+
+- name: Require one matching blade
+  ansible.builtin.assert:
+    that: server_hardwares | length == 1
+    fail_msg: "Blade {{ oneview_server_hardware_name }} was not found uniquely."
