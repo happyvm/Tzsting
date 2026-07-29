@@ -69,15 +69,17 @@
   ansible.builtin.set_fact:
     compute_hyperv_matches: "{{ compute_hyperv_match_results | map(attribute='item') | list }}"
 
-- name: Fail on ambiguous placement (same name found on both platforms)
+- name: Fail on ambiguous placement (found on both platforms, or on multiple Hyper-V hosts)
   ansible.builtin.fail:
     msg: >-
-      '{{ vm_name }}' matches a VM in vCenter and on Hyper-V host(s)
-      {{ compute_hyperv_matches | join(', ') }}. Refusing to guess -
-      pass hypervisor_type explicitly to disambiguate.
+      '{{ vm_name }}' is ambiguous:
+      {{ 'found in vCenter and on Hyper-V host(s) ' + (compute_hyperv_matches | join(', ')) if compute_found_vmware
+         else 'found on multiple Hyper-V hosts: ' + (compute_hyperv_matches | join(', ')) }}.
+      Refusing to guess - pass hypervisor_type explicitly (and ensure the
+      VM name is actually unique on the target platform) to disambiguate.
   when:
-    - compute_found_vmware
     - compute_hyperv_matches | length > 0
+    - compute_found_vmware or (compute_hyperv_matches | length > 1)
 
 - name: Set resolved hypervisor_type from the vCenter match
   ansible.builtin.set_fact:

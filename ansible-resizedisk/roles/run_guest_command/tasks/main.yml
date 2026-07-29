@@ -165,7 +165,17 @@
       '@)
       Invoke-Command -VMName '{{ vm_name }}' -Credential $cred -ScriptBlock $scriptBlock
   changed_when: false
+  failed_when: false
   register: run_guest_command_psdirect
+
+- name: Surface PowerShell Direct failures without leaking the invocation (which embeds guest_password)
+  when:
+    - resizedisk_exec_method == 'powershell_direct'
+    - run_guest_command_psdirect.rc | default(0) != 0
+  ansible.builtin.fail:
+    msg: >-
+      PowerShell Direct guest command failed (rc={{ run_guest_command_psdirect.rc | default('unknown') }}):
+      {{ run_guest_command_psdirect.stdout | default('') }} {{ run_guest_command_psdirect.stderr | default('') }}
 
 - name: Normalize the command result across channels
   ansible.builtin.set_fact:

@@ -19,6 +19,27 @@
       vm_name, disk_new_size_gb and resizedisk_hypervisor_type must all be
       set (resizedisk_hypervisor_type is normally resolved by preflight_platform).
 
+- name: Refuse a Windows drive letter unsafe to interpolate into PowerShell
+  when: windows_drive_letter is defined
+  ansible.builtin.assert:
+    that:
+      - windows_drive_letter is regex('^[A-Za-z]$')
+    fail_msg: >-
+      windows_drive_letter must be a single drive letter (e.g. C) - it is
+      interpolated into single-quoted PowerShell string literals in
+      resize_windows_filesystem; anything else is a command injection vector.
+
+- name: Refuse a Linux mountpoint unsafe to interpolate into a shell command
+  when: linux_target is defined
+  ansible.builtin.assert:
+    that:
+      - linux_target is regex('^/[A-Za-z0-9._/-]*$')
+    fail_msg: >-
+      linux_target must be an absolute path using only letters, digits,
+      dot, underscore, hyphen and slash (e.g. /data) - it is interpolated
+      into a single-quoted shell string literal in resize_linux_filesystem;
+      anything else is a command injection vector.
+
 - name: Refuse to resize beyond the configured maximum size
   ansible.builtin.assert:
     that:

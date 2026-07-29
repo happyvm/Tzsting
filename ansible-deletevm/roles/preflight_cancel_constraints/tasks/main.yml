@@ -58,9 +58,19 @@
     deletevm_cancel_raw_field: "{{ deletevm_cancel_scvmm_description.stdout | default('') | trim }}"
 
 - name: Parse the decommission marker, if any
+  # vm_delete_scheduled_at may itself contain colons (e.g.
+  # 2026-08-15T22:00:00), so this can't split on every ':' like a naive
+  # [^:]+ capture per field would - that shifts every field after the
+  # date and corrupts deletevm_cancel_was_running (see
+  # preflight_decommission_constraints.yml's regex for the accepted date
+  # formats). ticket and was_running are both known, colon-free, fixed
+  # charsets (validated at write time / literal True|False), so a greedy
+  # (.+) for the date backtracks correctly to whichever match is the
+  # actual rightmost ticket:was_running pair, regardless of how many
+  # colons the date itself contains.
   ansible.builtin.set_fact:
     deletevm_cancel_marker: "{{ deletevm_cancel_raw_field
-                                 | regex_search('DECOMMISSION_SCHEDULED:([^:]+):([^:]+):([^:]+):(.*)', '\\1', '\\2', '\\3', '\\4') }}"
+                                 | regex_search('DECOMMISSION_SCHEDULED:(.+):([A-Za-z0-9._-]+):(True|False):(.*)', '\\1', '\\2', '\\3', '\\4') }}"
 
 - name: Refuse to cancel - no active decommission found for this VM
   ansible.builtin.assert:

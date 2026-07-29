@@ -38,10 +38,15 @@
           Stop-SCVirtualMachine -VM $vm | Out-Null
       }
 
-      Set-SCVirtualMachine -VM $vm -DynamicMemoryEnabled $false -MemoryMB {{ (memory_gb | float * 1024) | round(0) | int }} | Out-Null
-
-      if ($wasRunning) {
-          Start-SCVirtualMachine -VM $vm | Out-Null
+      try {
+          Set-SCVirtualMachine -VM $vm -DynamicMemoryEnabled $false -MemoryMB {{ (memory_gb | float * 1024) | round(0) | int }} | Out-Null
+      } finally {
+          # Restart even if Set-SCVirtualMachine threw - otherwise a failed
+          # change leaves the VM stranded off.
+          $vm = Get-SCVirtualMachine -Name '{{ vm_name }}'
+          if ($wasRunning -and $vm.Status -eq 'PowerOff') {
+              Start-SCVirtualMachine -VM $vm | Out-Null
+          }
       }
 
       [PSCustomObject]@{

@@ -39,14 +39,18 @@
           }
       }
 
-      Set-VMMemory -VMName '{{ vm_name }}' -DynamicMemoryEnabled $false -StartupBytes $targetBytes
-
-      if ($wasRunning) {
-          Start-VM -Name '{{ vm_name }}'
-          $waited = 0
-          while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
-              Start-Sleep -Seconds 5
-              $waited += 5
+      try {
+          Set-VMMemory -VMName '{{ vm_name }}' -DynamicMemoryEnabled $false -StartupBytes $targetBytes
+      } finally {
+          # Restart even if Set-VMMemory threw - otherwise a failed change
+          # leaves the VM stranded off.
+          if ($wasRunning -and (Get-VM -Name '{{ vm_name }}').State -ne 'Running') {
+              Start-VM -Name '{{ vm_name }}'
+              $waited = 0
+              while ((Get-VM -Name '{{ vm_name }}').State -ne 'Running' -and $waited -lt $timeoutSeconds) {
+                  Start-Sleep -Seconds 5
+                  $waited += 5
+              }
           }
       }
 
