@@ -1,15 +1,24 @@
 # ansible-veeam-conf
 
-Configuration des paramètres de notification globaux d'un serveur **Veeam
-Backup & Replication (VBR)** : email et SNMP. Le projet suit la
-méthodologie du dépôt : inventaire sans appliance statique, préflight
-bloquant, secrets Vault/AAP, rôles séparés et artefact `set_stats`.
+Configuration déclarative du serveur Windows hébergeant **Veeam Backup &
+Replication (VBR)** - jonction Active Directory (optionnelle), compte
+local d'automatisation, NTP et fuseau horaire, directement via WinRM,
+comme `windows-hyperv-conf`/`windows-scvmm-conf` - et des paramètres de
+notification globaux de VBR lui-même (email, SNMP) via sa vraie API REST.
+Le projet suit la méthodologie du dépôt : inventaire sans appliance
+statique, préflight bloquant, secrets Vault/AAP, rôles séparés et
+artefact `set_stats`.
 
 ## Ce que ce projet couvre - et ce qu'il ne couvre pas
 
-**Couvert** : les réglages globaux de notification du serveur VBR
-lui-même (email, SNMP), au même niveau que les autres projets `*-conf` du
-dépôt (identité/alerting d'un équipement, pas son contenu fonctionnel).
+**Couvert** : le système d'exploitation Windows du serveur VBR (AD, compte
+local, NTP, fuseau horaire) et les réglages globaux de notification du
+serveur VBR lui-même (email, SNMP), au même niveau que les autres projets
+`*-conf` du dépôt (identité/alerting d'un équipement, pas son contenu
+fonctionnel). L'intégration LDAP/RBAC applicative de VBR (rôles/permissions
+internes à Veeam, distincts de la jonction AD de l'hôte Windows) n'est
+**pas encore couverte** - à ajouter dans une future itération si
+nécessaire.
 
 **Non couvert, volontairement** : la création/modification de jobs de
 sauvegarde, de policies de rétention, de repositories, de proxies, ni la
@@ -60,12 +69,28 @@ Les deux notifications sont désactivées par défaut. Les payloads
 d'exemple dans `inventory/group_vars/all.yml` sont à aligner sur le
 schéma réel de la version cible avant activation.
 
+## Hôte Windows (rôles `ad`, `local_admin`, `ntp`, `timezone`)
+
+`veeam_conf_winrm_hostname`/`_username`/`_password` sont les identifiants
+WinRM du serveur Windows lui-même, distincts de `veeam_conf_username`/
+`_password` (le compte applicatif VBR pour l'API REST) - même si les deux
+ciblent généralement la même machine, ce sont deux comptes différents. La
+jonction AD (`veeam_conf_ad_enabled: false` par défaut) ne redémarre
+jamais le serveur : VBR devenant indisponible pendant un redémarrage
+interrompt toutes les sauvegardes planifiées sur ce serveur, donc le
+redémarrage nécessaire pour finaliser la jonction est une action de
+maintenance à planifier séparément. `veeam_conf_timezone` attend un
+identifiant de fuseau **Windows** (ex. `Romance Standard Time`), pas un
+nom IANA (`Europe/Paris`).
+
 ## Variables et secrets
 
 Adapter `inventory/group_vars/all.yml`. Placer dans Vault/AAP : les
-credentials VBR et la communauté SNMP. Toutes les tâches HTTP sont en
-`no_log` (la requête de token transporte le mot de passe dans son corps).
-Utiliser un compte API aux droits minimaux.
+credentials VBR (API et WinRM), le compte de jonction AD, le mot de passe
+du compte local et la communauté SNMP. Toutes les tâches HTTP et
+sensibles sont en `no_log` (la requête de token transporte le mot de
+passe dans son corps). Utiliser un compte API et un compte de jonction AD
+aux droits minimaux.
 
 ## Utilisation
 
@@ -74,6 +99,9 @@ cp inventory/hosts.yml.example inventory/hosts.yml
 ansible-playbook playbooks/configure_veeam.yml --vault-password-file .vault_pass
 ```
 
-Tester d'abord sur un serveur de qualification. Le résultat
-`veeam_conf_summary` est récupérable par AAP et ServiceNow sans exposer
-les secrets.
+Aucun inventaire statique par hôte : le serveur cible est ajouté
+dynamiquement à l'inventaire en mémoire depuis
+`veeam_conf_winrm_hostname`/`username`/`password`. La jonction AD est
+désactivée par défaut (`veeam_conf_ad_enabled: false`). Tester d'abord
+sur un serveur de qualification. Le résultat `veeam_conf_summary` est
+récupérable par AAP et ServiceNow sans exposer les secrets.
