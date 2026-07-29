@@ -1,0 +1,10 @@
+---
+- name: Configure vCenter server logging level
+  delegate_to: localhost
+  community.vmware.vmware_vcenter_settings:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    logging_options: "{{ vcenter_conf_logging_options }}"
+  no_log: true

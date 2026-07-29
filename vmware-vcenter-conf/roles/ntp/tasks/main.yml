@@ -1,0 +1,16 @@
+---
+- name: Configure vCenter Appliance NTP via VAMI
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}{{ vcenter_conf_ntp_endpoint }}"
+    method: "{{ vcenter_conf_ntp_method }}"
+    url_username: "{{ vcenter_vami_username }}"
+    url_password: "{{ vcenter_vami_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vmware_validate_certs }}"
+    headers: "{{ vcenter_vami_headers }}"
+    body_format: json
+    body: "{{ vcenter_conf_ntp_configuration }}"
+    status_code: [200, 201, 202, 204]
+  register: ntp_result
+  changed_when: ntp_result.status in [201, 202, 204]
+  no_log: true

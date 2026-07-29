@@ -1,0 +1,25 @@
+---
+- name: Configure ESXi NTP servers
+  delegate_to: localhost
+  community.vmware.vmware_host_ntp:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: "{{ esxi_conf_esxi_hostname }}"
+    ntp_servers: "{{ esxi_conf_ntp_servers }}"
+    state: present
+  no_log: true
+
+- name: Ensure the NTP daemon is enabled and running
+  delegate_to: localhost
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: "{{ esxi_conf_esxi_hostname }}"
+    service_name: ntpd
+    service_policy: "on"
+    state: start
+  no_log: true

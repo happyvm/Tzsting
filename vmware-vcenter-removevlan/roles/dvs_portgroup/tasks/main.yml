@@ -1,0 +1,13 @@
+---
+- name: Remove the Distributed vSwitch portgroup (VLAN)
+  delegate_to: localhost
+  community.vmware.vmware_dvs_portgroup:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    switch_name: "{{ vcenter_switch_name }}"
+    portgroup_name: "{{ vcenter_vlan_name }}"
+    vlan_id: "{{ vcenter_vlan_id }}"
+    port_binding: "{{ vcenter_port_binding }}"
+    state: absent

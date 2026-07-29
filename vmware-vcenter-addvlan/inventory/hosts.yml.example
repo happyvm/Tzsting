@@ -1,0 +1,7 @@
+---
+# Copy to hosts.yml. API operations run from localhost via vCenter - no
+# per-host inventory entry required.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

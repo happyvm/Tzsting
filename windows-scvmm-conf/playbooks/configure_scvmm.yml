@@ -1,0 +1,64 @@
+---
+# Configures the Windows Server host running SCVMM directly over WinRM: AD
+# domain join (optional), local automation account, NTP client and
+# timezone. No static per-host inventory is required - the target is added
+# as a dynamic in-memory host from scvmm_conf_hostname/username/password.
+#
+# This project configures the SCVMM *management server's own OS* - it does
+# not touch SCVMM's own configuration (logical networks, VM networks,
+# host groups...), which is what windows-scvmm-addvlan/-removevlan do
+# through the virtualmachinemanager PowerShell module instead.
+#
+# Usage:
+#   ansible-playbook playbooks/configure_scvmm.yml --vault-password-file .vault_pass
+
+- name: Configure the SCVMM management server's identity, authentication and time services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the SCVMM management server to the in-memory inventory
+      ansible.builtin.add_host:
+        name: scvmm_conf_target
+        ansible_host: "{{ scvmm_conf_hostname }}"
+        ansible_connection: winrm
+        ansible_user: "{{ scvmm_conf_username }}"
+        ansible_password: "{{ scvmm_conf_password }}"
+        ansible_port: "{{ scvmm_conf_winrm_port }}"
+        ansible_winrm_transport: "{{ scvmm_conf_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if scvmm_conf_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Configure Active Directory domain join
+      ansible.builtin.include_role:
+        name: ad
+      when: scvmm_conf_ad_enabled | bool
+
+    - name: Maintain the local automation account
+      ansible.builtin.include_role:
+        name: local_admin
+
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: ntp
+
+    - name: Configure timezone
+      ansible.builtin.include_role:
+        name: timezone
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          scvmm_conf_summary:
+            host: "{{ scvmm_conf_hostname }}"
+            ad_joined: "{{ scvmm_conf_ad_enabled | bool }}"
+            ad_domain: "{{ scvmm_conf_ad.domain if scvmm_conf_ad_enabled | bool else '' }}"
+            local_admin: "{{ scvmm_conf_local_admin.name }}"
+            ntp_servers: "{{ scvmm_conf_ntp_servers }}"
+            timezone: "{{ scvmm_conf_timezone }}"
+        aggregate: false

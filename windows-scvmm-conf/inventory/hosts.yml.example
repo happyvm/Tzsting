@@ -1,0 +1,9 @@
+---
+# Copy to hosts.yml. The SCVMM management server is reached over WinRM from
+# a dynamic in-memory inventory entry (scvmm_conf_target) added by the
+# playbook itself from scvmm_conf_hostname/username/password - no static
+# per-host inventory is required.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

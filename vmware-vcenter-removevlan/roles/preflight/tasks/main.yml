@@ -1,0 +1,20 @@
+---
+- name: Validate vCenter VLAN removal request
+  ansible.builtin.assert:
+    that:
+      - confirm_vlan_remove | bool
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vcenter_vlan_name is match('^[A-Za-z0-9._ -]+$')
+      - vcenter_vlan_id | int >= 1
+      - vcenter_vlan_id | int <= 4094
+      - vcenter_port_binding in ['static', 'ephemeral']
+      - vcenter_switch_name | length > 0
+      - vcenter_switch_name is match('^[A-Za-z0-9._ -]+$')
+      - vcenter_vm_name | default('') | length == 0 or vcenter_vm_name is match('^[A-Za-z0-9 ._-]{1,80}$')
+      - vcenter_vm_name | default('') | length == 0 or vcenter_vm_network_adapter_label | default('') | length > 0
+    fail_msg: >-
+      Set confirm_vlan_remove=true and provide safe VLAN/switch names; if
+      vcenter_vm_name is set, vcenter_vm_network_adapter_label is also
+      required to identify exactly which network adapter to remove.

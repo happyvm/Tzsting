@@ -1,0 +1,9 @@
+---
+# Copy to hosts.yml. Configuration uses the community.vmware modules, which
+# connect directly to the standalone ESXi host's own management API over
+# HTTPS from the Ansible execution environment - no vCenter and no
+# per-host inventory entry required.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

@@ -1,0 +1,64 @@
+---
+# Configures a native Windows Server Hyper-V host directly over WinRM: AD
+# domain join (optional), local automation account, NTP client and
+# timezone. No static per-host inventory is required - the target is added
+# as a dynamic in-memory host from hyperv_conf_hostname/username/password.
+#
+# Unlike ansible-createvm/ansible-resizecompute/etc, this project does not
+# manage VMs - it configures the Hyper-V host operating system itself, the
+# same job ansible-synergy-conf/ansible-hpe-storeonce-conf/etc do for their
+# respective appliances, but over WinRM/PowerShell instead of a REST API.
+#
+# Usage:
+#   ansible-playbook playbooks/configure_hyperv.yml --vault-password-file .vault_pass
+
+- name: Configure a Hyper-V host's identity, authentication and time services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the Hyper-V host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: hyperv_conf_target
+        ansible_host: "{{ hyperv_conf_hostname }}"
+        ansible_connection: winrm
+        ansible_user: "{{ hyperv_conf_username }}"
+        ansible_password: "{{ hyperv_conf_password }}"
+        ansible_port: "{{ hyperv_conf_winrm_port }}"
+        ansible_winrm_transport: "{{ hyperv_conf_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if hyperv_conf_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Configure Active Directory domain join
+      ansible.builtin.include_role:
+        name: ad
+      when: hyperv_conf_ad_enabled | bool
+
+    - name: Maintain the local automation account
+      ansible.builtin.include_role:
+        name: local_admin
+
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: ntp
+
+    - name: Configure timezone
+      ansible.builtin.include_role:
+        name: timezone
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          hyperv_conf_summary:
+            host: "{{ hyperv_conf_hostname }}"
+            ad_joined: "{{ hyperv_conf_ad_enabled | bool }}"
+            ad_domain: "{{ hyperv_conf_ad.domain if hyperv_conf_ad_enabled | bool else '' }}"
+            local_admin: "{{ hyperv_conf_local_admin.name }}"
+            ntp_servers: "{{ hyperv_conf_ntp_servers }}"
+            timezone: "{{ hyperv_conf_timezone }}"
+        aggregate: false

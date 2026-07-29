@@ -1,0 +1,7 @@
+---
+# Copy to hosts.yml. API/VAMI operations run from localhost - no per-host
+# inventory entry required.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

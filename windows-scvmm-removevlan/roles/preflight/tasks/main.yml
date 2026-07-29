@@ -1,0 +1,18 @@
+---
+- name: Validate SCVMM VLAN removal request
+  ansible.builtin.assert:
+    that:
+      - confirm_vlan_remove | bool
+      - scvmm_server | length > 0
+      - scvmm_vlan_id | int >= 1
+      - scvmm_vlan_id | int <= 4094
+      - scvmm_logical_network is match('^[A-Za-z0-9._ -]+$')
+      - scvmm_host_group is match('^[A-Za-z0-9._ \\\\-]+$')
+      - scvmm_vm_network_name is match('^[A-Za-z0-9._ -]+$')
+      - scvmm_vm_name | default('') | length == 0 or scvmm_vm_name is match('^[A-Za-z0-9 ._-]{1,80}$')
+      - scvmm_vm_network_adapter_name | default('') | length == 0 or scvmm_vm_network_adapter_name is match('^[A-Za-z0-9 ._-]{1,80}$')
+    fail_msg: >-
+      Set confirm_vlan_remove=true and provide safe VLAN/network names -
+      these values are interpolated into single-quoted PowerShell string
+      literals against SCVMM, so anything outside a safe character set is
+      a command injection vector.

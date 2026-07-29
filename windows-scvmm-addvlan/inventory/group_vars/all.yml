@@ -1,0 +1,31 @@
+---
+# scvmm_server must be an inventory_hostname declared in the
+# scvmm_management group (see inventory/hosts.yml.example) - delegate_to
+# needs an exact match to reach it over WinRM.
+scvmm_server: scvmm01
+
+scvmm_vlan:
+  name: VLAN123-APP
+  vlan_id: 123
+  logical_network: Production
+  # Optional: adds a Network Site subnet (CIDR) to the logical network
+  # definition alongside the VLAN. Omit to add the VLAN with no managed
+  # subnet (e.g. when IPAM is handled outside SCVMM).
+  subnet: 10.20.30.0/24
+
+# SCVMM host group the new Network Site applies to (VMHostGroup name, e.g.
+# "All Hosts" or "All Hosts\Production").
+scvmm_host_group: "All Hosts"
+
+# VM Network name to create/maintain, bound to scvmm_vlan.logical_network -
+# this is what a VM's network adapter is actually attached to in SCVMM.
+scvmm_vm_network_name: VLAN123-APP-Network
+
+# Optional: if set, attach this VM's network adapter to the VM Network
+# above once created. Leave empty to only create the network-side objects
+# without touching any VM (e.g. to prepare a VLAN ahead of a later VM
+# creation/reconfiguration).
+scvmm_vm_name: ""
+# Optional: which network adapter to update, by its SCVMM display name
+# (e.g. "Network Adapter 1"). Defaults to the VM's first adapter if empty.
+scvmm_vm_network_adapter_name: ""

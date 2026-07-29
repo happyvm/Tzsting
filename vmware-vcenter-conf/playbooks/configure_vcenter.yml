@@ -1,0 +1,45 @@
+---
+# Configures vCenter Server Appliance services: NTP, timezone, local
+# appliance admin password rotation (via the VAMI REST API - see README for
+# why) and general vCenter server settings (logging, via the real
+# community.vmware.vmware_vcenter_settings module).
+#
+# Usage:
+#   ansible-playbook playbooks/configure_vcenter.yml --vault-password-file .vault_pass
+
+- name: Configure vCenter Server Appliance services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: ntp
+
+    - name: Configure timezone
+      ansible.builtin.include_role:
+        name: timezone
+
+    - name: Rotate the local appliance administrator password
+      ansible.builtin.include_role:
+        name: local_admin
+
+    - name: Configure vCenter server logging level
+      ansible.builtin.include_role:
+        name: logging
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          vcenter_conf_summary:
+            vcenter: "{{ vcenter_hostname }}"
+            ntp_servers: "{{ vcenter_conf_ntp_configuration.servers }}"
+            timezone: "{{ vcenter_conf_timezone_configuration.timezone }}"
+            local_admin: "{{ vcenter_conf_local_admin_username }}"
+            logging_options: "{{ vcenter_conf_logging_options }}"
+        aggregate: false

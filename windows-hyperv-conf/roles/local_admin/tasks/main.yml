@@ -1,0 +1,13 @@
+---
+- name: Create or maintain the local automation administrator
+  delegate_to: hyperv_conf_target
+  no_log: true
+  ansible.windows.win_user:
+    name: "{{ hyperv_conf_local_admin.name }}"
+    password: "{{ hyperv_conf_local_admin.password }}"
+    update_password: always
+    password_never_expires: true
+    groups:
+      - Administrators
+    groups_action: add
+    state: present

@@ -1,0 +1,14 @@
+---
+- name: Join the ESXi host to Active Directory
+  delegate_to: localhost
+  community.vmware.vmware_host_active_directory:
+    hostname: "{{ esxi_conf_hostname }}"
+    username: "{{ esxi_conf_username }}"
+    password: "{{ esxi_conf_password }}"
+    validate_certs: "{{ esxi_conf_validate_certs }}"
+    esxi_hostname: "{{ esxi_conf_esxi_hostname }}"
+    ad_domain: "{{ esxi_conf_ad.domain }}"
+    ad_user: "{{ esxi_conf_ad.username }}"
+    ad_password: "{{ esxi_conf_ad.password }}"
+    ad_state: present
+  no_log: true

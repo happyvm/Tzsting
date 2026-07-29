@@ -1,0 +1,29 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+# Same variable names as ansible-createvm/ansible-resizecompute/
+# ansible-resizedisk/etc, so an existing vCenter credential set can be
+# reused as-is.
+vcenter_hostname: vcenter.example.local
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+vmware_validate_certs: false
+
+vcenter_vlan_name: VLAN123-APP
+# community.vmware.vmware_dvs_portgroup requires vlan_id/port_binding even
+# to remove a portgroup (they are unconditionally required by the module,
+# not just for creation) - set them to match what the portgroup was
+# created with.
+vcenter_vlan_id: 123
+vcenter_port_binding: static
+vcenter_switch_name: dvSwitch0
+
+# Optional: if set, removes this VM's network adapter that's attached to
+# the VLAN being removed (identified by vcenter_vm_network_adapter_label,
+# then required). This deletes the virtual NIC device itself, it does not
+# just disconnect it - matches ansible-synergy-vlan-remove's equivalent
+# step, which also removes the connection entry outright. Leave both
+# empty to only remove the portgroup, without touching any VM.
+vcenter_vm_name: ""
+vcenter_vm_network_adapter_label: ""
+
+confirm_vlan_remove: false

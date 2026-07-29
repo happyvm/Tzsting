@@ -1,0 +1,19 @@
+---
+- name: Validate ESXi host configuration request
+  ansible.builtin.assert:
+    that:
+      - esxi_conf_hostname | length > 0
+      - esxi_conf_username | length > 0
+      - esxi_conf_password | length > 0
+      - esxi_conf_esxi_hostname | length > 0
+      - esxi_conf_ntp_servers | length > 0
+      - esxi_conf_syslog_host is match('^(udp|tcp|ssl)://[A-Za-z0-9._-]+:\d+$')
+      - esxi_conf_local_user.name is match('^[A-Za-z0-9._-]+$')
+      - esxi_conf_local_user.password | length >= 8
+      - not esxi_conf_ad_enabled | bool or esxi_conf_ad.domain | length > 0
+      - not esxi_conf_ad_enabled | bool or esxi_conf_ad.username | length > 0
+      - not esxi_conf_ad_enabled | bool or esxi_conf_ad.password | length > 0
+    fail_msg: >-
+      ESXi endpoint/credentials, NTP servers, a valid syslog destination
+      (proto://host:port) and a valid local automation account are
+      required; enabling AD also requires a domain, username and password.

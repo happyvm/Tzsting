@@ -1,0 +1,31 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+scvmm_conf_hostname: scvmm01.example.local
+scvmm_conf_username: "{{ vault_scvmm_conf_username }}"
+scvmm_conf_password: "{{ vault_scvmm_conf_password }}"
+scvmm_conf_winrm_port: 5986
+scvmm_conf_winrm_transport: ntlm
+scvmm_conf_validate_certs: true
+
+# Disabled by default - joining the SCVMM management server to the wrong
+# domain, or with a stale/incorrect payload, is not something to run
+# unattended without review.
+scvmm_conf_ad_enabled: false
+scvmm_conf_ad:
+  domain: example.local
+  username: "{{ vault_scvmm_conf_ad_username }}"
+  password: "{{ vault_scvmm_conf_ad_password }}"
+  ou: "OU=Management,OU=Servers,DC=example,DC=local"
+
+scvmm_conf_local_admin:
+  name: svc-ansible
+  password: "{{ vault_scvmm_conf_local_admin_password }}"
+
+scvmm_conf_ntp_servers:
+  - ntp01.example.local
+  - ntp02.example.local
+
+# Windows time zone ID, NOT an IANA name (e.g. "Romance Standard Time" is the
+# Windows ID for the same zone as IANA's Europe/Paris) - see `tzutil /l` on
+# any Windows host for the full list of valid values.
+scvmm_conf_timezone: "Romance Standard Time"

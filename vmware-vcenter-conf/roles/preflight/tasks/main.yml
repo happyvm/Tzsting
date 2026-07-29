@@ -1,0 +1,21 @@
+---
+- name: Validate vCenter appliance configuration request
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vcenter_vami_username | length > 0
+      - vcenter_vami_password | length > 0
+      - vcenter_conf_ntp_endpoint is match('^/[^ ]+$')
+      - vcenter_conf_timezone_endpoint is match('^/[^ ]+$')
+      - vcenter_conf_local_admin_endpoint is match('^/[^ ]+$')
+      - vcenter_conf_ntp_configuration.servers | length > 0
+      - vcenter_conf_local_admin_username | length > 0
+      - vcenter_conf_local_admin_password | length >= 8
+      - vcenter_conf_logging_options in ['none', 'error', 'warning', 'info', 'verbose', 'trivia']
+    fail_msg: >-
+      Credentials and firmware-specific VAMI HTTPS API paths are
+      mandatory (copy paths/payloads from the API guide for the target
+      vCenter release), along with a valid local admin password and
+      logging_options value.

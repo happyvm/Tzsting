@@ -1,0 +1,37 @@
+---
+# Adds a VLAN to vCenter as a Distributed vSwitch portgroup, and optionally
+# attaches one VM's network adapter to it. Mirrors
+# ansible-synergy-vlan-add's shape (ethernet_network -> network_set ->
+# server_profile), simpler here because a vCenter distributed portgroup is
+# directly usable by VMs with no separate "network set" aggregation step.
+#
+# Usage:
+#   ansible-playbook playbooks/add_vlan.yml --vault-password-file .vault_pass
+
+- name: Add a VLAN to vCenter and optionally attach it to a VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validate request
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Create or maintain the distributed portgroup (VLAN)
+      ansible.builtin.include_role:
+        name: dvs_portgroup
+
+    - name: Attach the VLAN to a VM's network adapter
+      ansible.builtin.include_role:
+        name: vm_network
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          vcenter_vlan_add_summary:
+            vlan: "{{ vcenter_vlan.name }}"
+            vlan_id: "{{ vcenter_vlan.vlan_id }}"
+            switch: "{{ vcenter_vlan.switch_name }}"
+            vm_name: "{{ vcenter_vm_name }}"
+        aggregate: false

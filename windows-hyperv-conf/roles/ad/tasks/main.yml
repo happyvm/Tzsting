@@ -1,0 +1,45 @@
+---
+# Joins the Hyper-V host to Active Directory. Deliberately never reboots the
+# host itself (-Restart is not used): a Hyper-V host normally still has
+# running VMs on it, and a domain join only takes full effect after a
+# restart - that restart is a separate, deliberately-scheduled maintenance
+# action outside this role's scope, not something to trigger unattended
+# from a config playbook. The join is idempotent: already being a member of
+# the requested domain is left alone.
+- name: Join the Hyper-V host to Active Directory
+  delegate_to: hyperv_conf_target
+  no_log: true
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $cs = Get-CimInstance Win32_ComputerSystem
+      if ($cs.PartOfDomain -and $cs.Domain -eq '{{ hyperv_conf_ad.domain }}') {
+          [PSCustomObject]@{ Joined = $false; AlreadyMember = $true } | ConvertTo-Json -Compress
+      } else {
+          $securePassword = ConvertTo-SecureString -String @'
+      {{ hyperv_conf_ad.password }}
+      '@ -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential('{{ hyperv_conf_ad.username }}', $securePassword)
+          $params = @{
+              DomainName = '{{ hyperv_conf_ad.domain }}'
+              Credential = $cred
+              Restart    = $false
+              Force      = $true
+          }
+          {% if hyperv_conf_ad.ou | default('') | length > 0 %}
+          $params['OUPath'] = '{{ hyperv_conf_ad.ou }}'
+          {% endif %}
+          Add-Computer @params | Out-Null
+          [PSCustomObject]@{ Joined = $true; AlreadyMember = $false } | ConvertTo-Json -Compress
+      }
+  register: ad_result
+  changed_when: (ad_result.stdout | trim | from_json).Joined
+
+- name: Report the domain join
+  vars:
+    ad_parsed: "{{ ad_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ hyperv_conf_hostname }}
+      {{ 'was already a member of ' + hyperv_conf_ad.domain if ad_parsed.AlreadyMember
+         else 'joined ' + hyperv_conf_ad.domain + ' - a restart is required to complete the join, schedule it separately.' }}

@@ -1,0 +1,15 @@
+---
+- name: Create or maintain the Distributed vSwitch portgroup (VLAN)
+  delegate_to: localhost
+  community.vmware.vmware_dvs_portgroup:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vmware_validate_certs }}"
+    switch_name: "{{ vcenter_vlan.switch_name }}"
+    portgroup_name: "{{ vcenter_vlan.name }}"
+    portgroup_description: "{{ vcenter_vlan.description | default(omit) }}"
+    vlan_id: "{{ vcenter_vlan.vlan_id }}"
+    port_binding: "{{ vcenter_vlan.port_binding | default('static') }}"
+    num_ports: "{{ vcenter_vlan.num_ports | default(omit) }}"
+    state: present
