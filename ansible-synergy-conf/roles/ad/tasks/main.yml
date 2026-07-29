@@ -14,7 +14,9 @@
   no_log: true
   when: oneview_ad_enabled | bool
 
-- block:
+- name: Configure AD then always close the OneView session
+  when: oneview_ad_enabled | bool
+  block:
     - name: Configure the version-specific OneView AD provider
       ansible.builtin.uri:
         url: "https://{{ oneview_hostname }}{{ oneview_ad_api_path }}"
@@ -38,4 +40,3 @@
           auth: "{{ oneview_ad_login.json.sessionID }}"
         status_code: [200, 204]
       no_log: true
-  when: oneview_ad_enabled | bool
