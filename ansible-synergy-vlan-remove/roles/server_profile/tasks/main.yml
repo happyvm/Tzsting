@@ -21,6 +21,6 @@
     data:
       name: "{{ oneview_server_profile_name }}"
       connectionSettings:
-        connections: "{{ server_profiles[0].connectionSettings.connections | rejectattr('name', 'equalto', oneview_profile_connection_name) | list }}"
+        connections: "{{ server_profiles[0].connectionSettings.connections | default([]) | rejectattr('name', 'equalto', oneview_profile_connection_name) | list }}"
   no_log: true
   when: oneview_server_profile_name | length > 0
