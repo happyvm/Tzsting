@@ -32,12 +32,18 @@
       PowerShell string literals on Hyper-V/SCVMM; a stray quote or
       semicolon in it would otherwise be a command injection vector.
 
-- name: Assert template_name is defined
+- name: Assert template_name is defined and safe to interpolate into PowerShell
   ansible.builtin.assert:
     that:
       - template_name is defined
       - template_name | length > 0
-    fail_msg: "template_name must be supplied (e.g. -e template_name='Windows Server 2022 Template')."
+      - template_name is regex('^[A-Za-z0-9 ._()-]{1,80}$')
+    fail_msg: >-
+      template_name must be supplied (e.g. -e template_name='Windows Server
+      2022 Template') and may only contain letters, digits, spaces, dot,
+      underscore, parentheses and hyphen (1-80 chars) - it is interpolated
+      into single-quoted PowerShell string literals in create_vm_scvmm;
+      anything else is a command injection vector.
 
 - name: Assert guest_os is valid
   ansible.builtin.assert:
@@ -89,6 +95,31 @@
       shorter -e computer_name=... (vm_name itself can stay longer/more
       descriptive; computer_name is what's actually set inside the
       guest).
+
+- name: Assert computer_name is safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - computer_name is regex('^[A-Za-z0-9.-]{1,63}$')
+    fail_msg: >-
+      computer_name '{{ computer_name }}' may only contain letters,
+      digits, dot and hyphen - it is interpolated into a single-quoted
+      PowerShell string literal (ComputerName) in create_vm_scvmm;
+      anything else is a command injection vector.
+
+- name: Assert domain/workgroup/credential fields are safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - (domain_name | default('')) | length == 0 or domain_name is regex('^[A-Za-z0-9.-]{1,255}$')
+      - (workgroup_name | default('')) | length == 0 or workgroup_name is regex('^[A-Za-z0-9-]{1,15}$')
+      - (domain_admin_username | default('')) | length == 0 or domain_admin_username is regex('^[A-Za-z0-9._@\\\\-]{1,104}$')
+      - (product_key | default('')) | length == 0 or product_key is regex('^[A-Za-z0-9-]{1,50}$')
+      - (ssh_public_key | default('')) | length == 0 or ssh_public_key is regex('^[A-Za-z0-9+/=@. _-]{1,4096}$')
+    fail_msg: >-
+      domain_name, workgroup_name, domain_admin_username, product_key and
+      ssh_public_key must all use a safe character set - they are
+      interpolated into single-quoted PowerShell string literals (or, for
+      ssh_public_key, a here-string) in create_vm_scvmm; anything outside
+      their expected format is a command injection vector.
 
 - name: Assert domain-join credentials and workgroup aren't both/neither given
   when: (domain_name | default('')) | length > 0
@@ -180,15 +211,21 @@
       This is a hard platform wall for this project, not a missing
       feature - see README.
 
-- name: Assert SCVMM placement variables are defined
+- name: Assert SCVMM placement variables are defined and safe to interpolate into PowerShell
   when: hypervisor_type == 'hyperv'
   ansible.builtin.assert:
     that:
       - vm_host is defined
       - vm_host | length > 0
+      - vm_host is regex('^[A-Za-z0-9._-]{1,255}$')
       - vm_path is defined
       - vm_path | length > 0
-    fail_msg: "Hyper-V/SCVMM VM creation needs vm_host and vm_path to be supplied."
+      - vm_path is regex('^[A-Za-z]:\\\\[A-Za-z0-9 ._\\\\-]*$')
+    fail_msg: >-
+      Hyper-V/SCVMM VM creation needs vm_host (a hostname/FQDN) and
+      vm_path (a local Windows path, e.g. D:\VMs) to be supplied - both
+      are interpolated into single-quoted PowerShell string literals in
+      create_vm_scvmm; anything else is a command injection vector.
 
 - name: Refuse to create a VM whose name is already in use (SCVMM)
   when: hypervisor_type == 'hyperv'
