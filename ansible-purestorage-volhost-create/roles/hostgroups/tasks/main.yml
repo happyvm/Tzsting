@@ -1,0 +1,13 @@
+---
+- name: Create or maintain FlashArray host groups
+  purestorage.flasharray.purefa_hg:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item.name }}"
+    host: "{{ item.hosts | default(omit) }}"
+    volume: "{{ item.volumes | default(omit) }}"
+    state: present
+  loop: "{{ pure_hostgroups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

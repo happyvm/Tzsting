@@ -1,0 +1,19 @@
+---
+- name: Create or maintain HPE StoreOnce local accounts
+  ansible.builtin.uri:
+    url: "https://{{ storeonce_hostname }}{{ storeonce_local_accounts_endpoint }}"
+    method: "{{ storeonce_local_accounts_method }}"
+    url_username: "{{ storeonce_api_username }}"
+    url_password: "{{ storeonce_api_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ storeonce_validate_certs }}"
+    headers: "{{ storeonce_api_headers }}"
+    body_format: json
+    body: "{{ item }}"
+    status_code: [200, 201, 202, 204]
+  loop: "{{ storeonce_local_accounts }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: storeonce_local_accounts_result
+  changed_when: storeonce_local_accounts_result.status in [201, 202, 204]
+  no_log: true

@@ -1,0 +1,40 @@
+---
+dxi_hostname: dxi01.example.local
+dxi_validate_certs: true
+dxi_api_username: "{{ vault_dxi_api_username }}"
+dxi_api_password: "{{ vault_dxi_api_password }}"
+dxi_api_headers:
+  Accept: application/json
+  Content-Type: application/json
+
+# DXi REST paths and payload schemas vary by DXi software generation. These
+# paths are intentionally required inventory values: copy them from the API
+# guide shipped with the exact target release instead of guessing in code.
+dxi_local_accounts_endpoint: ""
+dxi_local_accounts_method: POST
+dxi_local_accounts:
+  - username: svc-ansible
+    password: "{{ vault_dxi_local_admin_password }}"
+    role: administrator
+    enabled: true
+
+dxi_ad_endpoint: ""
+dxi_ad_method: PUT
+dxi_ad_configuration:
+  enabled: true
+  domain: example.local
+  domain_controllers: [dc01.example.local, dc02.example.local]
+  bind_username: "{{ vault_dxi_ad_username }}"
+  bind_password: "{{ vault_dxi_ad_password }}"
+  base_dn: DC=example,DC=local
+
+dxi_ntp_endpoint: ""
+dxi_ntp_method: PUT
+dxi_ntp_configuration:
+  enabled: true
+  servers: [ntp01.example.local, ntp02.example.local]
+
+dxi_timezone_endpoint: ""
+dxi_timezone_method: PUT
+dxi_timezone_configuration:
+  timezone: Europe/Paris

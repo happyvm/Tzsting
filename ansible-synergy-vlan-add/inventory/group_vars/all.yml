@@ -1,0 +1,24 @@
+---
+oneview_hostname: oneview.example.local
+oneview_username: "{{ vault_oneview_username }}"
+oneview_password: "{{ vault_oneview_password }}"
+oneview_auth_login_domain: LOCAL
+oneview_api_version: 3000
+oneview_vlan:
+  name: VLAN_123_APP
+  vlanId: 123
+  purpose: General
+  smartLink: true
+  privateNetwork: false
+  bandwidth:
+    maximumBandwidth: 10000
+    typicalBandwidth: 2500
+oneview_network_set_name: VC-NETWORK-SET
+oneview_server_profile_name: ""
+oneview_profile_connection:
+  id: 10
+  name: VLAN_123_APP
+  functionType: Ethernet
+  portId: Auto
+  requestedMbps: 2500
+  networkName: VLAN_123_APP

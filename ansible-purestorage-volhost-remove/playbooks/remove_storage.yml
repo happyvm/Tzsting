@@ -1,0 +1,26 @@
+---
+- name: Remove Pure Storage volumes, hosts and host groups safely
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run destructive request preflight
+      ansible.builtin.include_role: {name: preflight}
+    - name: Disconnect host-volume mappings
+      ansible.builtin.include_role: {name: disconnect_host_volumes}
+    - name: Remove host groups
+      ansible.builtin.include_role: {name: remove_hostgroups}
+    - name: Remove hosts
+      ansible.builtin.include_role: {name: remove_hosts}
+    - name: Remove volumes
+      ansible.builtin.include_role: {name: remove_volumes}
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          purestorage_remove_summary:
+            array: "{{ pure_fa_url }}"
+            hostgroups: "{{ pure_remove_hostgroups }}"
+            hosts: "{{ pure_remove_hosts }}"
+            volumes: "{{ pure_remove_volumes }}"
+            eradicated: "{{ pure_eradicate_volumes }}"
+        aggregate: false

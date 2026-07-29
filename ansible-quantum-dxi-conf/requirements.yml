@@ -1,0 +1,4 @@
+---
+collections: []
+# Configuration uses ansible.builtin.uri because no maintained vendor Ansible
+# collection exposes these appliance administration settings across firmware.

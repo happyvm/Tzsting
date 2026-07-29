@@ -1,0 +1,8 @@
+---
+- name: Validate VLAN removal request
+  ansible.builtin.assert:
+    that:
+      - confirm_vlan_remove | bool
+      - oneview_vlan_name is match('^[A-Za-z0-9._ -]+$')
+      - oneview_network_set_name | length > 0
+    fail_msg: "Set confirm_vlan_remove=true and provide safe VLAN/network-set names."

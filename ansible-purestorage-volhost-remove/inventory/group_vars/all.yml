@@ -1,0 +1,10 @@
+---
+pure_fa_url: pure01.example.local
+pure_api_token: "{{ vault_pure_api_token }}"
+confirm_remove: false
+pure_remove_host_volume_connections: []
+# - {host: linux01, volume: app01-data}
+pure_remove_hostgroups: []
+pure_remove_hosts: []
+pure_remove_volumes: []
+pure_eradicate_volumes: false

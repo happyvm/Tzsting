@@ -1,0 +1,22 @@
+---
+- name: Remove a VLAN from a profile, Virtual Connect and OneView
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate destructive request
+      ansible.builtin.include_role: {name: preflight}
+    - name: Detach VLAN from blade profile
+      ansible.builtin.include_role: {name: server_profile}
+    - name: Detach VLAN from VC network set
+      ansible.builtin.include_role: {name: network_set}
+    - name: Remove Ethernet VLAN
+      ansible.builtin.include_role: {name: ethernet_network}
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          synergy_vlan_remove_summary:
+            vlan: "{{ oneview_vlan_name }}"
+            network_set: "{{ oneview_network_set_name }}"
+            server_profile: "{{ oneview_server_profile_name }}"
+        aggregate: false

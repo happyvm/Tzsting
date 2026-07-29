@@ -1,0 +1,8 @@
+---
+- name: Configure FlashArray NTP servers
+  purestorage.flasharray.purefa_ntp:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    ntp_servers: "{{ pure_ntp_servers }}"
+    state: present
+  no_log: true

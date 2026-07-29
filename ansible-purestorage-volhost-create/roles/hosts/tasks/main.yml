@@ -1,0 +1,15 @@
+---
+- name: Create or maintain FlashArray hosts
+  purestorage.flasharray.purefa_host:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item.name }}"
+    personality: "{{ item.personality | default(omit) }}"
+    wwns: "{{ item.wwns | default(omit) }}"
+    iqn: "{{ item.iqn | default(omit) }}"
+    nqn: "{{ item.nqn | default(omit) }}"
+    state: present
+  loop: "{{ pure_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

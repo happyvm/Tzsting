@@ -1,0 +1,14 @@
+---
+- name: Configure FlashArray remote syslog destinations
+  purestorage.flasharray.purefa_syslog:
+    fa_url: "{{ pure_fa_url }}"
+    api_token: "{{ pure_api_token }}"
+    name: "{{ item.name }}"
+    address: "{{ item.address }}"
+    protocol: "{{ item.protocol }}"
+    port: "{{ item.port | default(omit) }}"
+    state: present
+  loop: "{{ pure_syslog_servers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

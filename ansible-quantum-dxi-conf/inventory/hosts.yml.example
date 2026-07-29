@@ -1,0 +1,6 @@
+---
+# Copy to hosts.yml. The appliance is managed via HTTPS from localhost.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

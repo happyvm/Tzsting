@@ -1,0 +1,16 @@
+---
+- name: Configure Quantum DXi Active Directory
+  ansible.builtin.uri:
+    url: "https://{{ dxi_hostname }}{{ dxi_ad_endpoint }}"
+    method: "{{ dxi_ad_method }}"
+    url_username: "{{ dxi_api_username }}"
+    url_password: "{{ dxi_api_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ dxi_validate_certs }}"
+    headers: "{{ dxi_api_headers }}"
+    body_format: json
+    body: "{{ dxi_ad_configuration }}"
+    status_code: [200, 201, 202, 204]
+  register: dxi_ad_result
+  changed_when: dxi_ad_result.status in [201, 202, 204]
+  no_log: true

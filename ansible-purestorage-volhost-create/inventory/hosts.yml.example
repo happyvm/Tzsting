@@ -1,0 +1,7 @@
+---
+# Copy to hosts.yml. API operations run from localhost. The optional SSH
+# endpoint is only required by ansible-purestorage-conf for the timezone CLI.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

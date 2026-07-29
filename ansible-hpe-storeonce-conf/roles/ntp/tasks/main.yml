@@ -1,0 +1,16 @@
+---
+- name: Configure HPE StoreOnce NTP
+  ansible.builtin.uri:
+    url: "https://{{ storeonce_hostname }}{{ storeonce_ntp_endpoint }}"
+    method: "{{ storeonce_ntp_method }}"
+    url_username: "{{ storeonce_api_username }}"
+    url_password: "{{ storeonce_api_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ storeonce_validate_certs }}"
+    headers: "{{ storeonce_api_headers }}"
+    body_format: json
+    body: "{{ storeonce_ntp_configuration }}"
+    status_code: [200, 201, 202, 204]
+  register: storeonce_ntp_result
+  changed_when: storeonce_ntp_result.status in [201, 202, 204]
+  no_log: true

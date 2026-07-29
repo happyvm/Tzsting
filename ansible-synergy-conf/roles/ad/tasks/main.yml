@@ -1,0 +1,30 @@
+---
+- name: Open a OneView API session for AD configuration
+  ansible.builtin.uri:
+    url: "https://{{ oneview_hostname }}/rest/login-sessions"
+    method: POST
+    validate_certs: true
+    body_format: json
+    body:
+      userName: "{{ oneview_username }}"
+      password: "{{ oneview_password }}"
+      authLoginDomain: "{{ oneview_auth_login_domain }}"
+    return_content: true
+  register: oneview_ad_login
+  no_log: true
+  when: oneview_ad_enabled | bool
+
+- name: Configure the version-specific OneView AD provider
+  ansible.builtin.uri:
+    url: "https://{{ oneview_hostname }}{{ oneview_ad_api_path }}"
+    method: "{{ oneview_ad_method }}"
+    validate_certs: true
+    headers:
+      auth: "{{ oneview_ad_login.json.sessionID }}"
+      X-API-Version: "{{ oneview_api_version | string }}"
+      If-Match: "*"
+    body_format: json
+    body: "{{ oneview_ad_configuration }}"
+    status_code: [200, 201, 202]
+  no_log: true
+  when: oneview_ad_enabled | bool
