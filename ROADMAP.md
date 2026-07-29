@@ -17,6 +17,7 @@ concevoir ou développer.
 | Bases de données | [`SQL-SERVER-ROADMAP.md`](SQL-SERVER-ROADMAP.md) | Installation SQL Server standalone et prérequis des futurs projets HA |
 | Hyperviseurs | [`HYPERVISOR-MAINTENANCE-ROADMAP.md`](HYPERVISOR-MAINTENANCE-ROADMAP.md) | Maintenance VMware/Hyper-V, update VCSA, ESXi et nœuds Hyper-V |
 | CMDB / réseau invité | [`SERVICENOW-CMDB-ROADMAP.md`](SERVICENOW-CMDB-ROADMAP.md) | Synchronisation des interfaces, MAC et IP depuis VMware Tools ou les Integration Services vers ServiceNow IRE |
+| CMDB / réconciliation | [`SERVICENOW-RECONCILIATION-ROADMAP.md`](SERVICENOW-RECONCILIATION-ROADMAP.md) | Classification VM/physique, audits d'orphelins Pure/AD/WSUS/SCCM/Trellix/Trend/Centreon et rapports mail |
 
 ## Chaîne cible de création d'un serveur
 
@@ -29,7 +30,8 @@ concevoir ou développer.
 7. affectation aux groupes, collections, jobs et policies ;
 8. création ou mise à jour de l'objet Centreon ;
 9. collecte des interfaces, MAC et IP depuis les outils invités ;
-10. réconciliation du CI dans ServiceNow via IRE et publication de l'état final.
+10. réconciliation du CI dans ServiceNow via IRE et publication de l'état final ;
+11. vérification facultative de la classification serveur physique/virtuel.
 
 ## Chaîne cible de maintenance
 
@@ -55,7 +57,20 @@ concevoir ou développer.
 6. désinstallation explicite des agents lorsque demandée ;
 7. suppression de la VM ou décommissionnement physique ;
 8. nettoyage stockage, DNS, AD, IPAM et CMDB ;
-9. conservation du journal d'audit et des preuves de traitement.
+9. conservation du journal d'audit et des preuves de traitement ;
+10. contrôle différé des résidus dans les outils après expiration de la période de grâce.
+
+## Boucle périodique de réconciliation
+
+1. extraction des CI actifs pour vérifier la classification physique/virtuelle ;
+2. extraction des CI retirés hors période de grâce ;
+3. comparaison en lecture seule avec Pure Storage, AD, WSUS, SCCM, Trellix,
+   Trend et Centreon ;
+4. distinction des objets encore actifs, désactivés, stale, ambigus ou absents ;
+5. agrégation par CI et par outil ;
+6. génération d'un rapport HTML/CSV/JSON ;
+7. envoi par mail aux destinataires allowlistés ;
+8. correction CMDB éventuelle uniquement via un workflow approuvé et IRE.
 
 ## Principes communs à toutes les roadmaps
 
@@ -73,10 +88,10 @@ concevoir ou développer.
 
 ## Prochains domaines structurants encore non couverts
 
-- Active Directory, DNS, DHCP/IPAM et cycle de vie complet des CI ServiceNow ;
+- cycle de vie complet Active Directory, DNS, DHCP/IPAM et remédiation CMDB ;
 - patch récurrent Windows et Linux au niveau workload ;
 - certificats/PKI et renouvellement ;
-- EDR et collecte de logs ;
+- déploiement et retrait des agents EDR et de collecte de logs ;
 - zoning SAN et réseau physique ;
 - tests automatisés de restauration et PRA ;
 - collection Ansible interne pour les préflights, verrous et résumés communs.
