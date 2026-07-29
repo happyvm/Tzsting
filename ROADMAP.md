@@ -19,6 +19,7 @@ concevoir ou développer.
 | CMDB / réseau invité | [`SERVICENOW-CMDB-ROADMAP.md`](SERVICENOW-CMDB-ROADMAP.md) | Synchronisation des interfaces, MAC et IP depuis VMware Tools ou les Integration Services vers ServiceNow IRE |
 | CMDB / réconciliation | [`SERVICENOW-RECONCILIATION-ROADMAP.md`](SERVICENOW-RECONCILIATION-ROADMAP.md) | Classification VM/physique, audits d'orphelins Pure/AD/WSUS/SCCM/Trellix/Trend/Centreon et rapports mail |
 | CMDB / Satellite | [`SERVICENOW-SATELLITE-AUDIT-ROADMAP.md`](SERVICENOW-SATELLITE-AUDIT-ROADMAP.md) | Détection des CI retirés encore enregistrés dans Satellite et des souscriptions/licences potentiellement consommées |
+| CMDB / couverture | [`SERVICENOW-COVERAGE-AUDIT-ROADMAP.md`](SERVICENOW-COVERAGE-AUDIT-ROADMAP.md) | CI retirés encore présents dans VMware/Hyper-V, couverture Veeam/NetBackup, outils obligatoires manquants et cohérence DNS |
 
 ## Chaîne cible de création d'un serveur
 
@@ -32,7 +33,8 @@ concevoir ou développer.
 8. création ou mise à jour de l'objet Centreon ;
 9. collecte des interfaces, MAC et IP depuis les outils invités ;
 10. réconciliation du CI dans ServiceNow via IRE et publication de l'état final ;
-11. vérification facultative de la classification serveur physique/virtuel.
+11. vérification facultative de la classification serveur physique/virtuel ;
+12. contrôle différé de la couverture effective, du premier backup et de la résolution DNS.
 
 ## Chaîne cible de maintenance
 
@@ -46,7 +48,8 @@ concevoir ou développer.
 8. suppression de la downtime ;
 9. nouvelle collecte réseau après changement d'adresse, de carte, de VLAN,
    restauration ou migration ;
-10. mise à jour de la conformité et de la CMDB.
+10. contrôle DNS et couverture des outils après modification structurante ;
+11. mise à jour de la conformité et de la CMDB.
 
 ## Chaîne cible de décommissionnement
 
@@ -59,21 +62,28 @@ concevoir ou développer.
 7. suppression de la VM ou décommissionnement physique ;
 8. nettoyage stockage, DNS, AD, IPAM et CMDB ;
 9. conservation du journal d'audit et des preuves de traitement ;
-10. contrôle différé des résidus dans les outils après expiration de la période de grâce.
+10. contrôle différé des résidus dans VMware/Hyper-V, DNS et les outils de gestion
+    après expiration de la période de grâce.
 
 ## Boucle périodique de réconciliation
 
-1. extraction des CI actifs pour vérifier la classification physique/virtuelle ;
-2. extraction des CI retirés hors période de grâce ;
-3. comparaison en lecture seule avec Pure Storage, AD, WSUS, SCCM, Trellix,
-   Trend, Centreon et Red Hat Satellite ;
-4. distinction des objets encore actifs, désactivés, stale, ambigus ou absents ;
-5. qualification des souscriptions Satellite encore attachées ou potentiellement
+1. extraction des CI actifs avec leur profil de couverture et leurs exemptions ;
+2. vérification de la présence attendue dans Centreon, SCCM, WSUS, Satellite,
+   Trellix et Trend ;
+3. vérification de la couverture effective Veeam/NetBackup et de l'existence d'un
+   backup récent exploitable ;
+4. contrôle DNS actif : nom, FQDN, aliases, A/AAAA et PTR ;
+5. extraction des CI retirés hors période de grâce ;
+6. comparaison en lecture seule avec VMware, Hyper-V, Pure Storage, AD, WSUS,
+   SCCM, Trellix, Trend, Centreon et Red Hat Satellite ;
+7. contrôle des résidus DNS des CI retirés ;
+8. qualification des souscriptions Satellite encore attachées ou potentiellement
    consommées sous Simple Content Access ;
-6. agrégation par CI et par outil ;
-7. génération d'un rapport HTML/CSV/JSON ;
-8. envoi par mail aux destinataires allowlistés ;
-9. correction CMDB éventuelle uniquement via un workflow approuvé et IRE.
+9. distinction des objets présents, absents, stale, ambigus ou non attendus ;
+10. agrégation par CI et par outil ;
+11. génération d'un rapport HTML/CSV/JSON ;
+12. envoi par mail aux destinataires allowlistés ;
+13. correction CMDB éventuelle uniquement via un workflow approuvé et IRE.
 
 ## Principes communs à toutes les roadmaps
 
