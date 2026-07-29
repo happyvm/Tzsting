@@ -7,4 +7,3 @@
       - oneview_username | length > 0
       - oneview_password | length > 0
     fail_msg: "OneView credentials and the exact blade/server-hardware name are required."
-  no_log: true

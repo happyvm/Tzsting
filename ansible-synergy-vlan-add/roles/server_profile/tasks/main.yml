@@ -10,6 +10,12 @@
   no_log: true
   when: oneview_server_profile_name | length > 0
 
+- name: Require the target server profile
+  ansible.builtin.assert:
+    that: server_profiles | length == 1
+    fail_msg: "Server profile {{ oneview_server_profile_name }} was not found uniquely."
+  when: oneview_server_profile_name | length > 0
+
 - name: Add or replace the named connection in the blade profile
   hpe.oneview.oneview_server_profile:
     hostname: "{{ oneview_hostname }}"
