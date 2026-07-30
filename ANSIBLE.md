@@ -293,6 +293,108 @@ réellement simulée - voir
 
 Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-agent-deploy/README.md).
 
+### `ansible-sccm-conf`
+
+Configuration déclarative des **boundaries et boundary groups Microsoft
+Configuration Manager (SCCM)** - première version limitée à ce
+périmètre, plus étroit que le catalogue complet proposé par
+`ENDPOINT-MANAGEMENT-ROADMAP.md` (comptes/groupes AD, RBAC, méthodes de
+découverte, client settings, mode HTTPS/PKI restent à faire). Découverte
+du site (boundaries, boundary groups, management/distribution points)
+toujours exécutée ; gestion des boundaries gardée par
+`sccm_conf_manage_boundaries=false` par défaut, le garde-fou explicite
+que la roadmap exige pour cette catégorie à fort impact. Mode `audit`
+via le `-WhatIf` natif de chaque cmdlet
+(`New-CMBoundary`/`New-CMBoundaryGroup`/`Add-CMBoundaryToGroup`) - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-conf/README.md`](ansible-sccm-conf/README.md).
+
+### `ansible-sccm-client-deploy`
+
+Installation, réparation ou mise à niveau du client **Microsoft
+Configuration Manager (SCCM/MECM)**, via `ccmsetup.exe` exécuté
+directement (le même choix qu’`ansible-sql-server-install` : un
+mécanisme officiel long-stable plutôt qu’une API devinée). Checksum du
+média obligatoire même en mode `audit`, modes
+`install`/`repair`/`upgrade`/`audit`, vérification bornée post-
+installation (`SMS_Client` WMI, service `CcmExec`, site assigné via
+`GetAssignedSite()`), déclenchement facultatif des cycles policy/
+discovery via `TriggerSchedule`. Ne fait pas de client push console et
+ne touche à aucune device collection - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-client-deploy/README.md`](ansible-sccm-client-deploy/README.md).
+
+### `ansible-sccm-device-collection-add`
+
+Ajout idempotent d’une machine dans une device collection **Microsoft
+Configuration Manager (SCCM)**, via le vrai module PowerShell
+`ConfigurationManager` exécuté sur un hôte Windows qui l’a déjà
+installé. Résolution exacte du device et de la collection, ajout d’une
+direct membership rule uniquement (jamais query/include/exclude), mise à
+jour facultative de la collection. Le mode `audit` s’appuie sur le
+support natif `-WhatIf` des cmdlets plutôt que sur le check mode Ansible,
+puisqu’un unique script PowerShell personnalisé gère toute la logique
+dans une même session/PSDrive - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-device-collection-add/README.md`](ansible-sccm-device-collection-add/README.md).
+
+### `ansible-sccm-device-collection-remove`
+
+Pendant de `ansible-sccm-device-collection-add` : retrait d’une machine
+d’une device collection SCCM (suppression de la direct membership rule
+uniquement), avec vérification immédiate après suppression et
+confirmation obligatoire `confirm_remove_from_collection=true`. Publie
+trois indicateurs distincts (query/include/exclude rule present) plutôt
+que de bloquer, puisque ce projet ne peut garantir que la machine quitte
+réellement la collection si un autre mécanisme de règle s’applique.
+
+Documentation : [`ansible-sccm-device-collection-remove/README.md`](ansible-sccm-device-collection-remove/README.md).
+
+### `ansible-wsus-computer-group-create`
+
+Création idempotente d’un groupe d’ordinateurs **WSUS**, via le vrai
+module PowerShell `UpdateServices` exécuté sur un hôte Windows qui l’a
+déjà installé. Aucune cmdlet dédiée n’existe pour cette opération (le
+module `UpdateServices` n’en propose aucune - confirmé en listant
+l’intégralité de ses cmdlets) : ce projet appelle directement la méthode
+`IUpdateServer.CreateComputerTargetGroup` de l’API d’administration WSUS
+sous-jacente. Validation du nom (caractères interdits, longueur, groupes
+système réservés). Le mode `audit` ne s’appuie sur aucun `-WhatIf`
+natif puisqu’il s’agit d’un appel API brut, pas d’une cmdlet - il se
+contente de ne pas appeler la méthode - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-wsus-computer-group-create/README.md`](ansible-wsus-computer-group-create/README.md).
+
+### `ansible-wsus-computer-group-add`
+
+Ajout d’une machine déjà enregistrée dans WSUS vers un groupe de
+diffusion, via la vraie cmdlet `Add-WsusComputer`. Résolution exacte sur
+`FullDomainName` (jamais la correspondance partielle de
+`-NameIncludes`), refus si la machine n’a jamais reporté de statut au
+serveur, idempotence et vérification finale de l’appartenance. Le mode
+`audit` utilise le `-WhatIf` natif de la cmdlet. Le ciblage client-side
+(GPO) n’est pas détecté automatiquement - publié via une variable
+déclarée par l’exploitant plutôt que deviné.
+
+Documentation : [`ansible-wsus-computer-group-add/README.md`](ansible-wsus-computer-group-add/README.md).
+
+### `ansible-wsus-computer-group-remove`
+
+Pendant de `ansible-wsus-computer-group-add` : retrait d’une machine
+d’un groupe de diffusion WSUS. Résolution directe via
+`IUpdateServer.GetComputerTargetByName` (renvoie un vrai
+`IComputerTarget`, sans passer par l’objet wrapper `WsusComputer` des
+cmdlets), retrait via `IComputerTargetGroup.RemoveComputerTarget`
+(déplace documentairement la machine vers `Unassigned Computers`),
+idempotence vérifiée avant/après, confirmation obligatoire
+`confirm_remove_from_wsus_group=true`.
+
+Documentation : [`ansible-wsus-computer-group-remove/README.md`](ansible-wsus-computer-group-remove/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -323,6 +425,13 @@ Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-a
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
+| `ansible-sccm-conf` | — | — | — | WinRM | Boundaries/boundary groups |
+| `ansible-sccm-client-deploy` | — | — | — | WinRM | Installation/réparation/upgrade |
+| `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
+| `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
+| `ansible-wsus-computer-group-create` | — | — | — | WinRM | Création de groupe |
+| `ansible-wsus-computer-group-add` | — | — | — | WinRM | Ajout à un groupe |
+| `ansible-wsus-computer-group-remove` | — | — | — | WinRM | Retrait d'un groupe |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

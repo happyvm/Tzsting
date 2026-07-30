@@ -1,0 +1,42 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# --- Connection to a Windows host with the Configuration Manager console
+# (and therefore the ConfigurationManager PowerShell module) installed -
+# typically the site server itself or an admin workstation. See README.
+sccm_console_host: sccm01.example.local
+sccm_conn_winrm_username: "{{ vault_sccm_conn_winrm_username }}"
+sccm_conn_winrm_password: "{{ vault_sccm_conn_winrm_password }}"
+sccm_conn_winrm_port: 5986
+sccm_conn_winrm_transport: ntlm
+sccm_conn_winrm_validate_certs: true
+
+# --- Configuration Manager site ---
+sccm_conf_site_code: ""
+sccm_conf_site_server: ""
+sccm_conf_console_module_path: ""
+
+# configure | audit - audit uses each cmdlet's own native -WhatIf
+# support (all real cmdlets here, unlike the WSUS group-create project's
+# raw API call).
+sccm_conf_operation: audit
+
+# ENDPOINT-MANAGEMENT-ROADMAP.md explicitly calls out boundary/boundary
+# group changes as high-impact and requires them to be gated behind an
+# explicit variable - this is that gate. Discovery (roles/discover)
+# always runs regardless of this flag; only roles/manage_boundaries is
+# gated by it.
+sccm_conf_manage_boundaries: false
+
+# Each entry: {name, type, value} - type is one of IPSubnet, ADSite,
+# IPv6Prefix, IPRange, Vpn (the values New-CMBoundary itself accepts).
+sccm_conf_boundaries: []
+
+# Each entry: {name, description, default_site_code, boundaries,
+# site_systems} - "boundaries" is a list of boundary names that MUST
+# also appear in sccm_conf_boundaries above (this project only manages
+# boundaries it declares itself, never an existing one it didn't
+# create). "site_systems" is a list of FQDNs added as content site
+# systems (FastLink) at group-creation time only - adding site systems
+# to an already-existing group isn't implemented (see README).
+sccm_conf_boundary_groups: []

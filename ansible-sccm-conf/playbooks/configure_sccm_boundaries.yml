@@ -1,0 +1,64 @@
+# Declaratively manages Configuration Manager boundaries and boundary
+# groups, using the real ConfigurationManager PowerShell module on a
+# Windows host with the SCCM console installed. Always inventories the
+# site's current boundaries/boundary groups/site systems (read-only,
+# runs regardless of mode); only mutates boundaries/boundary groups when
+# sccm_conf_manage_boundaries=true, the explicit gate
+# ENDPOINT-MANAGEMENT-ROADMAP.md requires for this high-impact category.
+#
+# This is a first version of ansible-sccm-conf covering only
+# boundaries/boundary groups - see README for what the roadmap's full
+# proposed scope (AD/RBAC accounts, discovery methods, client settings,
+# HTTPS/PKI mode, fallback status point) still leaves uncovered.
+#
+# Usage:
+#   ansible-playbook playbooks/configure_sccm_boundaries.yml --vault-password-file .vault_pass
+
+- name: Configure Configuration Manager boundaries and boundary groups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the console host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: sccm_conf_console
+        ansible_host: "{{ sccm_console_host }}"
+        ansible_connection: winrm
+        ansible_user: "{{ sccm_conn_winrm_username }}"
+        ansible_password: "{{ sccm_conn_winrm_password }}"
+        ansible_port: "{{ sccm_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ sccm_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if sccm_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Inventory and (optionally) manage boundaries/boundary groups
+      delegate_to: sccm_conf_console
+      block:
+        - name: Inventory the current site state
+          ansible.builtin.include_role:
+            name: discover
+
+        - name: Manage boundaries and boundary groups
+          ansible.builtin.include_role:
+            name: manage_boundaries
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          sccm_conf_summary:
+            site_code: "{{ sccm_conf_discover_result.result.site_code }}"
+            site_name: "{{ sccm_conf_discover_result.result.site_name }}"
+            site_version: "{{ sccm_conf_discover_result.result.site_version }}"
+            operation: "{{ sccm_conf_operation }}"
+            boundary_count: "{{ sccm_conf_discover_result.result.boundary_count }}"
+            boundary_group_count: "{{ sccm_conf_discover_result.result.boundary_group_count }}"
+            management_points: "{{ sccm_conf_discover_result.result.management_points }}"
+            distribution_points: "{{ sccm_conf_discover_result.result.distribution_points }}"
+            boundaries_managed: "{{ sccm_conf_manage_boundaries | bool }}"
+            boundaries_result: "{{ sccm_conf_boundaries_result.result | default(omit) }}"
+        aggregate: false
