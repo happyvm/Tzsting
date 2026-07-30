@@ -1,0 +1,28 @@
+---
+- name: Validate the console host connection settings
+  ansible.builtin.assert:
+    that:
+      - wsus_console_host | length > 0
+      - wsus_conn_winrm_username | length > 0
+      - wsus_conn_winrm_password | length > 0
+    fail_msg: "wsus_console_host, wsus_conn_winrm_username and wsus_conn_winrm_password are all mandatory."
+
+- name: Validate the WSUS server settings
+  ansible.builtin.assert:
+    that:
+      - wsus_server_name | length > 0
+      - wsus_port_number | int > 0
+    fail_msg: "wsus_server_name and wsus_port_number are both mandatory."
+
+- name: Validate the operation
+  ansible.builtin.assert:
+    that:
+      - wsus_ga_operation in ['add', 'audit']
+    fail_msg: "wsus_ga_operation must be add or audit."
+
+- name: Validate the computer and target group
+  ansible.builtin.assert:
+    that:
+      - wsus_ga_computer_name | length > 0
+      - wsus_ga_target_group_name | length > 0
+    fail_msg: "wsus_ga_computer_name and wsus_ga_target_group_name are both mandatory."

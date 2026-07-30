@@ -27,21 +27,19 @@ respectivement partiel et à faire.
 🟡 **`ansible-sccm-device-collection-add`** (Lot 2, étape 7) et
 **`ansible-sccm-device-collection-remove`** (étape 8) implémentés via le
 vrai module PowerShell `ConfigurationManager`, exécuté sur un hôte
-Windows qui l'a déjà installé - voir leurs README pour le détail.
-`ansible-sccm-conf` (étape 5) et `ansible-sccm-client-deploy` (étape 6)
-restent à faire.
+Windows qui l'a déjà installé - voir leurs README. `ansible-sccm-conf`
+(étape 5) et `ansible-sccm-client-deploy` (étape 6) restent à faire.
 
-🟡 **`ansible-wsus-computer-group-create`** (Lot 3, étape 10) implémenté
-via le vrai module PowerShell `UpdateServices`. Aucune cmdlet dédiée
-n'existe pour la création de groupe (`New-WsusComputerTargetGroup`
-n'existe pas dans le module - confirmé en listant l'intégralité de ses
-cmdlets) : ce projet appelle directement la méthode
-`IUpdateServer.CreateComputerTargetGroup` de l'API d'administration WSUS
-sous-jacente, documentée par Microsoft. Validation du nom (caractères
-interdits, longueur, groupes système réservés) et création idempotente.
-Le mode `audit` ne s'appuie sur aucun `-WhatIf` natif (c'est un appel
-API brut, pas une cmdlet) : il se contente de ne pas appeler la méthode.
-`ansible-wsus-computer-group-add` (étape 11) reste à faire ;
+🟡 **`ansible-wsus-computer-group-create`** (Lot 3, étape 10) et
+**`ansible-wsus-computer-group-add`** (étape 11) implémentés via le vrai
+module PowerShell `UpdateServices`. Le premier appelle directement la
+méthode brute `IUpdateServer.CreateComputerTargetGroup` (aucune cmdlet
+dédiée n'existe pour la création de groupe) ; le second utilise la
+vraie cmdlet `Add-WsusComputer`, avec résolution exacte sur
+`FullDomainName` et refus si la machine n'a jamais reporté de statut
+(`LastReportedStatusTime` égal à `DateTime.MinValue`). Le ciblage
+client-side (GPO) n'est pas détecté automatiquement - publié via une
+variable déclarée par l'exploitant plutôt que deviné.
 `ansible-wsus-computer-group-remove` (étape 12) est délibérément différé
 - il nécessiterait de faire le pont entre l'objet `WsusComputer` des
 cmdlets et le type brut `IComputerTarget` attendu par
@@ -219,6 +217,15 @@ groupe de diffusion :
 - aucun déclenchement de patch ou de redémarrage implicite.
 
 Artefact AAP : `wsus_computer_group_add_summary`.
+
+🟡 Implémenté dans [`ansible-wsus-computer-group-add`](../ansible-wsus-computer-group-add) :
+résolution exacte sur `FullDomainName` (jamais la correspondance
+partielle de `-NameIncludes`), refus si la machine n'a jamais reporté de
+statut, ajout idempotent via la vraie cmdlet `Add-WsusComputer` (mode
+`audit` via son propre `-WhatIf` natif), vérification finale de
+l'appartenance. Le ciblage client-side (GPO) n'est pas détecté
+automatiquement - publié via une variable déclarée par l'exploitant.
+Non couvert : le mode `move` (retrait des autres groupes).
 
 ### `ansible-wsus-computer-group-remove`
 

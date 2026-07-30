@@ -336,6 +336,19 @@ contente de ne pas appeler la méthode - voir
 
 Documentation : [`ansible-wsus-computer-group-create/README.md`](ansible-wsus-computer-group-create/README.md).
 
+### `ansible-wsus-computer-group-add`
+
+Ajout d’une machine déjà enregistrée dans WSUS vers un groupe de
+diffusion, via la vraie cmdlet `Add-WsusComputer`. Résolution exacte sur
+`FullDomainName` (jamais la correspondance partielle de
+`-NameIncludes`), refus si la machine n’a jamais reporté de statut au
+serveur, idempotence et vérification finale de l’appartenance. Le mode
+`audit` utilise le `-WhatIf` natif de la cmdlet. Le ciblage client-side
+(GPO) n’est pas détecté automatiquement - publié via une variable
+déclarée par l’exploitant plutôt que deviné.
+
+Documentation : [`ansible-wsus-computer-group-add/README.md`](ansible-wsus-computer-group-add/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -369,6 +382,7 @@ Documentation : [`ansible-wsus-computer-group-create/README.md`](ansible-wsus-co
 | `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
 | `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
 | `ansible-wsus-computer-group-create` | — | — | — | WinRM | Création de groupe |
+| `ansible-wsus-computer-group-add` | — | — | — | WinRM | Ajout à un groupe |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de
