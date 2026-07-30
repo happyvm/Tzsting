@@ -1,6 +1,7 @@
 ---
 collections:
   - name: ansible.windows
+    version: ">=2.0.0,<4.0.0"
 # The ConfigurationManager PowerShell module itself is not an Ansible
 # collection - it ships with the Configuration Manager console and is
 # invoked here via ansible.windows.win_powershell on a Windows host that
