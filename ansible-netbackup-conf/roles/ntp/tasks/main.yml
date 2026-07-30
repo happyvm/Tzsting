@@ -1,0 +1,33 @@
+---
+# No dedicated Ansible module manages a declarative NTP server list -
+# community.general.timezone's own documentation explicitly says to use a
+# service module for NTP instead. This maintains a single marked block
+# inside /etc/chrony.conf via blockinfile, leaving the rest of the file
+# (pools, drift file, makestep, etc.) untouched, and restarts chronyd only
+# when the block actually changed.
+- name: Ensure chrony is installed
+  become: "{{ netbackup_conf_become | bool }}"
+  delegate_to: netbackup_conf_target
+  ansible.builtin.package:
+    name: chrony
+    state: present
+
+- name: Configure the chrony NTP server list
+  become: "{{ netbackup_conf_become | bool }}"
+  delegate_to: netbackup_conf_target
+  ansible.builtin.blockinfile:
+    path: /etc/chrony.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (netbackup_conf_ntp_servers)"
+    block: |
+      {% for server in netbackup_conf_ntp_servers %}
+      server {{ server }} iburst
+      {% endfor %}
+  register: netbackup_conf_chrony_result
+
+- name: Restart chronyd if the NTP server list changed
+  become: "{{ netbackup_conf_become | bool }}"
+  delegate_to: netbackup_conf_target
+  when: netbackup_conf_chrony_result.changed
+  ansible.builtin.service:
+    name: chronyd
+    state: restarted

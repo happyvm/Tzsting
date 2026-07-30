@@ -1,15 +1,24 @@
 # ansible-netbackup-conf
 
-Configuration des paramètres de notification d'un serveur primaire
-**Veritas NetBackup** : SMTP et SNMP. Le projet suit la méthodologie du
-dépôt : inventaire sans appliance statique, préflight bloquant, secrets
-Vault/AAP, rôles séparés et artefact `set_stats`.
+Configuration déclarative du système d'exploitation Linux (RHEL-family)
+d'un serveur primaire **Veritas NetBackup** - compte local
+d'automatisation, NTP et fuseau horaire, via SSH - et de ses paramètres de
+notification (SMTP, SNMP) via sa vraie API REST. Le périmètre NetBackup
+Appliance est explicitement hors de ce projet (voir
+[`VEEAM-NETBACKUP-ROADMAP.md`](../VEEAM-NETBACKUP-ROADMAP.md)). Le projet
+suit la méthodologie du dépôt : inventaire sans appliance statique,
+préflight bloquant, secrets Vault/AAP, rôles séparés et artefact
+`set_stats`.
 
 ## Ce que ce projet couvre - et ce qu'il ne couvre pas
 
-**Couvert** : les réglages de notification du serveur primaire NetBackup
-lui-même (SMTP, SNMP), au même niveau que les autres projets `*-conf` du
-dépôt (identité/alerting d'un équipement, pas son contenu fonctionnel).
+**Couvert** : le système d'exploitation Linux du serveur primaire (compte
+local, NTP, fuseau horaire) et les réglages de notification du serveur
+primaire NetBackup lui-même (SMTP, SNMP), au même niveau que les autres
+projets `*-conf` du dépôt (identité/alerting d'un équipement, pas son
+contenu fonctionnel). L'intégration AD/LDAP de NetBackup (authentification
+LDAP du produit, distincte du compte local Linux ci-dessus) n'est **pas
+encore couverte** - à ajouter dans une future itération si nécessaire.
 
 **Non couvert, volontairement** : la création/modification de policies de
 sauvegarde, de storage lifecycle policies, l'enregistrement de clients, ni
@@ -67,20 +76,45 @@ Les deux notifications sont désactivées par défaut. Les payloads
 d'exemple dans `inventory/group_vars/all.yml` sont à aligner sur le
 schéma réel de la version cible avant activation.
 
+## Hôte Linux (rôles `local_admin`, `ntp`, `timezone`)
+
+`netbackup_conf_ssh_hostname`/`_username`/`_password` (ou
+`_ssh_private_key_file`) sont les identifiants SSH du serveur Linux
+lui-même, distincts de `netbackup_conf_username`/`_password` (le compte
+applicatif NetBackup pour l'API REST) - même si les deux ciblent
+généralement la même machine, ce sont deux comptes différents. Fournir
+`netbackup_conf_ssh_password` **ou** `netbackup_conf_ssh_private_key_file`,
+pas nécessairement les deux.
+
+`roles/local_admin` utilise `ansible.builtin.user`, dont le paramètre
+`password` attend un hash (pas un mot de passe en clair) sur Linux : le
+filtre `password_hash('sha512')` employé nécessite la bibliothèque Python
+`passlib` installée sur le nœud de contrôle (`pip install passlib`).
+
+`roles/ntp` maintient un bloc marqué dans `/etc/chrony.conf` (pas de
+template complet, pour ne pas toucher le reste du fichier) et ne
+redémarre `chronyd` que si ce bloc a réellement changé.
+`netbackup_conf_timezone` attend un nom de fuseau **IANA** (Linux, ex.
+`Europe/Paris`), pas un identifiant Windows.
+
 ## Variables et secrets
 
 Adapter `inventory/group_vars/all.yml`. Placer dans Vault/AAP : les
-credentials NetBackup et la communauté SNMP. Toutes les tâches HTTP sont
-en `no_log` (le login transporte le mot de passe dans son corps).
-Utiliser un compte API aux droits minimaux.
+credentials NetBackup (API et SSH), le mot de passe du compte local et la
+communauté SNMP. Toutes les tâches HTTP et sensibles sont en `no_log` (le
+login transporte le mot de passe dans son corps). Utiliser un compte API
+aux droits minimaux.
 
 ## Utilisation
 
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml
+ansible-galaxy collection install -r requirements.yml
 ansible-playbook playbooks/configure_netbackup.yml --vault-password-file .vault_pass
 ```
 
-Tester d'abord sur un serveur de qualification. Le résultat
-`netbackup_conf_summary` est récupérable par AAP et ServiceNow sans
-exposer les secrets.
+Aucun inventaire statique par hôte : le serveur cible est ajouté
+dynamiquement à l'inventaire en mémoire depuis
+`netbackup_conf_ssh_hostname`/`username`/`password`. Tester d'abord sur un
+serveur de qualification. Le résultat `netbackup_conf_summary` est
+récupérable par AAP et ServiceNow sans exposer les secrets.

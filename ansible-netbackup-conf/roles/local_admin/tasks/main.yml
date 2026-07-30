@@ -1,0 +1,17 @@
+---
+# ansible.builtin.user's `password` parameter requires a pre-hashed value
+# on Linux (not plaintext) - password_hash('sha512') below needs the
+# Python `passlib` library installed on the control node
+# (pip install passlib) - see README.
+- name: Create or maintain the local automation account
+  become: "{{ netbackup_conf_become | bool }}"
+  delegate_to: netbackup_conf_target
+  no_log: true
+  ansible.builtin.user:
+    name: "{{ netbackup_conf_local_admin.name }}"
+    password: "{{ netbackup_conf_local_admin.password | password_hash('sha512') }}"
+    groups: "{{ netbackup_conf_local_admin.groups }}"
+    append: true
+    shell: /bin/bash
+    state: present
+    update_password: always

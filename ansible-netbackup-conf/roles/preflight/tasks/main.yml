@@ -10,9 +10,18 @@
       - netbackup_conf_login_endpoint is match('^/[^ ]+$')
       - not netbackup_conf_smtp_enabled | bool or netbackup_conf_smtp_endpoint is match('^/[^ ]+$')
       - not netbackup_conf_snmp_enabled | bool or netbackup_conf_snmp_endpoint is match('^/[^ ]+$')
+      - netbackup_conf_ssh_hostname | length > 0
+      - netbackup_conf_ssh_username | length > 0
+      - netbackup_conf_ssh_password | length > 0 or netbackup_conf_ssh_private_key_file | length > 0
+      - netbackup_conf_ntp_servers | length > 0
+      - netbackup_conf_timezone is match('^[A-Za-z_]+(/[A-Za-z0-9_+.-]+){1,2}$')
+      - netbackup_conf_local_admin.name is match('^[A-Za-z0-9._-]+$')
+      - netbackup_conf_local_admin.password | length >= 8
     fail_msg: >-
       Credentials, the exact versioned media type header for the target
       NetBackup release, a valid login endpoint path, and (when a
       notification channel is enabled) release-specific REST paths are
       all mandatory - copy them from the API guide for the target
-      release. See README.
+      release; an SSH connection to the primary server (password or
+      private key), NTP servers, a valid IANA timezone and a valid local
+      automation account are also required. See README.
