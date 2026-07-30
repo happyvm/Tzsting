@@ -1,0 +1,72 @@
+---
+- name: Wait for the client to register and verify its state
+  ansible.windows.win_powershell:
+    parameters:
+      Operation: "{{ sccm_cd_operation }}"
+      ExpectedSiteCode: "{{ sccm_cd_site_code }}"
+      Attempts: "{{ sccm_cd_verify_attempts }}"
+      DelaySeconds: "{{ sccm_cd_verify_delay_seconds }}"
+      TriggerMachinePolicy: "{{ sccm_cd_trigger_machine_policy | bool }}"
+      TriggerDiscoveryData: "{{ sccm_cd_trigger_discovery_data | bool }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$Operation,
+          [string]$ExpectedSiteCode,
+          [int]$Attempts,
+          [int]$DelaySeconds,
+          [bool]$TriggerMachinePolicy,
+          [bool]$TriggerDiscoveryData
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      $client = $null
+      $assignedSiteCode = $null
+      if ($Operation -ne 'audit') {
+          for ($i = 0; $i -lt $Attempts; $i++) {
+              $client = Get-CimInstance -Namespace root\ccm -ClassName SMS_Client -ErrorAction SilentlyContinue
+              if ($client -and $client.ClientVersion) {
+                  break
+              }
+              Start-Sleep -Seconds $DelaySeconds
+          }
+          if (-not $client -or -not $client.ClientVersion) {
+              throw "The Configuration Manager client did not report a version within $($Attempts * $DelaySeconds) seconds after installation."
+          }
+
+          $service = Get-Service -Name CcmExec -ErrorAction SilentlyContinue
+          if (-not $service -or $service.Status -ne 'Running') {
+              throw "The CcmExec service is not running after installation."
+          }
+
+          $siteResult = ([wmiclass]"root\ccm:SMS_Client").GetAssignedSite()
+          $assignedSiteCode = $siteResult.sSiteCode
+          if ($assignedSiteCode -ne $ExpectedSiteCode) {
+              throw "The client is assigned to site '$assignedSiteCode', not the expected '$ExpectedSiteCode'."
+          }
+
+          if ($TriggerMachinePolicy) {
+              # Machine Policy Assignments Request + Evaluation, per the
+              # official TriggerSchedule GUID reference.
+              Invoke-CimMethod -Namespace root\ccm -ClassName SMS_Client -MethodName TriggerSchedule -Arguments @{sScheduleID = '{00000000-0000-0000-0000-000000000021}' } | Out-Null
+              Invoke-CimMethod -Namespace root\ccm -ClassName SMS_Client -MethodName TriggerSchedule -Arguments @{sScheduleID = '{00000000-0000-0000-0000-000000000022}' } | Out-Null
+          }
+          if ($TriggerDiscoveryData) {
+              Invoke-CimMethod -Namespace root\ccm -ClassName SMS_Client -MethodName TriggerSchedule -Arguments @{sScheduleID = '{00000000-0000-0000-0000-000000000103}' } | Out-Null
+          }
+      }
+
+      $clientVersion = $null
+      if ($client) {
+          $clientVersion = $client.ClientVersion
+      }
+
+      $Ansible.Changed = $false
+      $Ansible.Result = [ordered]@{
+          client_version           = $clientVersion
+          assigned_site_code       = $assignedSiteCode
+          machine_policy_triggered = $TriggerMachinePolicy -and ($Operation -ne 'audit')
+          discovery_data_triggered = $TriggerDiscoveryData -and ($Operation -ne 'audit')
+      }
+  register: sccm_cd_verify_result

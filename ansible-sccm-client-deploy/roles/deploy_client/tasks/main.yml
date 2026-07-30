@@ -1,0 +1,106 @@
+---
+# A single custom script runs the whole install/repair/upgrade flow so
+# the checksum check, the ccmsetup.exe invocation and the pre-existing
+# client detection all happen in one PowerShell session on the target.
+- name: Verify checksum and run ccmsetup.exe
+  ansible.windows.win_powershell:
+    parameters:
+      CcmsetupPath: "{{ sccm_cd_ccmsetup_path }}"
+      CcmsetupChecksum: "{{ sccm_cd_ccmsetup_checksum_sha256 }}"
+      Operation: "{{ sccm_cd_operation }}"
+      SiteCode: "{{ sccm_cd_site_code }}"
+      ManagementPoint: "{{ sccm_cd_management_point }}"
+      SourcePath: "{{ sccm_cd_source_path }}"
+      FallbackStatusPoint: "{{ sccm_cd_fallback_status_point }}"
+      DnsSuffix: "{{ sccm_cd_dns_suffix }}"
+      UsePkiCert: "{{ sccm_cd_use_pki_cert | bool }}"
+      NoCrlCheck: "{{ sccm_cd_no_crl_check | bool }}"
+      HttpPort: "{{ sccm_cd_http_port }}"
+      HttpsPort: "{{ sccm_cd_https_port }}"
+      RetryMinutes: "{{ sccm_cd_retry_minutes }}"
+      DownloadTimeoutMinutes: "{{ sccm_cd_download_timeout_minutes }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$CcmsetupPath,
+          [string]$CcmsetupChecksum,
+          [string]$Operation,
+          [string]$SiteCode,
+          [string]$ManagementPoint,
+          [string]$SourcePath,
+          [string]$FallbackStatusPoint,
+          [string]$DnsSuffix,
+          [bool]$UsePkiCert,
+          [bool]$NoCrlCheck,
+          [int]$HttpPort,
+          [int]$HttpsPort,
+          [int]$RetryMinutes,
+          [int]$DownloadTimeoutMinutes
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      if (-not (Test-Path -LiteralPath $CcmsetupPath)) {
+          throw "ccmsetup.exe was not found at '$CcmsetupPath'."
+      }
+      $actualHash = (Get-FileHash -LiteralPath $CcmsetupPath -Algorithm SHA256).Hash
+      if ($actualHash -ne $CcmsetupChecksum.ToUpperInvariant()) {
+          throw "ccmsetup.exe checksum mismatch: expected $CcmsetupChecksum, got $actualHash - refusing to run unverified media."
+      }
+
+      $existingClient = Get-CimInstance -Namespace root\ccm -ClassName SMS_Client -ErrorAction SilentlyContinue
+      $alreadyInstalled = [bool]$existingClient
+      $previousVersion = $null
+      if ($existingClient) {
+          $previousVersion = $existingClient.ClientVersion
+      }
+
+      # CCMSetup parameters must precede client.msi properties on the
+      # command line (documented requirement).
+      $argv = [System.Collections.Generic.List[string]]::new()
+      if ($ManagementPoint) { $argv.Add("/mp:$ManagementPoint") }
+      if ($SourcePath) { $argv.Add("/source:$SourcePath") }
+      $argv.Add("/retry:$RetryMinutes")
+      $argv.Add("/downloadtimeout:$DownloadTimeoutMinutes")
+      if ($UsePkiCert) { $argv.Add("/UsePKICert") }
+      if ($NoCrlCheck) { $argv.Add("/NoCRLCheck") }
+      if ($Operation -eq 'install') {
+          # Refuse to silently overwrite an already-installed client -
+          # "install" is only meant for genuinely new machines.
+          $argv.Add("/logon")
+      }
+      if ($Operation -eq 'repair') {
+          # Forces an uninstall-then-reinstall, the only mode allowed to
+          # clean up a broken existing installation.
+          $argv.Add("/forceinstall")
+      }
+      $argv.Add("SMSSITECODE=$SiteCode")
+      if ($FallbackStatusPoint) { $argv.Add("FSP=$FallbackStatusPoint") }
+      if ($DnsSuffix) { $argv.Add("DNSSUFFIX=$DnsSuffix") }
+      $argv.Add("CCMHTTPPORT=$HttpPort")
+      $argv.Add("CCMHTTPSPORT=$HttpsPort")
+
+      $ran = $false
+      $exitCode = $null
+      $rebootRequired = $false
+      if ($Operation -ne 'audit') {
+          $proc = Start-Process -FilePath $CcmsetupPath -ArgumentList $argv -Wait -PassThru
+          $ran = $true
+          $exitCode = $proc.ExitCode
+          # Documented ccmsetup.exe return codes: 0 success, 7 reboot required.
+          $rebootRequired = ($exitCode -eq 7)
+          if ($exitCode -ne 0 -and $exitCode -ne 7) {
+              throw "ccmsetup.exe exited with code $exitCode - see %WinDir%\ccmsetup\Logs\ccmsetup.log on the target for detail."
+          }
+      }
+
+      $Ansible.Changed = $ran
+      $Ansible.Result = [ordered]@{
+          already_installed_before = $alreadyInstalled
+          previous_client_version  = $previousVersion
+          ran_ccmsetup             = $ran
+          exit_code                = $exitCode
+          reboot_required          = $rebootRequired
+          command_line             = ($argv -join ' ')
+      }
+  register: sccm_cd_deploy_result

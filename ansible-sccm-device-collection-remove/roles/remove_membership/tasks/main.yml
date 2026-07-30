@@ -1,0 +1,138 @@
+---
+# A single custom script is used (rather than several small Ansible
+# tasks) because each Configuration Manager cmdlet call needs to run in
+# the same PowerShell session/CMSite PSDrive location - splitting this
+# across tasks would mean re-importing the module and re-creating the
+# PSDrive on every single Ansible task. Idempotency/dry-run is handled by
+# the script itself (via the cmdlet's own native -WhatIf support and
+# $Ansible.Changed/$Ansible.Result), not Ansible's check_mode - see
+# README.
+- name: Resolve the device and collection, then remove the direct membership rule
+  ansible.windows.win_powershell:
+    parameters:
+      SiteCode: "{{ sccm_site_code }}"
+      SiteServer: "{{ sccm_site_server }}"
+      ModulePath: "{{ sccm_console_module_path }}"
+      ResourceId: "{{ sccm_device_resource_id | default(-1, true) }}"
+      DeviceName: "{{ sccm_device_name }}"
+      CollectionId: "{{ sccm_collection_id }}"
+      CollectionName: "{{ sccm_collection_name }}"
+      Operation: "{{ sccm_dcr_operation }}"
+      TriggerCollectionUpdate: "{{ sccm_trigger_collection_update | bool }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$SiteCode,
+          [string]$SiteServer,
+          [string]$ModulePath,
+          [int]$ResourceId,
+          [string]$DeviceName,
+          [string]$CollectionId,
+          [string]$CollectionName,
+          [string]$Operation,
+          [bool]$TriggerCollectionUpdate
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      if ($ModulePath) {
+          Import-Module $ModulePath
+      }
+      else {
+          Import-Module ConfigurationManager
+      }
+
+      if (-not (Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue)) {
+          New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $SiteServer -Scope Global | Out-Null
+      }
+      Set-Location "${SiteCode}:"
+
+      if ($ResourceId -gt 0) {
+          $device = Get-CMDevice -ResourceId $ResourceId
+      }
+      else {
+          $device = Get-CMDevice -Name $DeviceName -DisableWildcardHandling
+      }
+      $deviceCount = @($device).Count
+      if ($deviceCount -eq 0) {
+          throw "No device found matching the given resolution criteria."
+      }
+      if ($deviceCount -gt 1) {
+          throw "Ambiguous device resolution: $deviceCount devices matched - refusing to proceed."
+      }
+
+      if ($CollectionId) {
+          $collection = Get-CMDeviceCollection -CollectionId $CollectionId
+      }
+      else {
+          $collection = Get-CMDeviceCollection -Name $CollectionName
+      }
+      $collectionCount = @($collection).Count
+      if ($collectionCount -eq 0) {
+          throw "No device collection found matching the given resolution criteria."
+      }
+      if ($collectionCount -gt 1) {
+          throw "Ambiguous collection resolution: $collectionCount collections matched - refusing to proceed."
+      }
+
+      $existingRule = Get-CMDeviceCollectionDirectMembershipRule -CollectionId $collection.CollectionID -ResourceId $device.ResourceID -ErrorAction SilentlyContinue
+      $ruleExisted = [bool]$existingRule
+
+      # Best-effort, non-blocking: publish (never silently hide) whether
+      # other rule types could keep the device in the collection even
+      # after the direct rule is removed - the roadmap explicitly asks
+      # for this to be surfaced rather than promising a durable removal
+      # it can't guarantee. $null means a given check could not be
+      # evaluated (e.g. the cmdlet isn't available on this CM version).
+      $queryRulePresent = $null
+      $includeRulePresent = $null
+      $excludeRulePresent = $null
+      try {
+          $queryRulePresent = [bool](Get-CMDeviceCollectionQueryMembershipRule -CollectionId $collection.CollectionID -ErrorAction Stop)
+      }
+      catch { $queryRulePresent = $null }
+      try {
+          $includeRulePresent = [bool](Get-CMDeviceCollectionIncludeMembershipRule -CollectionId $collection.CollectionID -ErrorAction Stop)
+      }
+      catch { $includeRulePresent = $null }
+      try {
+          $excludeRulePresent = [bool](Get-CMDeviceCollectionExcludeMembershipRule -CollectionId $collection.CollectionID -ErrorAction Stop)
+      }
+      catch { $excludeRulePresent = $null }
+
+      $removed = $false
+      $updateTriggered = $false
+      if ($ruleExisted -and $Operation -eq 'remove') {
+          Remove-CMDeviceCollectionDirectMembershipRule -CollectionId $collection.CollectionID -ResourceId $device.ResourceID -Force
+          $removed = $true
+          if ($TriggerCollectionUpdate) {
+              Invoke-CMCollectionUpdate -CollectionId $collection.CollectionID
+              $updateTriggered = $true
+          }
+      }
+      elseif ($ruleExisted -and $Operation -eq 'audit') {
+          Remove-CMDeviceCollectionDirectMembershipRule -CollectionId $collection.CollectionID -ResourceId $device.ResourceID -WhatIf
+      }
+
+      # Verification: confirm the direct rule is actually gone after removal.
+      $directRuleStillPresentAfter = $null
+      if ($removed) {
+          $ruleAfter = Get-CMDeviceCollectionDirectMembershipRule -CollectionId $collection.CollectionID -ResourceId $device.ResourceID -ErrorAction SilentlyContinue
+          $directRuleStillPresentAfter = [bool]$ruleAfter
+      }
+
+      $Ansible.Changed = $removed
+      $Ansible.Result = [ordered]@{
+          resource_id                  = $device.ResourceID
+          device_name                 = $device.Name
+          collection_id                = $collection.CollectionID
+          collection_name               = $collection.Name
+          rule_existed                 = $ruleExisted
+          removed                      = $removed
+          direct_rule_still_present_after = $directRuleStillPresentAfter
+          query_rule_present           = $queryRulePresent
+          include_rule_present         = $includeRulePresent
+          exclude_rule_present         = $excludeRulePresent
+          collection_update_triggered = $updateTriggered
+      }
+  register: sccm_dcr_result
