@@ -1,0 +1,39 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+centreon_url: https://centreon.example.net
+centreon_username: "{{ vault_centreon_username }}"
+centreon_password: "{{ vault_centreon_password }}"
+centreon_validate_certs: true
+# Centreon's own documentation accepts "latest" as the version segment;
+# pinning an explicit version (e.g. "v2") is safer once validated against
+# the target - see README.
+centreon_api_version: latest
+
+# The acknowledgement resource path/payload is NOT hardcoded here -
+# confirm it against your Centreon server's own live API reference
+# (usually served at https://<server>/centreon/api/<version>/doc, the
+# most authoritative source since it reflects the exact installed
+# version) before enabling. See README for why this project treats the
+# login flow and the acknowledgement endpoint with different levels of
+# confidence.
+centreon_ack_endpoint: ""
+centreon_ack_method: POST
+
+# Host/service name resolution isn't implemented in this first version -
+# supply the already-known numeric Centreon IDs directly. See README.
+centreon_ack_target_type: host
+centreon_host_id: null
+centreon_service_id: null
+
+centreon_ack_comment: ""
+centreon_ack_author: aap
+# CENTREON-ROADMAP.md requires an incident/change ticket reference for a
+# production acknowledgement - always mandatory here rather than
+# conditional on a "production" flag this project has no reliable way to
+# evaluate.
+centreon_ack_ticket_reference: ""
+
+# Standard Nagios/Centreon acknowledgement flags.
+centreon_ack_sticky: true
+centreon_ack_notify: true
+centreon_ack_persistent: true

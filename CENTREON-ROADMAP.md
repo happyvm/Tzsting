@@ -20,6 +20,26 @@ opérations de cycle de vie dont il a besoin.
 - un échec de validation interdit le redémarrage ou le rechargement du moteur ;
 - chaque projet publie un artefact `set_stats` stable pour AAP/ServiceNow.
 
+## Statut de réalisation
+
+🟡 **`ansible-centreon-downtime-create`** (étape 4) et
+**`ansible-centreon-acknowledgement-create`** (étape 5) implémentés en
+premier, avant `ansible-centreon-conf`/`host-add`/`service-add` (étapes
+1-3) : les opérations runtime downtime/acknowledgement ne dépendent
+d'aucune résolution de configuration, contrairement à la création
+d'hôtes/services, et se prêtaient donc mieux à une confirmation partielle
+des endpoints REST. Pour les deux : le flux d'authentification est
+corroboré par `docs.centreon.com`, mais l'endpoint de création
+lui-même est laissé vide/obligatoire, à confirmer par l'exploitant sur la
+documentation API vivante de son propre serveur (voir le README de
+chaque projet). Résolution de nom hôte/service vers ID non implémentée
+dans les deux ; détection d'un doublon (downtime ou acknowledgement déjà
+présent) non implémentée ; la vérification que la cible est bien dans un
+état nécessitant un acknowledgement n'est pas non plus implémentée
+(même limite de confiance sur le endpoint de statut runtime - voir le
+README de `ansible-centreon-acknowledgement-create`). Toutes les autres
+briques du catalogue restent à faire.
+
 ## Catalogue cible
 
 ### `ansible-centreon-conf`
@@ -201,6 +221,13 @@ Création d'un acknowledgement runtime :
 - vérification runtime sans export de configuration.
 
 Artefact AAP : `centreon_acknowledgement_create_summary`.
+
+🟡 Implémenté dans [`ansible-centreon-acknowledgement-create`](../ansible-centreon-acknowledgement-create) :
+cible hôte/service par ID numérique, commentaire/auteur/référence de
+ticket (toujours obligatoire), indicateurs `sticky`/`notify`/`persistent`.
+Non couvert : résolution nom → ID, vérification que la cible nécessite
+réellement un acknowledgement, détection d'un acknowledgement équivalent
+déjà présent.
 
 ### `ansible-centreon-acknowledgement-remove`
 

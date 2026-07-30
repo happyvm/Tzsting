@@ -1,0 +1,8 @@
+---
+collections: []
+# No maintained Ansible collection wraps the Centreon REST API v2 -
+# configuration here uses ansible.builtin.uri directly. See roles/auth and
+# the README for what's hardcoded (the login flow, corroborated against
+# docs.centreon.com) vs what's left blank/operator-supplied (the
+# acknowledgement resource endpoint itself, which is more
+# version/config-dependent and less certain from documentation alone).

@@ -1,0 +1,5 @@
+# Copy to hosts.yml. Centreon is managed via its API from localhost.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

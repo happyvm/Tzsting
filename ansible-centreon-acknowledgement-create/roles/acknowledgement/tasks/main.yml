@@ -1,0 +1,38 @@
+---
+- name: Create the Centreon acknowledgement
+  ansible.builtin.uri:
+    url: "{{ centreon_url }}{{ centreon_ack_endpoint }}"
+    method: "{{ centreon_ack_method }}"
+    headers:
+      X-AUTH-TOKEN: "{{ centreon_ack_token }}"
+    body_format: json
+    body:
+      target_type: "{{ centreon_ack_target_type }}"
+      host_id: "{{ centreon_host_id | int }}"
+      service_id: "{{ centreon_service_id | int if centreon_ack_target_type == 'service' else omit }}"
+      comment: "{{ centreon_ack_comment }}"
+      author: "{{ centreon_ack_author }}"
+      ticket_reference: "{{ centreon_ack_ticket_reference }}"
+      sticky: "{{ centreon_ack_sticky | bool }}"
+      notify: "{{ centreon_ack_notify | bool }}"
+      persistent: "{{ centreon_ack_persistent | bool }}"
+    validate_certs: "{{ centreon_validate_certs }}"
+    status_code: [200, 201, 202, 204]
+  register: centreon_ack_result
+  changed_when: true
+  no_log: true
+
+- name: Publish the acknowledgement summary artifact
+  ansible.builtin.set_stats:
+    data:
+      centreon_acknowledgement_create_summary:
+        centreon_url: "{{ centreon_url }}"
+        target_type: "{{ centreon_ack_target_type }}"
+        host_id: "{{ centreon_host_id }}"
+        service_id: "{{ centreon_service_id }}"
+        ticket_reference: "{{ centreon_ack_ticket_reference }}"
+        sticky: "{{ centreon_ack_sticky | bool }}"
+        notify: "{{ centreon_ack_notify | bool }}"
+        persistent: "{{ centreon_ack_persistent | bool }}"
+        http_status: "{{ centreon_ack_result.status }}"
+    per_host: false
