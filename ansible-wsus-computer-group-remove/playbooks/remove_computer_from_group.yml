@@ -1,0 +1,54 @@
+# Removes a computer from a WSUS computer target group (moving it to
+# the built-in Unassigned Computers group, per the documented behavior
+# of the underlying WSUS Administration API), using the real
+# UpdateServices PowerShell module on a Windows host with the WSUS
+# console/RSAT feature installed. Does not remove the machine object
+# from WSUS, does not touch approvals/deadlines/classifications - see
+# README and ENDPOINT-MANAGEMENT-ROADMAP.md for the full catalogue this
+# is one piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/remove_computer_from_group.yml --vault-password-file .vault_pass
+
+- name: Remove a computer from a WSUS computer target group
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the console host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: wsus_gr_console
+        ansible_host: "{{ wsus_console_host }}"
+        ansible_connection: winrm
+        ansible_user: "{{ wsus_conn_winrm_username }}"
+        ansible_password: "{{ wsus_conn_winrm_password }}"
+        ansible_port: "{{ wsus_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ wsus_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if wsus_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Resolve the computer/group and remove the membership
+      delegate_to: wsus_gr_console
+      block:
+        - name: Include the remove_membership role
+          ansible.builtin.include_role:
+            name: remove_membership
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          wsus_computer_group_remove_summary:
+            wsus_server: "{{ wsus_server_name }}"
+            operation: "{{ wsus_gr_operation }}"
+            computer_name: "{{ wsus_gr_result.result.computer_name }}"
+            target_group_name: "{{ wsus_gr_result.result.target_group_name }}"
+            was_member: "{{ wsus_gr_result.result.was_member }}"
+            removed: "{{ wsus_gr_result.result.removed }}"
+            still_member_after: "{{ wsus_gr_result.result.still_member_after }}"
+            client_side_targeting_enabled: "{{ wsus_gr_client_side_targeting_enabled | bool }}"
+        aggregate: false

@@ -1,0 +1,7 @@
+---
+collections:
+  - name: ansible.windows
+# The UpdateServices PowerShell module itself is not an Ansible
+# collection - it ships with the WSUS console/RSAT feature and is
+# invoked here via ansible.windows.win_powershell on a Windows host that
+# already has it installed. See README.
