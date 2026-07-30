@@ -1,0 +1,42 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+centreon_url: https://centreon.example.net
+centreon_username: "{{ vault_centreon_username }}"
+centreon_password: "{{ vault_centreon_password }}"
+centreon_validate_certs: true
+# Centreon's own documentation accepts "latest" as the version segment;
+# pinning an explicit version (e.g. "v2") is safer once validated against
+# the target - see README.
+centreon_api_version: latest
+
+# The downtime resource path/payload is NOT hardcoded here - confirm it
+# against your Centreon server's own live API reference (usually served
+# at https://<server>/centreon/api/<version>/doc, the most authoritative
+# source since it reflects the exact installed version) before enabling.
+# See README for why this project treats the login flow and the downtime
+# endpoint with different levels of confidence.
+centreon_downtime_endpoint: ""
+centreon_downtime_method: POST
+
+# Host/service name resolution isn't implemented in this first version -
+# supply the already-known numeric Centreon IDs directly. See README.
+centreon_downtime_target_type: host
+centreon_host_id: null
+centreon_service_id: null
+
+centreon_downtime_comment: ""
+centreon_downtime_author: aap
+centreon_change_number: ""
+centreon_downtime_start_time: ""
+centreon_downtime_end_time: ""
+centreon_downtime_duration_seconds: null
+# Used both to validate start/end time here and, as-is, in the request body
+# sent to centreon_downtime_endpoint - it must match whatever wire format
+# your Centreon version's downtime endpoint actually expects (confirm
+# against the live API doc, see centreon_downtime_endpoint above).
+centreon_downtime_time_format: "%Y-%m-%d %H:%M:%S"
+centreon_downtime_is_fixed: true
+centreon_downtime_with_services: false
+# Refuse open-ended downtimes by default - CENTREON-ROADMAP.md's own
+# guard-rails call for rejecting unlimited durations.
+centreon_downtime_max_duration_seconds: 86400
