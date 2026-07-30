@@ -1,0 +1,7 @@
+---
+collections:
+  - name: azure.azcollection
+# This project is a thin wrapper around the official
+# azure.azcollection.azure_arc role (documented by Microsoft at
+# https://learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-ansible-playbooks)
+# rather than a custom implementation - see README.

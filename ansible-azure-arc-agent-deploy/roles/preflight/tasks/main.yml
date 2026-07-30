@@ -1,0 +1,65 @@
+---
+- name: Validate the operation and target OS family
+  ansible.builtin.assert:
+    that:
+      - azure_arc_deploy_operation in ['deploy', 'audit']
+      - azure_arc_deploy_target_os_family in ['linux', 'windows']
+      - azure_arc_deploy_target_hostname | length > 0
+    fail_msg: >-
+      azure_arc_deploy_operation must be deploy or audit,
+      azure_arc_deploy_target_os_family must be linux or windows, and
+      azure_arc_deploy_target_hostname is mandatory.
+
+- name: Validate Linux (SSH) connection settings
+  ansible.builtin.assert:
+    that:
+      - azure_arc_deploy_ssh_username | length > 0
+      - azure_arc_deploy_ssh_password | length > 0 or azure_arc_deploy_ssh_private_key_file | length > 0
+    fail_msg: >-
+      azure_arc_deploy_ssh_username is mandatory, and either
+      azure_arc_deploy_ssh_password or azure_arc_deploy_ssh_private_key_file
+      must be set.
+  when: azure_arc_deploy_target_os_family == 'linux'
+
+- name: Validate Windows (WinRM) connection settings
+  ansible.builtin.assert:
+    that:
+      - azure_arc_deploy_winrm_username | length > 0
+      - azure_arc_deploy_winrm_password | length > 0
+    fail_msg: "azure_arc_deploy_winrm_username and azure_arc_deploy_winrm_password are both mandatory."
+  when: azure_arc_deploy_target_os_family == 'windows'
+
+- name: Validate the Azure Arc destination
+  ansible.builtin.assert:
+    that:
+      - azure_arc_resource_group | length > 0
+      - azure_arc_subscription_id | length > 0
+      - azure_arc_tenant_id | length > 0
+      - azure_arc_location | length > 0
+      - azure_arc_cloud in ['AzureCloud', 'AzureUSGovernment', 'AzureChinaCloud']
+    fail_msg: >-
+      azure_arc_resource_group, azure_arc_subscription_id, azure_arc_tenant_id
+      and azure_arc_location are all mandatory - the official
+      azure.azcollection.azure_arc role can auto-detect the location from
+      the resource group when left unset, but this project always
+      requires it explicitly instead (simpler and avoids an extra Azure
+      lookup - see README). azure_arc_cloud must be one of AzureCloud,
+      AzureUSGovernment or AzureChinaCloud.
+
+- name: Validate service principal authentication
+  ansible.builtin.assert:
+    that:
+      - azure_arc_application_id | length > 0
+      - azure_arc_client_secret | length > 0
+    fail_msg: >-
+      azure_arc_application_id and azure_arc_client_secret are mandatory -
+      this project only supports service principal authentication (see
+      README for why interactive/CLI/managed-identity authentication
+      aren't modelled here).
+
+- name: Validate the optional proxy settings are set together
+  ansible.builtin.assert:
+    that:
+      - (azure_arc_proxy_hostname is not defined and azure_arc_proxy_port is not defined) or
+        (azure_arc_proxy_hostname is defined and azure_arc_proxy_port is defined)
+    fail_msg: "azure_arc_proxy_hostname and azure_arc_proxy_port must be set together, or not at all."
