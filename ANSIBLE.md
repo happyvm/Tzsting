@@ -293,6 +293,22 @@ réellement simulée - voir
 
 Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-agent-deploy/README.md).
 
+### `ansible-sccm-client-deploy`
+
+Installation, réparation ou mise à niveau du client **Microsoft
+Configuration Manager (SCCM/MECM)**, via `ccmsetup.exe` exécuté
+directement (le même choix qu’`ansible-sql-server-install` : un
+mécanisme officiel long-stable plutôt qu’une API devinée). Checksum du
+média obligatoire même en mode `audit`, modes
+`install`/`repair`/`upgrade`/`audit`, vérification bornée post-
+installation (`SMS_Client` WMI, service `CcmExec`, site assigné via
+`GetAssignedSite()`), déclenchement facultatif des cycles policy/
+discovery via `TriggerSchedule`. Ne fait pas de client push console et
+ne touche à aucune device collection - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-client-deploy/README.md`](ansible-sccm-client-deploy/README.md).
+
 ### `ansible-sccm-device-collection-add`
 
 Ajout idempotent d’une machine dans une device collection **Microsoft
@@ -379,6 +395,7 @@ Documentation : [`ansible-wsus-computer-group-add/README.md`](ansible-wsus-compu
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
+| `ansible-sccm-client-deploy` | — | — | — | WinRM | Installation/réparation/upgrade |
 | `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
 | `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
 | `ansible-wsus-computer-group-create` | — | — | — | WinRM | Création de groupe |

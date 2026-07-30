@@ -24,19 +24,32 @@ automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
 uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
 respectivement partiel et à faire.
 
-🟡 **`ansible-sccm-device-collection-add`** (Lot 2, étape 7) et
+🟡 **`ansible-sccm-client-deploy`** (Lot 2, étape 6) implémenté via
+`ccmsetup.exe` exécuté directement (pas de client push console), le
+même choix qu'`ansible-sql-server-install` : un mécanisme d'installation
+officiel long-stable plutôt qu'un contrat d'API deviné. Modes
+`install`/`repair`/`upgrade`/`audit`, checksum du média obligatoire même
+en `audit`, vérification bornée post-installation (`SMS_Client` WMI,
+service `CcmExec`, site assigné via `GetAssignedSite()`), déclenchement
+facultatif des cycles policy/discovery via `TriggerSchedule` (GUID
+officiellement documentés). Non couvert : client push console, ajout à
+une device collection (délibérément un projet séparé,
+`ansible-sccm-device-collection-add`), vérification côté-site de l'état
+"actif", désinstallation.
+
+🟡 **`ansible-sccm-device-collection-add`** (étape 7) et
 **`ansible-sccm-device-collection-remove`** (étape 8) implémentés via le
 vrai module PowerShell `ConfigurationManager`, exécuté sur un hôte
 Windows qui l'a déjà installé - voir leurs README. `ansible-sccm-conf`
-(étape 5) et `ansible-sccm-client-deploy` (étape 6) restent à faire.
+(étape 5) reste à faire.
 
 🟡 **`ansible-wsus-computer-group-create`** (Lot 3, étape 10) et
 **`ansible-wsus-computer-group-add`** (étape 11) implémentés via le vrai
 module PowerShell `UpdateServices`. Le premier appelle directement la
 méthode brute `IUpdateServer.CreateComputerTargetGroup` (aucune cmdlet
-dédiée n'existe pour la création de groupe) ; le second utilise la
-vraie cmdlet `Add-WsusComputer`, avec résolution exacte sur
-`FullDomainName` et refus si la machine n'a jamais reporté de statut
+dédiée n'existe pour la création de groupe) ; le second utilise la vraie
+cmdlet `Add-WsusComputer`, avec résolution exacte sur `FullDomainName` et
+refus si la machine n'a jamais reporté de statut
 (`LastReportedStatusTime` égal à `DateTime.MinValue`). Le ciblage
 client-side (GPO) n'est pas détecté automatiquement - publié via une
 variable déclarée par l'exploitant plutôt que deviné.
@@ -118,6 +131,14 @@ un serveur Windows physique ou virtuel :
 - désinstallation dans un projet ou mode séparé avec confirmation explicite.
 
 Artefact AAP : `sccm_client_deploy_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-client-deploy`](../ansible-sccm-client-deploy) :
+`ccmsetup.exe` exécuté directement (checksum obligatoire du média),
+modes `install`/`repair`/`upgrade`/`audit`, vérification bornée post-
+installation (`SMS_Client`, `CcmExec`, site assigné), déclenchement
+facultatif des cycles policy/discovery. Non couvert : client push
+console, ajout à une device collection, vérification côté-site "actif",
+désinstallation.
 
 ### `ansible-sccm-device-collection-add`
 

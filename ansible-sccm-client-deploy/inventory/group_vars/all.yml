@@ -1,0 +1,54 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# --- Connection to the target Windows machine getting the client -------
+sccm_cd_target_hostname: srv-example.example.local
+sccm_conn_winrm_username: "{{ vault_sccm_conn_winrm_username }}"
+sccm_conn_winrm_password: "{{ vault_sccm_conn_winrm_password }}"
+sccm_conn_winrm_port: 5986
+sccm_conn_winrm_transport: ntlm
+sccm_conn_winrm_validate_certs: true
+
+# install | repair | upgrade | audit - see README.
+sccm_cd_operation: audit
+
+# --- ccmsetup.exe media, staged on an internal distribution point or
+# approved repository (never a public source) - checksum-verified in
+# place before running, mirroring ansible-sql-server-install's staging
+# convention. Must already be reachable from the target (local path or
+# UNC share the target account can read).
+sccm_cd_ccmsetup_path: ""
+sccm_cd_ccmsetup_checksum_sha256: ""
+
+# --- Site identity and content source -----------------------------------
+sccm_cd_site_code: ""
+# Maps to ccmsetup's /mp parameter - an initial management point used to
+# find distribution points, NOT necessarily the assigned management
+# point (see Microsoft's own documentation).
+sccm_cd_management_point: ""
+# Optional - maps to /source, an additional local/UNC content location
+# (can be combined with the management point per Microsoft's own docs).
+sccm_cd_source_path: ""
+sccm_cd_fallback_status_point: ""
+sccm_cd_dns_suffix: ""
+
+# --- PKI/HTTPS options ---------------------------------------------------
+sccm_cd_use_pki_cert: false
+sccm_cd_no_crl_check: false
+sccm_cd_http_port: 80
+sccm_cd_https_port: 443
+
+# --- Download behaviour ---------------------------------------------------
+sccm_cd_retry_minutes: 20
+sccm_cd_download_timeout_minutes: 1440
+
+# --- Post-install verification -------------------------------------------
+# Bounded wait for the client to register and report a version/site.
+sccm_cd_verify_attempts: 10
+sccm_cd_verify_delay_seconds: 30
+
+# Optional client action cycles to trigger once verified - see
+# ENDPOINT-MANAGEMENT-ROADMAP.md and the official TriggerSchedule GUID
+# reference for the schedule IDs used here.
+sccm_cd_trigger_machine_policy: false
+sccm_cd_trigger_discovery_data: false

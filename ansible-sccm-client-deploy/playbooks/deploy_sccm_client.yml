@@ -1,0 +1,61 @@
+# Installs, repairs, or upgrades the Configuration Manager client on a
+# Windows server using ccmsetup.exe directly (verified against
+# Microsoft's own documented parameters/properties and return codes),
+# over WinRM. Does not perform client push from the SCCM console, does
+# not create/modify any device collection, and does not uninstall the
+# client - see README and ENDPOINT-MANAGEMENT-ROADMAP.md for the full
+# catalogue this is one piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy_sccm_client.yml --vault-password-file .vault_pass
+
+- name: Deploy the Configuration Manager client
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the target host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: sccm_cd_target
+        ansible_host: "{{ sccm_cd_target_hostname }}"
+        ansible_connection: winrm
+        ansible_user: "{{ sccm_conn_winrm_username }}"
+        ansible_password: "{{ sccm_conn_winrm_password }}"
+        ansible_port: "{{ sccm_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ sccm_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if sccm_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Deploy and verify the client
+      delegate_to: sccm_cd_target
+      block:
+        - name: Include the deploy_client role
+          ansible.builtin.include_role:
+            name: deploy_client
+
+        - name: Include the verify role
+          ansible.builtin.include_role:
+            name: verify
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          sccm_client_deploy_summary:
+            target: "{{ sccm_cd_target_hostname }}"
+            operation: "{{ sccm_cd_operation }}"
+            site_code: "{{ sccm_cd_site_code }}"
+            already_installed_before: "{{ sccm_cd_deploy_result.result.already_installed_before }}"
+            previous_client_version: "{{ sccm_cd_deploy_result.result.previous_client_version }}"
+            ran_ccmsetup: "{{ sccm_cd_deploy_result.result.ran_ccmsetup }}"
+            exit_code: "{{ sccm_cd_deploy_result.result.exit_code }}"
+            reboot_required: "{{ sccm_cd_deploy_result.result.reboot_required }}"
+            client_version: "{{ sccm_cd_verify_result.result.client_version }}"
+            assigned_site_code: "{{ sccm_cd_verify_result.result.assigned_site_code }}"
+            machine_policy_triggered: "{{ sccm_cd_verify_result.result.machine_policy_triggered }}"
+            discovery_data_triggered: "{{ sccm_cd_verify_result.result.discovery_data_triggered }}"
+        aggregate: false
