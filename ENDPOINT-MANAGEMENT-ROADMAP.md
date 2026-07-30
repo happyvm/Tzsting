@@ -24,14 +24,26 @@ automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
 uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
 respectivement partiel et à faire.
 
-🟡 **`ansible-sccm-client-deploy`** (Lot 2, étape 6),
-**`ansible-sccm-device-collection-add`** (étape 7) et
-**`ansible-sccm-device-collection-remove`** (étape 8) implémentés via
-`ccmsetup.exe`/le module PowerShell `ConfigurationManager` selon le cas
-- voir leurs README pour le détail. `ansible-sccm-conf` (étape 5) reste
-à faire.
+🟡 **`ansible-sccm-conf`** (Lot 2, étape 5) implémenté pour une première
+version limitée aux **boundaries et boundary groups** uniquement -
+délibérément plus étroit que le périmètre complet proposé par la
+roadmap (comptes/groupes AD, RBAC, méthodes de découverte, client
+settings, mode HTTPS/PKI, fallback status point restent à faire), mais
+la partie la plus concrètement spécifiée et la seule dont chaque cmdlet
+a été vérifié individuellement contre la documentation officielle avant
+d'écrire le code. Découverte du site (code/nom/version, boundaries,
+boundary groups, management/distribution points) toujours exécutée ;
+gestion des boundaries gardée par `sccm_conf_manage_boundaries=false`
+par défaut (le garde-fou explicite que la roadmap exige pour cette
+catégorie à fort impact). Mode `audit` via le `-WhatIf` natif de chaque
+cmdlet (`New-CMBoundary`/`New-CMBoundaryGroup`/`Add-CMBoundaryToGroup`),
+comme les projets device-collection - contrairement aux projets WSUS qui
+appellent une API brute sans dry-run natif. `ansible-sccm-client-deploy`
+(étape 6), `ansible-sccm-device-collection-add` (étape 7) et
+`ansible-sccm-device-collection-remove` (étape 8) sont déjà implémentés
+- voir leurs README.
 
-🟡 **Tout le Lot 3 (WSUS) est désormais implémenté** :
+🟡 **Tout le Lot 3 (WSUS) est implémenté** :
 `ansible-wsus-computer-group-create` (étape 10, via la méthode brute
 `IUpdateServer.CreateComputerTargetGroup`, aucune cmdlet dédiée
 n'existant),
@@ -39,12 +51,6 @@ n'existant),
 `Add-WsusComputer`), et
 `ansible-wsus-computer-group-remove` (étape 12, via
 `IUpdateServer.GetComputerTargetByName`/`IComputerTargetGroup.RemoveComputerTarget`).
-Ce dernier avait d'abord été différé (incertitude sur le pont entre
-l'objet `WsusComputer` des cmdlets et le type brut `IComputerTarget`) -
-`GetComputerTargetByName` s'est révélé résoudre directement un
-`IComputerTarget` à partir du nom, sans avoir besoin de ce pont, une
-fois corroboré sur la documentation officielle archivée
-Microsoft.UpdateServices.Administration.
 
 ## Principes communs
 
@@ -96,6 +102,14 @@ Les éléments à fort impact, comme la modification des méthodes de découvert
 des boundaries ou du mode HTTPS, doivent être activés par variables explicites.
 
 Artefact AAP : `sccm_conf_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-conf`](../ansible-sccm-conf), limité
+à cette première version aux boundaries et boundary groups
+(`New-CMBoundary`/`New-CMBoundaryGroup`/`Add-CMBoundaryToGroup`,
+gardé par `sccm_conf_manage_boundaries=false`), avec une découverte du
+site toujours exécutée. Non couvert : comptes/groupes AD, RBAC, méthodes
+de découverte, client settings, mode HTTPS/PKI, fallback status point,
+validation approfondie WMI/services.
 
 ### `ansible-sccm-client-deploy`
 

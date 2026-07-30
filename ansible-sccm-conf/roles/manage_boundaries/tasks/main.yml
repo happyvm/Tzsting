@@ -1,0 +1,118 @@
+---
+# A single custom script manages both boundaries and boundary groups in
+# one PowerShell session/CMSite PSDrive (same rationale as the other
+# ConfigurationManager-based projects in this repo). Unlike the WSUS
+# group-create project, every cmdlet used here is a real cmdlet with
+# native -WhatIf support, so "audit" mode uses that directly rather
+# than skipping the calls outright.
+- name: Create boundaries/boundary groups and assign boundaries to groups
+  ansible.windows.win_powershell:
+    parameters:
+      SiteCode: "{{ sccm_conf_site_code }}"
+      SiteServer: "{{ sccm_conf_site_server }}"
+      ModulePath: "{{ sccm_conf_console_module_path }}"
+      Operation: "{{ sccm_conf_operation }}"
+      BoundariesJson: "{{ sccm_conf_boundaries | to_json }}"
+      BoundaryGroupsJson: "{{ sccm_conf_boundary_groups | to_json }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$SiteCode,
+          [string]$SiteServer,
+          [string]$ModulePath,
+          [string]$Operation,
+          [string]$BoundariesJson,
+          [string]$BoundaryGroupsJson
+      )
+
+      $ErrorActionPreference = 'Stop'
+      $isAudit = ($Operation -eq 'audit')
+
+      if ($ModulePath) {
+          Import-Module $ModulePath
+      }
+      else {
+          Import-Module ConfigurationManager
+      }
+
+      if (-not (Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue)) {
+          New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $SiteServer -Scope Global | Out-Null
+      }
+      Set-Location "${SiteCode}:"
+
+      $boundaries = $BoundariesJson | ConvertFrom-Json
+      $boundaryGroups = $BoundaryGroupsJson | ConvertFrom-Json
+
+      $boundaryResults = @()
+      foreach ($b in $boundaries) {
+          $existing = Get-CMBoundary -BoundaryName $b.name -DisableWildcardHandling | Where-Object { $_.DisplayName -eq $b.name }
+          if ($existing) {
+              if ($existing.Value -ne $b.value) {
+                  throw "Boundary '$($b.name)' already exists with a different value ('$($existing.Value)') than declared ('$($b.value))') - refusing to silently reuse a mismatched boundary."
+              }
+              $boundaryResults += [ordered]@{ name = $b.name; already_exists = $true; created = $false }
+          }
+          else {
+              New-CMBoundary -Name $b.name -Type $b.type -Value $b.value -WhatIf:$isAudit | Out-Null
+              $boundaryResults += [ordered]@{ name = $b.name; already_exists = $false; created = (-not $isAudit) }
+          }
+      }
+
+      $groupResults = @()
+      $anyBoundaryAssigned = $false
+      foreach ($g in $boundaryGroups) {
+          $existingGroup = Get-CMBoundaryGroup -Name $g.name -DisableWildcardHandling | Where-Object { $_.Name -eq $g.name }
+          $groupAlreadyExisted = [bool]$existingGroup
+          if (-not $existingGroup -and -not $isAudit) {
+              $newGroupParams = @{
+                  Name = $g.name
+              }
+              if ($g.description) { $newGroupParams.Description = $g.description }
+              if ($g.default_site_code) { $newGroupParams.DefaultSiteCode = $g.default_site_code }
+              if ($g.site_systems -and $g.site_systems.Count -gt 0) { $newGroupParams.AddSiteSystemServerName = $g.site_systems }
+              New-CMBoundaryGroup @newGroupParams | Out-Null
+              $existingGroup = Get-CMBoundaryGroup -Name $g.name -DisableWildcardHandling | Where-Object { $_.Name -eq $g.name }
+          }
+          elseif (-not $existingGroup -and $isAudit) {
+              New-CMBoundaryGroup -Name $g.name -WhatIf | Out-Null
+          }
+
+          $assignedBoundaries = @()
+          if ($existingGroup) {
+              $currentGroupBoundaries = @(Get-CMBoundary -BoundaryGroupName $g.name -DisableWildcardHandling | ForEach-Object { $_.DisplayName })
+              foreach ($boundaryName in $g.boundaries) {
+                  if ($currentGroupBoundaries -contains $boundaryName) {
+                      $assignedBoundaries += [ordered]@{ name = $boundaryName; already_assigned = $true; assigned = $false }
+                  }
+                  else {
+                      Add-CMBoundaryToGroup -BoundaryGroupName $g.name -BoundaryName $boundaryName -WhatIf:$isAudit
+                      $assignedBoundaries += [ordered]@{ name = $boundaryName; already_assigned = $false; assigned = (-not $isAudit) }
+                      $anyBoundaryAssigned = $true
+                  }
+              }
+          }
+
+          $groupResults += [ordered]@{
+              name             = $g.name
+              already_existed  = $groupAlreadyExisted
+              created          = (-not $groupAlreadyExisted -and -not $isAudit)
+              boundaries       = $assignedBoundaries
+          }
+      }
+
+      $anyBoundaryCreated = $false
+      foreach ($r in $boundaryResults) {
+          if ($r.created) { $anyBoundaryCreated = $true }
+      }
+      $anyGroupCreated = $false
+      foreach ($r in $groupResults) {
+          if ($r.created) { $anyGroupCreated = $true }
+      }
+
+      $Ansible.Changed = (-not $isAudit) -and ($anyBoundaryCreated -or $anyGroupCreated -or $anyBoundaryAssigned)
+      $Ansible.Result = [ordered]@{
+          boundaries      = $boundaryResults
+          boundary_groups = $groupResults
+      }
+  register: sccm_conf_boundaries_result
+  when: sccm_conf_manage_boundaries | bool

@@ -293,6 +293,23 @@ réellement simulée - voir
 
 Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-agent-deploy/README.md).
 
+### `ansible-sccm-conf`
+
+Configuration déclarative des **boundaries et boundary groups Microsoft
+Configuration Manager (SCCM)** - première version limitée à ce
+périmètre, plus étroit que le catalogue complet proposé par
+`ENDPOINT-MANAGEMENT-ROADMAP.md` (comptes/groupes AD, RBAC, méthodes de
+découverte, client settings, mode HTTPS/PKI restent à faire). Découverte
+du site (boundaries, boundary groups, management/distribution points)
+toujours exécutée ; gestion des boundaries gardée par
+`sccm_conf_manage_boundaries=false` par défaut, le garde-fou explicite
+que la roadmap exige pour cette catégorie à fort impact. Mode `audit`
+via le `-WhatIf` natif de chaque cmdlet
+(`New-CMBoundary`/`New-CMBoundaryGroup`/`Add-CMBoundaryToGroup`) - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-conf/README.md`](ansible-sccm-conf/README.md).
+
 ### `ansible-sccm-client-deploy`
 
 Installation, réparation ou mise à niveau du client **Microsoft
@@ -371,8 +388,7 @@ Pendant de `ansible-wsus-computer-group-add` : retrait d’une machine
 d’un groupe de diffusion WSUS. Résolution directe via
 `IUpdateServer.GetComputerTargetByName` (renvoie un vrai
 `IComputerTarget`, sans passer par l’objet wrapper `WsusComputer` des
-cmdlets - le pont entre les deux avait initialement fait différer ce
-projet), retrait via `IComputerTargetGroup.RemoveComputerTarget`
+cmdlets), retrait via `IComputerTargetGroup.RemoveComputerTarget`
 (déplace documentairement la machine vers `Unassigned Computers`),
 idempotence vérifiée avant/après, confirmation obligatoire
 `confirm_remove_from_wsus_group=true`.
@@ -409,6 +425,7 @@ Documentation : [`ansible-wsus-computer-group-remove/README.md`](ansible-wsus-co
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
+| `ansible-sccm-conf` | — | — | — | WinRM | Boundaries/boundary groups |
 | `ansible-sccm-client-deploy` | — | — | — | WinRM | Installation/réparation/upgrade |
 | `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
 | `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |

@@ -1,0 +1,51 @@
+---
+# Read-only inventory of the site's current state, always run
+# regardless of sccm_conf_operation/sccm_conf_manage_boundaries -
+# matches this repo's "découverte avant toute mutation" principle.
+- name: Inventory the site, boundaries, boundary groups and site systems
+  ansible.windows.win_powershell:
+    parameters:
+      SiteCode: "{{ sccm_conf_site_code }}"
+      SiteServer: "{{ sccm_conf_site_server }}"
+      ModulePath: "{{ sccm_conf_console_module_path }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$SiteCode,
+          [string]$SiteServer,
+          [string]$ModulePath
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      if ($ModulePath) {
+          Import-Module $ModulePath
+      }
+      else {
+          Import-Module ConfigurationManager
+      }
+
+      if (-not (Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue)) {
+          New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $SiteServer -Scope Global | Out-Null
+      }
+      Set-Location "${SiteCode}:"
+
+      $site = Get-CMSite -SiteCode $SiteCode
+      $boundaries = @(Get-CMBoundary | Select-Object BoundaryID, DisplayName, BoundaryType, Value)
+      $boundaryGroups = @(Get-CMBoundaryGroup | Select-Object GroupID, Name, DefaultSiteCode)
+      $managementPoints = @(Get-CMManagementPoint | Select-Object NetworkOSPath, SiteCode)
+      $distributionPoints = @(Get-CMDistributionPoint | Select-Object NetworkOSPath, SiteCode)
+
+      $Ansible.Changed = $false
+      $Ansible.Result = [ordered]@{
+          site_code               = $site.SiteCode
+          site_name               = $site.SiteName
+          site_version            = $site.Version
+          boundary_count          = $boundaries.Count
+          boundary_group_count    = $boundaryGroups.Count
+          boundaries              = $boundaries
+          boundary_groups         = $boundaryGroups
+          management_points       = $managementPoints | ForEach-Object { $_.NetworkOSPath }
+          distribution_points     = $distributionPoints | ForEach-Object { $_.NetworkOSPath }
+      }
+  register: sccm_conf_discover_result

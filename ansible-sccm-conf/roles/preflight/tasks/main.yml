@@ -1,0 +1,74 @@
+---
+- name: Validate the console host connection settings
+  ansible.builtin.assert:
+    that:
+      - sccm_console_host | length > 0
+      - sccm_conn_winrm_username | length > 0
+      - sccm_conn_winrm_password | length > 0
+    fail_msg: "sccm_console_host, sccm_conn_winrm_username and sccm_conn_winrm_password are all mandatory."
+
+- name: Validate the Configuration Manager site settings
+  ansible.builtin.assert:
+    that:
+      - sccm_conf_site_code | length > 0
+      - sccm_conf_site_server | length > 0
+    fail_msg: "sccm_conf_site_code and sccm_conf_site_server are both mandatory."
+
+- name: Validate the operation
+  ansible.builtin.assert:
+    that:
+      - sccm_conf_operation in ['configure', 'audit']
+    fail_msg: "sccm_conf_operation must be configure or audit."
+
+- name: Validate each declared boundary
+  ansible.builtin.assert:
+    that:
+      - item.name | default('') | length > 0
+      - item.type | default('') in ['IPSubnet', 'ADSite', 'IPv6Prefix', 'IPRange', 'Vpn']
+      - item.value | default('') | length > 0
+    fail_msg: >-
+      Every entry in sccm_conf_boundaries requires a name, a value, and
+      a type of IPSubnet, ADSite, IPv6Prefix, IPRange or Vpn (the same
+      values New-CMBoundary itself accepts).
+  loop: "{{ sccm_conf_boundaries }}"
+  loop_control:
+    label: "{{ item.name | default('(missing name)') }}"
+  when: sccm_conf_manage_boundaries | bool
+
+- name: Reject duplicate boundary names
+  ansible.builtin.assert:
+    that:
+      - sccm_conf_boundaries | map(attribute='name') | list | unique | length == sccm_conf_boundaries | length
+    fail_msg: "sccm_conf_boundaries contains duplicate boundary names."
+  when: sccm_conf_manage_boundaries | bool
+
+- name: Validate each declared boundary group
+  ansible.builtin.assert:
+    that:
+      - item.name | default('') | length > 0
+    fail_msg: "Every entry in sccm_conf_boundary_groups requires a name."
+  loop: "{{ sccm_conf_boundary_groups }}"
+  loop_control:
+    label: "{{ item.name | default('(missing name)') }}"
+  when: sccm_conf_manage_boundaries | bool
+
+- name: Reject duplicate boundary group names
+  ansible.builtin.assert:
+    that:
+      - sccm_conf_boundary_groups | map(attribute='name') | list | unique | length == sccm_conf_boundary_groups | length
+    fail_msg: "sccm_conf_boundary_groups contains duplicate group names."
+  when: sccm_conf_manage_boundaries | bool
+
+- name: Validate every boundary referenced by a group is declared in sccm_conf_boundaries
+  ansible.builtin.assert:
+    that:
+      - (item.boundaries | default([])) | difference(sccm_conf_boundaries | map(attribute='name') | list) | length == 0
+    fail_msg: >-
+      Boundary group '{{ item.name }}' references boundaries not
+      declared in sccm_conf_boundaries - this project only manages
+      boundaries it creates itself, never an existing one it didn't
+      declare (see README).
+  loop: "{{ sccm_conf_boundary_groups }}"
+  loop_control:
+    label: "{{ item.name | default('(missing name)') }}"
+  when: sccm_conf_manage_boundaries | bool
