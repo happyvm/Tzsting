@@ -1,0 +1,62 @@
+---
+- name: Determine the NRPE service name for this OS family
+  ansible.builtin.set_fact:
+    centreon_nrpe_service_name: >-
+      {{ centreon_nrpe_service_name_debian if centreon_nrpe_detected_os_family == 'Debian'
+      else centreon_nrpe_service_name_redhat }}
+
+- name: Render nrpe.cfg
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.template:
+    src: nrpe.cfg.j2
+    dest: "{{ centreon_nrpe_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  register: centreon_nrpe_config_render
+
+- name: Open the NRPE port to the declared pollers (RHEL family, firewalld)
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family="ipv4" source address="{{ item }}"
+      port protocol="tcp" port="{{ centreon_nrpe_port }}" accept
+    state: enabled
+    permanent: true
+    immediate: true
+  loop: "{{ centreon_pollers }}"
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  when: centreon_nrpe_configure_firewall | bool and centreon_nrpe_detected_os_family == 'RedHat'
+
+- name: Open the NRPE port to the declared pollers (Debian family, ufw)
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item }}"
+    to_port: "{{ centreon_nrpe_port | string }}"
+    proto: tcp
+  loop: "{{ centreon_pollers }}"
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  when: centreon_nrpe_configure_firewall | bool and centreon_nrpe_detected_os_family == 'Debian'
+
+- name: Ensure the NRPE service is enabled and running
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.systemd:
+    name: "{{ centreon_nrpe_service_name }}"
+    enabled: true
+    state: started
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+
+- name: Restart the NRPE service if the package or configuration changed
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.systemd:
+    name: "{{ centreon_nrpe_service_name }}"
+    state: restarted
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  when: (centreon_nrpe_package_changed | default(false)) or centreon_nrpe_config_render.changed

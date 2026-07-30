@@ -271,6 +271,21 @@ volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
+### `ansible-centreon-nrpe-agent-deploy`
+
+Installation et configuration d’un agent compatible **NRPE** sur un hôte
+Linux (Debian ou RHEL/dérivés) pour la supervision Centreon, via SSH : le
+paquet est téléchargé et vérifié par checksum depuis un dépôt interne
+approuvé (jamais un dépôt public/EPEL - le nom exact du paquet, NRPE
+classique/NRPE4/bundle Centreon, varie selon l’organisation et n’est pas
+deviné), `nrpe.cfg` n’autorise que des pollers et des commandes
+explicitement déclarés, et le pare-feu (`firewalld`/`ufw`) est scopé à
+ces mêmes pollers. Windows (NSClient++ en mode NRPE) n’est pas couvert
+par cette première version - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-centreon-nrpe-agent-deploy/README.md`](ansible-centreon-nrpe-agent-deploy/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -300,6 +315,7 @@ Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/READ
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
+| `ansible-centreon-nrpe-agent-deploy` | — | — | — | SSH | Installation/configuration |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

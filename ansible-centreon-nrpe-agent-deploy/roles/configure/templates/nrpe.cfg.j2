@@ -1,0 +1,13 @@
+# Managed by ansible-centreon-nrpe-agent-deploy - manual edits will be overwritten.
+server_address={{ centreon_nrpe_bind_address }}
+server_port={{ centreon_nrpe_port }}
+allowed_hosts={{ centreon_pollers | join(',') }}
+dont_blame_nrpe={{ '1' if centreon_nrpe_dont_blame_nrpe | bool else '0' }}
+command_timeout={{ centreon_nrpe_command_timeout }}
+connection_timeout={{ centreon_nrpe_connection_timeout }}
+{% for cmd in centreon_nrpe_commands %}
+command[{{ cmd.name }}]={{ cmd.command }}
+{% endfor %}
+{% for line in centreon_nrpe_extra_config_lines %}
+{{ line }}
+{% endfor %}
