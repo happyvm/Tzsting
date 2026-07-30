@@ -1,10 +1,50 @@
 name: PowerShell Quality
 
+# Scoped to what this job can actually analyse, so a doc-only or
+# non-PowerShell push does not pay for installing PSScriptAnalyzer from the
+# gallery and running six extractions.
+#
+# Two kinds of path matter here. Standalone PowerShell files anywhere in the
+# repo are picked up by the `Invoke-ScriptAnalyzer -Path . -Recurse` step, so
+# they are matched by extension rather than by location - a new .ps1 added
+# anywhere still triggers this workflow. The six projects listed below embed
+# PowerShell as Jinja-templated YAML instead, which only the per-project
+# extraction steps can reach, so those project trees are listed explicitly.
+#
+# Adding embedded PowerShell to a seventh project therefore needs an
+# extraction step here *and* its path added below - as it already did, since
+# a project with no extraction step was never scanned in the first place.
+#
+# The two lists are spelled out twice on purpose: GitHub Actions does not
+# support YAML anchors, so a `&anchor`/`*alias` pair would not expand.
+
 on:
   push:
     branches:
       - '**'
+    paths:
+      - '**/*.ps1'
+      - '**/*.psm1'
+      - '**/*.psd1'
+      - 'ansible-createvm/**'
+      - 'ansible-deletevm/**'
+      - 'ansible-inplace-upgrade/**'
+      - 'ansible-resizecompute/**'
+      - 'ansible-resizedisk/**'
+      - 'ansible-snapshot/**'
+      - '.github/workflows/powershell-quality.yml'
   pull_request:
+    paths:
+      - '**/*.ps1'
+      - '**/*.psm1'
+      - '**/*.psd1'
+      - 'ansible-createvm/**'
+      - 'ansible-deletevm/**'
+      - 'ansible-inplace-upgrade/**'
+      - 'ansible-resizecompute/**'
+      - 'ansible-resizedisk/**'
+      - 'ansible-snapshot/**'
+      - '.github/workflows/powershell-quality.yml'
 
 jobs:
   analyze:

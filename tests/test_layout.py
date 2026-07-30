@@ -148,6 +148,59 @@ def test_every_playbook_is_syntax_checked(project):
     )
 
 
+POWERSHELL_QUALITY = REPO_ROOT / ".github" / "workflows" / "powershell-quality.yml"
+
+
+def test_powershell_quality_covers_every_extraction_it_runs():
+    """Its path filter must trigger for every project it then analyses.
+
+    The workflow is scoped so a doc-only push does not pay for installing
+    PSScriptAnalyzer. That scoping is only safe while the filter still
+    matches every project the workflow extracts from - otherwise a change to
+    a project's embedded PowerShell would silently never be analysed.
+    """
+    workflow = load_yaml(POWERSHELL_QUALITY)
+    triggers = workflow.get("on", workflow.get(True))
+    text = POWERSHELL_QUALITY.read_text()
+    extracted = set(re.findall(r"python3 (\S+?)/scripts/extract_embedded_scripts\.py", text))
+    assert extracted, "no extraction steps found in powershell-quality.yml"
+    for event in ("push", "pull_request"):
+        paths = set(triggers[event]["paths"])
+        missing = sorted(p for p in extracted if f"{p}/**" not in paths)
+        assert not missing, (
+            f"powershell-quality.yml extracts from {missing} on {event} but its "
+            f"path filter does not match them - their embedded PowerShell would "
+            f"stop being analysed"
+        )
+
+
+def test_powershell_quality_matches_standalone_scripts_anywhere(repo_root):
+    """Every .ps1/.psm1/.psd1 in the repo must still trigger the workflow."""
+    workflow = load_yaml(POWERSHELL_QUALITY)
+    triggers = workflow.get("on", workflow.get(True))
+    for event in ("push", "pull_request"):
+        paths = set(triggers[event]["paths"])
+        for suffix in ("ps1", "psm1", "psd1"):
+            assert f"**/*.{suffix}" in paths, (
+                f"powershell-quality.yml does not match **/*.{suffix} on {event}, "
+                f"so a standalone script added outside the six extraction "
+                f"projects would go unanalysed"
+            )
+
+
+def test_no_workflow_uses_yaml_anchors(repo_root):
+    """GitHub Actions does not expand YAML anchors, so they silently misfire."""
+    offenders = []
+    for workflow in sorted((repo_root / ".github" / "workflows").glob("*.yml")):
+        for number, line in enumerate(workflow.read_text().splitlines(), 1):
+            if re.search(r":\s*[&*][A-Za-z_][\w-]*\s*$", line):
+                offenders.append(f"{workflow.name}:{number}")
+    assert not offenders, (
+        f"YAML anchor/alias used in {offenders} - the Actions workflow parser "
+        f"does not support them, so the value would not expand"
+    )
+
+
 def test_no_orphan_workflows(repo_root):
     """Every *-ci.yml workflow corresponds to a project that still exists."""
     from conftest import PROJECTS
