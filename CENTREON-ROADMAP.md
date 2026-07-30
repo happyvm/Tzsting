@@ -196,6 +196,13 @@ Création idempotente d'une downtime runtime pour un hôte, un service ou un gro
 
 Artefact AAP : `centreon_downtime_create_summary`.
 
+🟡 Implémenté dans [`ansible-centreon-downtime-create`](../ansible-centreon-downtime-create) :
+cible hôte/service par ID numérique, durée explicite ou calculée depuis
+début/fin, downtime fixe/flexible, auteur/commentaire/référence de
+changement, propagation optionnelle aux services, refus des durées
+illimitées. Non couvert : résolution nom → ID, downtimes de groupe,
+détection d'une downtime équivalente déjà active.
+
 ### `ansible-centreon-downtime-remove`
 
 Suppression ciblée d'une downtime :

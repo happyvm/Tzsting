@@ -1,0 +1,13 @@
+---
+- name: Validate hostgroup assignment request
+  ansible.builtin.assert:
+    that:
+      - satellite_url | length > 0
+      - satellite_username | length > 0
+      - satellite_password | length > 0
+      - satellite_host_name is match('^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$')
+      - satellite_hostgroup | length > 0
+      - satellite_hostgroup_add_operation in ['manage', 'audit']
+    fail_msg: >-
+      Satellite credentials, a fully-qualified satellite_host_name and a
+      non-empty satellite_hostgroup (title, e.g. "foo/bar") are mandatory.

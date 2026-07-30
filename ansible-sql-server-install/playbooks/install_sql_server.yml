@@ -1,0 +1,60 @@
+---
+# Installs, audits or repairs a standalone SQL Server instance on Windows
+# Server via setup.exe's ConfigurationFile.ini silent-install mechanism,
+# over WinRM. Failover Cluster Instances, Always On Availability Groups,
+# database creation/restoration and CU rolling updates are out of scope -
+# see README and VEEAM-NETBACKUP-ROADMAP.md-style separation of concerns
+# in SQL-SERVER-ROADMAP.md.
+#
+# Usage:
+#   ansible-playbook playbooks/install_sql_server.yml --vault-password-file .vault_pass
+
+- name: Install or audit a standalone SQL Server instance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the target Windows Server to the in-memory inventory
+      ansible.builtin.add_host:
+        name: sql_server_target
+        ansible_host: "{{ sql_server_winrm_hostname }}"
+        ansible_connection: winrm
+        ansible_user: "{{ sql_server_winrm_username }}"
+        ansible_password: "{{ sql_server_winrm_password }}"
+        ansible_port: "{{ sql_server_winrm_port }}"
+        ansible_winrm_transport: "{{ sql_server_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if sql_server_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Verify installer/CU checksums
+      ansible.builtin.include_role:
+        name: stage_media
+      when: sql_server_operation != 'audit'
+
+    - name: Run SQL Server Setup
+      ansible.builtin.include_role:
+        name: install
+      when: sql_server_operation in ['install', 'repair', 'add_features']
+
+    - name: Verify the resulting instance
+      ansible.builtin.include_role:
+        name: verify
+      when: sql_server_operation != 'audit'
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          sql_server_install_summary:
+            server: "{{ sql_server_winrm_hostname }}"
+            operation: "{{ sql_server_operation }}"
+            instance_name: "{{ sql_server_instance_name }}"
+            version: "{{ sql_server_version }}"
+            edition: "{{ sql_server_edition }}"
+            features: "{{ sql_server_features }}"
+            reboot_required: "{{ (sql_server_setup_result.rc | default(0)) == 3010 }}"
+        aggregate: false

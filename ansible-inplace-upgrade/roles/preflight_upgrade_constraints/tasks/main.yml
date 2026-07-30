@@ -5,8 +5,21 @@
       $os = Get-CimInstance Win32_OperatingSystem
       $drive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
       $build = [int]$os.BuildNumber
-      $release = if ($build -le 14393) { '2016' } elseif ($build -le 17763) { '2019' } elseif ($build -le 20348) { '2022' } else { '2025' }
-      [pscustomobject]@{ Major = $release; Caption = $os.Caption; FreeGB = [math]::Round($drive.FreeSpace / 1GB, 2); PendingReboot = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') }
+      $release = if ($build -le 14393) {
+          '2016'
+      } elseif ($build -le 17763) {
+          '2019'
+      } elseif ($build -le 20348) {
+          '2022'
+      } else {
+          '2025'
+      }
+      [pscustomobject]@{
+          Major = $release
+          Caption = $os.Caption
+          FreeGB = [math]::Round($drive.FreeSpace / 1GB, 2)
+          PendingReboot = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
+      }
   delegate_to: inplace_upgrade_guest
   register: inplace_upgrade_windows_preflight
   when: guest_os == 'windows'

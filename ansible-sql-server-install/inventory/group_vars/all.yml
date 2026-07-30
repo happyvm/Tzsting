@@ -1,0 +1,91 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+# install | audit | repair | add_features - separate modes so an approval
+# workflow can gate installation/repair distinctly from a read-only audit.
+sql_server_operation: install
+
+# WinRM connection to the target Windows Server.
+sql_server_winrm_hostname: sql01.example.local
+sql_server_winrm_username: "{{ vault_sql_server_winrm_username }}"
+sql_server_winrm_password: "{{ vault_sql_server_winrm_password }}"
+sql_server_winrm_port: 5986
+sql_server_winrm_transport: ntlm
+sql_server_winrm_validate_certs: true
+
+# Media must come from an internal, pre-approved repository - this project
+# never downloads an installer or CU from the internet. media_checksum is
+# mandatory (SHA256) so a tampered or wrong-version installer is refused
+# rather than silently run - see roles/stage_media.
+sql_server_media_path: '\\repo.example.net\software\sqlserver\2022\setup.exe'
+sql_server_media_checksum: ""
+
+# Only an already-approved, internally staged CU - never the latest CU
+# fetched automatically. Disabled by default: apply CUs as a deliberate,
+# separate, reviewed step.
+sql_server_update_enabled: false
+sql_server_update_source: '\\repo.example.net\software\sqlserver\2022\cu-approved\setup.exe'
+sql_server_update_checksum: ""
+
+sql_server_version: 2022
+# Developer/Evaluation are explicitly allowed without a PID (non-production
+# only - see README); any other edition requires sql_server_pid from Vault.
+sql_server_edition: Developer
+sql_server_pid: "{{ vault_sql_server_pid | default('') }}"
+sql_server_instance_name: MSSQLSERVER
+
+# Allowlisted against the real setup.exe /FEATURES values - see
+# roles/preflight. SQLENGINE (Database Engine) is the only feature this
+# first version has been validated against; the others are accepted but
+# not yet covered by dedicated post-install verification.
+sql_server_features:
+  - SQLENGINE
+
+# Virtual/managed accounts (e.g. "NT SERVICE\MSSQLSERVER", a gMSA ending in
+# "$") need no password - leave password blank for those. Domain accounts
+# need both name and password.
+sql_server_engine_service_account:
+  name: "NT SERVICE\\MSSQLSERVER"
+  password: ""
+sql_server_agent_service_account:
+  name: "NT SERVICE\\SQLSERVERAGENT"
+  password: ""
+
+# At least one sysadmin principal is mandatory - refusing to end up with a
+# SQL Server instance nobody can administer.
+sql_server_sysadmin_accounts:
+  - "BUILTIN\\Administrators"
+
+# windows | mixed. sql_server_sa_password is only used (and only required)
+# in mixed mode.
+sql_server_authentication_mode: windows
+sql_server_sa_password: "{{ vault_sql_server_sa_password | default('') }}"
+
+sql_server_collation: Latin1_General_100_CI_AS_SC
+
+sql_server_data_dir: 'D:\MSSQL\DATA'
+sql_server_log_dir: 'E:\MSSQL\LOG'
+sql_server_backup_dir: 'F:\MSSQL\BACKUP'
+sql_server_tempdb_dir: 'T:\MSSQL\TEMPDB'
+# Explicit integer only in this version - "auto" (core-count-based) sizing
+# is a documented future enhancement, not yet implemented. See README.
+sql_server_tempdb_file_count: 4
+
+sql_server_tcp_enabled: true
+sql_server_tcp_port: 1433
+sql_server_browser_enabled: false
+# CIDRs allowed to reach sql_server_tcp_port - never opened to "any".
+sql_server_firewall_sources: []
+
+# Null/omitted means "leave SQL Server's own default" - only configured
+# when both are explicitly set, per the project's own guard-rail against
+# silently applying a profile nobody asked for.
+sql_server_max_memory_mb: null
+sql_server_min_memory_mb: null
+
+# Never trigger a restart automatically, even if Setup reports exit code
+# 3010 (success, reboot required) - report it in the artefact and let a
+# separate, deliberate maintenance action restart the server.
+allow_reboot: false
+
+# Required to actually run in repair mode - see roles/preflight.
+confirm_sql_server_repair: false

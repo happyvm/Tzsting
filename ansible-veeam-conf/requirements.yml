@@ -1,6 +1,11 @@
 ---
-collections: []
+collections:
+  - name: ansible.windows
+    version: ">=2.0.0,<4.0.0"
+
 # No maintained Ansible collection wraps the Veeam Backup & Replication
 # REST API - configuration here uses ansible.builtin.uri directly. See
 # roles/auth and the README for the (real, version-pinned) OAuth2 token
-# flow this project authenticates with.
+# flow this project authenticates with. ansible.windows covers the
+# Windows host itself (AD join, local account, NTP, timezone) - same
+# roles/pattern as windows-hyperv-conf/windows-scvmm-conf.

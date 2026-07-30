@@ -45,6 +45,18 @@ Artefact AAP : `satellite_conf_summary`.
 
 ### `ansible-satellite-activation-key-manage`
 
+**Statut** : implémenté via le vrai module
+`theforeman.foreman.activation_key` - organisation, lifecycle
+environment/content view (ou content view environments multiples),
+host collections, content overrides, limite d'hôtes, system purpose,
+release version, service level, modes `present`/`present_with_defaults`/
+`absent` et `audit` (check mode natif Ansible). Restent à faire :
+repositories/produits autorisés en tant que garde-fou dédié (le module
+gère les content overrides mais pas une allowlist de produits), un mode
+`disabled` propre à ce projet (les activation keys Foreman n'ont pas de
+bascule enabled/disabled native - à concevoir si un besoin réel apparaît).
+Voir [`ansible-satellite-activation-key-manage/README.md`](ansible-satellite-activation-key-manage/README.md).
+
 Création ou mise à jour déclarative d'une activation key :
 
 - organisation et location explicites ;
@@ -100,6 +112,19 @@ Désinscription contrôlée d'un hôte :
 Artefact AAP : `satellite_host_unregister_summary`.
 
 ### `ansible-satellite-hostgroup-add`
+
+**Statut** : implémenté via le vrai module `theforeman.foreman.host` -
+affectation idempotente, mode `audit` (check mode natif Ansible),
+publication de l'état actuel de l'hôte et de la définition du host group
+cible avant application (`host_info`/`hostgroup_info`). **Partiellement
+fait** : ce n'est pas encore le diff calculé de chaque paramètre hérité
+(OS, activation keys, lifecycle environment, content view...) décrit
+ci-dessous - `host_info`/`hostgroup_info` renvoient un dictionnaire
+générique dont le schéma exact n'est pas documenté, donc ce calcul n'a
+pas été implémenté sans l'avoir vérifié contre une instance réelle. Le
+refus de changement implicite de content view/lifecycle environment et le
+mode `plan` obligatoire restent à faire. Voir
+[`ansible-satellite-hostgroup-add/README.md`](ansible-satellite-hostgroup-add/README.md).
 
 Affectation idempotente d'un hôte existant à un host group :
 
@@ -203,11 +228,16 @@ déjà promu ; ils ne déclenchent pas eux-mêmes une promotion implicite.
 
 ## Ordre de réalisation recommandé
 
-1. `ansible-satellite-conf` et découverte des capacités ;
-2. `ansible-satellite-activation-key-manage` ;
-3. `ansible-satellite-host-register` et `ansible-satellite-host-unregister` ;
-4. `ansible-satellite-hostgroup-add` et `ansible-satellite-hostgroup-remove` ;
-5. `ansible-satellite-content-view-promote` ;
+1. `ansible-satellite-conf` et découverte des capacités - **pas encore fait** ;
+2. `ansible-satellite-activation-key-manage` - **fait** ;
+3. `ansible-satellite-host-register` et `ansible-satellite-host-unregister` -
+   **pas encore fait** ;
+4. `ansible-satellite-hostgroup-add` - **fait** (voir statut détaillé
+   ci-dessus pour ce qui manque) ; `ansible-satellite-hostgroup-remove` -
+   **pas encore fait** ;
+5. `ansible-satellite-content-view-promote` - **pas encore fait**, mais
+   `theforeman.foreman.content_view_version` existe et couvre la
+   promotion - bon candidat pour la suite ;
 6. tests de cycle de vie complet sur hôtes jetables.
 
 ## Validation attendue

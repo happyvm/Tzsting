@@ -1,0 +1,5 @@
+---
+- name: Configure the VBR server timezone
+  delegate_to: veeam_conf_target
+  ansible.windows.win_timezone:
+    timezone: "{{ veeam_conf_timezone }}"

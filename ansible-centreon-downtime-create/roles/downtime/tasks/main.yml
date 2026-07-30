@@ -1,0 +1,48 @@
+---
+- name: Create the Centreon downtime
+  ansible.builtin.uri:
+    url: "{{ centreon_url }}{{ centreon_downtime_endpoint }}"
+    method: "{{ centreon_downtime_method }}"
+    headers:
+      X-AUTH-TOKEN: "{{ centreon_downtime_token }}"
+    body_format: json
+    body:
+      target_type: "{{ centreon_downtime_target_type }}"
+      host_id: "{{ centreon_host_id | int }}"
+      service_id: "{{ centreon_service_id | int if centreon_downtime_target_type == 'service' else omit }}"
+      comment: "{{ centreon_downtime_comment }}"
+      author: "{{ centreon_downtime_author }}"
+      change_number: "{{ centreon_change_number | default(omit, true) }}"
+      start_time: "{{ centreon_downtime_start_time }}"
+      end_time: "{{ centreon_downtime_end_time | default(omit, true) }}"
+      duration: >-
+        {{ centreon_downtime_duration_seconds
+        if centreon_downtime_duration_seconds is not none
+        else centreon_downtime_computed_duration_seconds }}
+      is_fixed: "{{ centreon_downtime_is_fixed | bool }}"
+      with_services: "{{ centreon_downtime_with_services | bool }}"
+    validate_certs: "{{ centreon_validate_certs }}"
+    status_code: [200, 201, 202, 204]
+  register: centreon_downtime_result
+  changed_when: true
+  no_log: true
+
+- name: Publish the downtime summary artifact
+  ansible.builtin.set_stats:
+    data:
+      centreon_downtime_create_summary:
+        centreon_url: "{{ centreon_url }}"
+        target_type: "{{ centreon_downtime_target_type }}"
+        host_id: "{{ centreon_host_id }}"
+        service_id: "{{ centreon_service_id }}"
+        change_number: "{{ centreon_change_number }}"
+        start_time: "{{ centreon_downtime_start_time }}"
+        end_time: "{{ centreon_downtime_end_time }}"
+        duration_seconds: >-
+          {{ centreon_downtime_duration_seconds
+          if centreon_downtime_duration_seconds is not none
+          else centreon_downtime_computed_duration_seconds }}
+        is_fixed: "{{ centreon_downtime_is_fixed | bool }}"
+        with_services: "{{ centreon_downtime_with_services | bool }}"
+        http_status: "{{ centreon_downtime_result.status }}"
+    per_host: false
