@@ -1,0 +1,55 @@
+# Adds a device to an SCCM device collection via a direct membership
+# rule, using the real ConfigurationManager PowerShell module on a
+# Windows host that has the Configuration Manager console installed.
+# Does not install the SCCM client, does not create the collection, and
+# does not touch query/include/exclude membership rules - see README and
+# ENDPOINT-MANAGEMENT-ROADMAP.md for the full catalogue this is one piece
+# of.
+#
+# Usage:
+#   ansible-playbook playbooks/add_device_to_collection.yml --vault-password-file .vault_pass
+
+- name: Add a device to an SCCM device collection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the console host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: sccm_dca_console
+        ansible_host: "{{ sccm_console_host }}"
+        ansible_connection: winrm
+        ansible_user: "{{ sccm_conn_winrm_username }}"
+        ansible_password: "{{ sccm_conn_winrm_password }}"
+        ansible_port: "{{ sccm_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ sccm_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if sccm_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Resolve the device/collection and add the membership rule
+      delegate_to: sccm_dca_console
+      block:
+        - name: Include the add_membership role
+          ansible.builtin.include_role:
+            name: add_membership
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          sccm_device_collection_add_summary:
+            site_code: "{{ sccm_site_code }}"
+            operation: "{{ sccm_dca_operation }}"
+            resource_id: "{{ sccm_dca_result.result.resource_id }}"
+            device_name: "{{ sccm_dca_result.result.device_name }}"
+            collection_id: "{{ sccm_dca_result.result.collection_id }}"
+            collection_name: "{{ sccm_dca_result.result.collection_name }}"
+            already_present: "{{ sccm_dca_result.result.already_present }}"
+            added: "{{ sccm_dca_result.result.added }}"
+            collection_update_triggered: "{{ sccm_dca_result.result.collection_update_triggered }}"
+            dynamic_rule_warning: "{{ sccm_dca_result.result.dynamic_rule_warning }}"
+        aggregate: false

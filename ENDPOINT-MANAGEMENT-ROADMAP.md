@@ -22,8 +22,23 @@ modèle Vault/Credential AAP du dépôt). `azcmagent check` (validation
 réseau préalable) n'est pas exposé par le rôle officiel et n'est donc pas
 automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
 uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
-respectivement partiel et à faire ; tout le catalogue SCCM/WSUS (Lots
-2-3) reste à faire.
+respectivement partiel et à faire.
+
+🟡 **`ansible-sccm-device-collection-add`** (Lot 2, étape 7) implémenté
+via le vrai module PowerShell `ConfigurationManager` (celui livré avec la
+console SCCM), exécuté sur un hôte Windows qui l'a déjà installé :
+résolution exacte du device et de la collection, ajout d'une direct
+membership rule idempotent, mise à jour facultative de la collection.
+Le mode `audit` s'appuie sur le support natif `-WhatIf` des cmdlets, pas
+sur le check mode Ansible, puisque le projet utilise un unique script
+PowerShell personnalisé (voir README). L'avertissement sur les
+collections pilotées par query/include/exclude est publié
+(`dynamic_rule_warning`) plutôt que bloquant, car les cmdlets utilisés
+pour ce contrôle suivent une convention de nommage cohérente avec les
+cmdlets confirmés mais n'ont pas été vérifiés individuellement.
+`ansible-sccm-conf` (étape 5), `ansible-sccm-client-deploy` (étape 6) et
+`ansible-sccm-device-collection-remove` (étape 8) restent à faire ; tout
+WSUS (Lot 3) reste à faire.
 
 ## Principes communs
 
@@ -114,6 +129,14 @@ Ajout idempotent d'une machine dans une device collection SCCM existante :
 - aucune installation du client et aucun déploiement applicatif implicites.
 
 Artefact AAP : `sccm_device_collection_add_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-device-collection-add`](../ansible-sccm-device-collection-add) :
+résolution exacte du device (ResourceId ou nom exact,
+`-DisableWildcardHandling`) et de la collection, ajout d'une direct
+membership rule idempotent, avertissement non bloquant sur les règles
+query/include/exclude existantes, mise à jour facultative de la
+collection. Non couvert : installation du client, création de la
+collection.
 
 ### `ansible-sccm-device-collection-remove`
 
