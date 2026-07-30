@@ -103,7 +103,11 @@ concevoir ou développer.
 - mode `plan` ou `audit` lorsque possible ;
 - verrou partagé par ressource ;
 - artefact AAP stable et exploitable par ServiceNow ;
-- matrice produit × version × OS réellement testée et publiée.
+- matrice produit × version × OS réellement testée et publiée ;
+- **chaque répertoire de projet reste récupérable seul par cherry-pick** :
+  aucune dépendance vers une collection interne partagée, quitte à
+  dupliquer les préflights, les verrous et les résumés d'une automatisation
+  à l'autre.
 
 ## Prochains domaines structurants encore non couverts
 
@@ -113,4 +117,3 @@ concevoir ou développer.
 - déploiement et retrait des agents EDR et de collecte de logs ;
 - zoning SAN et réseau physique ;
 - tests automatisés de restauration et PRA ;
-- collection Ansible interne pour les préflights, verrous et résumés communs.

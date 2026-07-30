@@ -265,18 +265,29 @@ variable de release, au lieu d'une liste plate à remplir par appliance.
 
 ## Axe 5 — Écarts transverses
 
-### Réutilisation du code
+### Réutilisation du code — duplication assumée
 
 Cinq projets embarquent une copie quasi identique de `preflight_platform` et
 un rôle de verrou (`create_vm_lock`, `delete_vm_lock`, `compute_lock`,
-`resizedisk_lock`, `snapshot_lock`, `upgrade_lock` — ~150 lignes chacun).
+`resizedisk_lock`, `snapshot_lock`, `upgrade_lock` — ~150 lignes chacun), et
+`preflight_backup` existe désormais en deux exemplaires.
 
-> **Option à prévoir** : une collection interne
-> (`entreprise.infra_lifecycle`) portant `preflight_platform`,
-> `platform_lock`, `run_guest_command`, `publish_summary` et les filtres de
-> validation, consommée par tous les projets via `requirements.yml`. Cela
-> divise la surface de maintenance par cinq et rend cohérente toute
-> évolution du verrou ou de la détection de plateforme.
+> **Ce n'est pas une dette à résorber.** Chaque répertoire de projet est conçu
+> pour être récupéré seul, par cherry-pick, et fonctionner sans rien d'autre du
+> dépôt. Une collection interne partagée
+> (type `entreprise.infra_lifecycle`) casserait précisément cette propriété :
+> un projet extrait tirerait une dépendance vers un artefact qui ne le suit
+> pas. La duplication est le prix payé, en connaissance de cause, pour
+> l'autonomie des répertoires.
+>
+> La contrepartie réelle est le risque de **divergence accidentelle** entre
+> copies — une correction appliquée à un exemplaire et pas aux autres. C'est
+> déjà arrivé : `ansible-inplace-upgrade` portait une copie non adaptée de
+> l'extracteur de scripts de `ansible-resizedisk`, qui laissait les deux tiers
+> de son PowerShell hors analyse. Le garde-fou n'est donc pas la
+> mutualisation, mais la suite `tests/`, qui exécute les mêmes contrôles sur
+> toutes les copies et vérifie qu'aucun projet ne référence quoi que ce soit
+> hors de son propre répertoire.
 
 ### Verrouillage et concurrence
 

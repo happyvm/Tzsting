@@ -45,9 +45,29 @@ cd tests && pytest --ignore=test_guards.py
 |---|---|
 | `conftest.py` | Découverte des projets, parcours des tâches (y compris dans `block`/`rescue`/`always`), et le harnais qui rejoue les garde-fous d'un rôle via `ansible-playbook` |
 | `test_layout.py` | Chaque projet a la structure commune (`ansible.cfg`, `requirements.yml`, inventaire d'exemple, configs de lint), et le workflow consolidé `ansible-projects.yml` conserve ses quatre contrôles, couvre tous les playbooks et ne contient aucune liste de projets en dur |
-| `test_structure.py` | Les rôles inclus existent et sont tous utilisés, chaque tâche est nommée, les modules sont en FQCN, toute collection appelée est déclarée dans `requirements.yml`, et aucun secret en clair dans `group_vars` |
+| `test_structure.py` | Les rôles inclus existent et sont tous utilisés, chaque tâche est nommée, les modules sont en FQCN, toute collection appelée est déclarée dans `requirements.yml`, aucun secret en clair dans `group_vars`, et **chaque projet reste autonome** (aucun chemin `../`, aucune référence à un projet voisin, aucun lien symbolique sortant, aucune collection interne partagée) |
 | `test_embedded_scripts.py` | Les extracteurs `scripts/extract_embedded_scripts.py` écrivent bien **tous** les scripts PowerShell/bash embarqués dans le YAML |
 | `test_guards.py` | Les `assert` de préflight acceptent les requêtes valides et rejettent réellement les entrées hostiles |
+| `test_api_contracts.py` | Résolution du contrat REST depuis la release pour les projets DXi/StoreOnce : sélection de branche, priorité des surcharges, garde de capacité SNMPv3 |
+| `test_backup_preflight.py` | `preflight_backup` refuse bien une suppression ou un upgrade sans sauvegarde valide, face à un serveur de sauvegarde simulé |
+
+## Pourquoi l'autonomie des projets est testée
+
+Chaque répertoire de projet doit pouvoir être récupéré seul, par cherry-pick,
+et fonctionner sans rien d'autre du dépôt. C'est la raison pour laquelle les
+préflights, les verrous et les résumés sont **dupliqués** d'un projet à
+l'autre plutôt que factorisés dans une collection interne : un projet extrait
+tirerait sinon une dépendance vers un artefact qui ne le suit pas.
+
+Cette propriété ne se voit ni au lint ni à l'exécution — un chemin relatif
+commode la casse sans que rien ne proteste. `test_structure.py` la vérifie
+donc explicitement.
+
+La contrepartie assumée de la duplication est le risque de divergence entre
+copies. Le garde-fou n'est pas la mutualisation mais cette suite, qui exécute
+les mêmes contrôles sur toutes les copies : c'est ce qui a fait apparaître
+qu'une copie non adaptée de l'extracteur de scripts laissait les deux tiers
+du PowerShell d'un projet hors analyse.
 
 ## Pourquoi `test_embedded_scripts.py` existe
 

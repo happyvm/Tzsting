@@ -7,6 +7,7 @@ requirements.yml CI installs from, and that no role is left stranded.
 """
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
@@ -215,6 +216,93 @@ def test_requirements_pin_a_version(project):
         f"{project.name}/requirements.yml leaves {drifted} unpinned, but other "
         f"projects here pin it to "
         f"{ {c: sorted(pinned_elsewhere[c]) for c in drifted} }"
+    )
+
+
+# --- self-containment ------------------------------------------------------
+#
+# Every project directory is meant to be cherry-picked out on its own and
+# work with nothing else from this repo. That is why the preflight, lock and
+# summary roles are duplicated rather than factored into a shared internal
+# collection - see ROADMAP.md. These tests protect that property, which is
+# invisible to lint and easy to break with one convenient relative path.
+
+
+def test_no_task_reaches_outside_the_project(project):
+    """A path escaping the project directory breaks cherry-picking."""
+    offenders = []
+    for path in project.task_files() + project.playbooks():
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if re.search(r"['\"\s](\.\./|\{\{\s*playbook_dir\s*\}\}/\.\.)", line):
+                offenders.append(f"{path.relative_to(project.path)}:{number}: {stripped[:70]}")
+    assert not offenders, (
+        f"{project.name} refers to a path outside its own directory: {offenders} "
+        f"- the project must stay usable when copied out on its own"
+    )
+
+
+def test_no_reference_to_another_project(project):
+    """Naming a sibling project directory is the other way to break it."""
+    from conftest import PROJECTS
+
+    others = {p.name for p in PROJECTS} - {project.name}
+    offenders = []
+    for path in project.task_files() + project.playbooks():
+        text = path.read_text()
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            for other in others:
+                if f"{other}/" in line:
+                    offenders.append(
+                        f"{path.relative_to(project.path)}:{number} -> {other}"
+                    )
+    assert not offenders, (
+        f"{project.name} points at another project's files: {offenders}"
+    )
+
+
+def test_no_symlink_escapes_the_project(project):
+    """A symlink out of the tree does not survive being copied either."""
+    escaping = []
+    for path in project.path.rglob("*"):
+        if not path.is_symlink():
+            continue
+        target = (path.parent / os.readlink(path)).resolve()
+        if not str(target).startswith(str(project.path.resolve())):
+            escaping.append(f"{path.relative_to(project.path)} -> {os.readlink(path)}")
+    assert not escaping, (
+        f"{project.name} contains symlink(s) pointing outside itself: {escaping}"
+    )
+
+
+def test_requirements_declare_no_internal_collection(project):
+    """A shared internal collection is exactly what must not appear here.
+
+    Factoring the duplicated roles into one would be the obvious cleanup and
+    is deliberately not wanted: a cherry-picked project would then depend on
+    an artifact that does not travel with it.
+    """
+    data = load_yaml(project.path / "requirements.yml") or {}
+    known_public = {
+        "ansible", "community", "vmware", "purestorage", "theforeman", "hpe",
+        "azure", "microsoft", "dellemc", "netapp", "chocolatey", "kubernetes",
+        "amazon", "google", "openstack", "cisco", "arista", "f5networks",
+        "servicenow", "infoblox", "checkpoint", "fortinet",
+    }
+    suspicious = []
+    for entry in data.get("collections") or []:
+        name = entry["name"] if isinstance(entry, dict) else entry
+        if isinstance(name, str) and name.split(".")[0] not in known_public:
+            suspicious.append(name)
+    assert not suspicious, (
+        f"{project.name}/requirements.yml declares {suspicious}, which is not a "
+        f"known public collection namespace - if this is an internal shared "
+        f"collection, it breaks the guarantee that the directory can be "
+        f"cherry-picked and used on its own"
     )
 
 
