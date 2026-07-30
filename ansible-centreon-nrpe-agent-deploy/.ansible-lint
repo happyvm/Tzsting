@@ -1,0 +1,14 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `centreon_nrpe_` prefix
+  # instead of a per-role prefix: centreon_nrpe_package_changed (set in
+  # roles/install) gates the service restart in roles/configure, and
+  # centreon_nrpe_service_name (set in roles/preflight) is read by every
+  # later role, so a per-role prefix would be actively misleading about
+  # where each var is meant to be read from.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml

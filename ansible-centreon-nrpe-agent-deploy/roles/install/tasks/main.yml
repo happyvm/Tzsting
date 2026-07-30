@@ -1,0 +1,46 @@
+---
+- name: Download and checksum-verify the NRPE package
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.get_url:
+    url: "{{ centreon_nrpe_package_url }}"
+    dest: "/tmp/{{ centreon_nrpe_package_url | basename }}"
+    checksum: "sha256:{{ centreon_nrpe_package_checksum_sha256 }}"
+    mode: "0644"
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  register: centreon_nrpe_package_download
+
+- name: Install the NRPE package (Debian family)
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.apt:
+    deb: "{{ centreon_nrpe_package_download.dest }}"
+    state: present
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  when: centreon_nrpe_detected_os_family == 'Debian'
+  register: centreon_nrpe_package_install_debian
+
+- name: Install the NRPE package (RHEL family)
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.dnf:
+    name: "{{ centreon_nrpe_package_download.dest }}"
+    state: present
+    disable_gpg_check: false
+  check_mode: "{{ centreon_nrpe_operation == 'audit' }}"
+  when: centreon_nrpe_detected_os_family == 'RedHat'
+  register: centreon_nrpe_package_install_redhat
+
+- name: Record whether the package changed
+  ansible.builtin.set_fact:
+    centreon_nrpe_package_changed: >-
+      {{ (centreon_nrpe_package_install_debian.changed | default(false)) or
+      (centreon_nrpe_package_install_redhat.changed | default(false)) }}
+
+- name: Clean up the staged package file
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.file:
+    path: "{{ centreon_nrpe_package_download.dest }}"
+    state: absent
+  when: not (centreon_nrpe_operation == 'audit')

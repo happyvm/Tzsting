@@ -1,0 +1,77 @@
+---
+- name: Validate connection settings
+  ansible.builtin.assert:
+    that:
+      - centreon_nrpe_ssh_hostname | length > 0
+      - centreon_nrpe_ssh_username | length > 0
+      - centreon_nrpe_ssh_password | length > 0 or centreon_nrpe_ssh_private_key_file | length > 0
+    fail_msg: >-
+      centreon_nrpe_ssh_hostname and centreon_nrpe_ssh_username are
+      mandatory, and either centreon_nrpe_ssh_password or
+      centreon_nrpe_ssh_private_key_file must be set.
+
+- name: Validate the operation and OS family
+  ansible.builtin.assert:
+    that:
+      - centreon_nrpe_operation in ['install', 'configure', 'audit']
+      - centreon_nrpe_os_family == 'linux'
+      - centreon_agent_backend == 'nrpe4'
+    fail_msg: >-
+      centreon_nrpe_operation must be install, configure or audit.
+      Windows (centreon_nrpe_os_family: windows /
+      centreon_agent_backend: nsclient_nrpe) is not implemented by this
+      project yet - see README and ENDPOINT-MANAGEMENT-ROADMAP.md.
+
+- name: Validate the package source, when installing
+  ansible.builtin.assert:
+    that:
+      - centreon_nrpe_package_url | length > 0
+      - centreon_nrpe_package_checksum_sha256 | length > 0
+    fail_msg: >-
+      centreon_nrpe_package_url and centreon_nrpe_package_checksum_sha256
+      are deliberately left blank in group_vars - stage your own package
+      build on an approved internal repository/artifact store and set
+      both before running with centreon_nrpe_operation: install. See
+      README for why the exact package (classic NRPE vs NRPE4 vs a
+      Centreon plugin bundle) isn't guessed here.
+  when: centreon_nrpe_operation == 'install'
+
+- name: Validate the poller allowlist and port
+  ansible.builtin.assert:
+    that:
+      - centreon_pollers | length > 0
+      - centreon_nrpe_port | int > 0
+      - centreon_nrpe_port | int < 65536
+    fail_msg: >-
+      centreon_pollers must list at least one poller IP/hostname allowed
+      to query this agent, and centreon_nrpe_port must be a valid TCP
+      port.
+
+- name: Validate each allowlisted command
+  ansible.builtin.assert:
+    that:
+      - item.name | default('') is match('^[A-Za-z0-9_-]+$')
+      - item.command | default('') | length > 0
+    fail_msg: >-
+      Every entry in centreon_nrpe_commands requires a name matching
+      ^[A-Za-z0-9_-]+$ and a non-empty command.
+  loop: "{{ centreon_nrpe_commands }}"
+  loop_control:
+    label: "{{ item.name | default('(missing name)') }}"
+
+- name: Reject duplicate command names
+  ansible.builtin.assert:
+    that:
+      - centreon_nrpe_commands | map(attribute='name') | list | unique | length == centreon_nrpe_commands | length
+    fail_msg: "centreon_nrpe_commands contains duplicate command names."
+
+- name: Validate the optional poller-side verification settings
+  ansible.builtin.assert:
+    that:
+      - centreon_nrpe_poller_ssh_username | length > 0
+      - centreon_nrpe_poller_ssh_password | length > 0 or centreon_nrpe_poller_ssh_private_key_file | length > 0
+      - centreon_nrpe_poller_check_nrpe_path | length > 0
+    fail_msg: >-
+      centreon_nrpe_verify_from_poller is enabled but the poller SSH
+      credentials or centreon_nrpe_poller_check_nrpe_path are incomplete.
+  when: centreon_nrpe_verify_from_poller | bool

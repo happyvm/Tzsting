@@ -8,6 +8,21 @@ Il décrit des projets Ansible autonomes pour Configuration Manager (SCCM),
 WSUS, Azure Arc, Centreon/NRPE et Flexera. Chaque brique doit pouvoir être
 récupérée et exécutée indépendamment des autres projets du dépôt.
 
+## Statut de réalisation
+
+🟡 **`ansible-centreon-nrpe-agent-deploy`** (Lot 1, étape 2) implémenté
+pour Linux uniquement (Windows/NSClient++ reste à faire) : installation
+du paquet depuis un dépôt interne approuvé (checksum SHA-256 obligatoire
+- le nom exact du paquet, NRPE classique vs NRPE4 vs bundle Centreon,
+n'est volontairement pas deviné, voir README), configuration de
+`nrpe.cfg` (pollers autorisés, commandes allowlistées uniquement, aucun
+argument arbitraire), pare-feu scopé aux pollers déclarés
+(`firewalld`/`ufw`), contrôle du service, modes `install`/`configure`/
+`audit`, vérification `check_nrpe` optionnelle depuis un poller.
+`ansible-flexera-agent-deploy` et `ansible-azure-arc-agent-deploy`
+(étapes 1 et 3 du même lot) restent à faire, de même que tout le
+catalogue SCCM/WSUS (Lots 2-3).
+
 ## Principes communs
 
 - aucune écriture directe dans les bases SCCM, SUSDB, Centreon ou Flexera ;
@@ -236,6 +251,14 @@ historique, nécessite `allow_legacy_windows_nrpe=true`. Une évolution future
 pourra être publiée sous `ansible-centreon-cma-agent-deploy`.
 
 Artefact AAP : `centreon_nrpe_agent_deploy_summary`.
+
+🟡 Implémenté pour Linux dans
+[`ansible-centreon-nrpe-agent-deploy`](../ansible-centreon-nrpe-agent-deploy) :
+installation depuis un dépôt interne approuvé, `nrpe.cfg` (pollers
+autorisés, commandes allowlistées), pare-feu ciblé, contrôle du service,
+publication des macros/paramètres pour `ansible-centreon-host-add`. Non
+couvert : Windows/NSClient++, la résolution nom → ID (n'importe pas ici,
+ce projet ne parle qu'à l'hôte lui-même), et le passage à CMA.
 
 ---
 
