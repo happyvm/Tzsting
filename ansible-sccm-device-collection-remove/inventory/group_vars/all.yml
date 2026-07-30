@@ -1,0 +1,42 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# --- Connection to a Windows host with the Configuration Manager console
+# (and therefore the ConfigurationManager PowerShell module) installed -
+# typically the site server itself or an admin workstation. See README.
+sccm_console_host: sccm01.example.local
+sccm_conn_winrm_username: "{{ vault_sccm_conn_winrm_username }}"
+sccm_conn_winrm_password: "{{ vault_sccm_conn_winrm_password }}"
+sccm_conn_winrm_port: 5986
+sccm_conn_winrm_transport: ntlm
+sccm_conn_winrm_validate_certs: true
+
+# --- Configuration Manager site ---
+sccm_site_code: ""
+# FQDN of the site server - used as the CMSite PSDrive's Root.
+sccm_site_server: ""
+# Leave blank to rely on the ConfigurationManager module already being on
+# PSModulePath (console 2111+) or $env:SMS_ADMIN_UI_PATH - only set this
+# to override with an explicit .psd1 path. See README.
+sccm_console_module_path: ""
+
+# remove | audit - audit uses the cmdlet's own native -WhatIf support
+# rather than Ansible's check_mode (this project's script is a single
+# custom PowerShell script, not a set of individually check_mode-aware
+# Ansible tasks - see README).
+sccm_dcr_operation: audit
+
+# --- Device resolution - set exactly one of these two ---
+sccm_device_resource_id: null
+sccm_device_name: ""
+
+# --- Collection resolution - set exactly one of these two ---
+sccm_collection_id: ""
+sccm_collection_name: ""
+
+# Removing from a collection can stop deployments/policies from applying
+# to the device - refuse to run in "remove" mode without this.
+confirm_remove_from_collection: false
+
+# Optional: trigger Invoke-CMCollectionUpdate after a successful remove.
+sccm_trigger_collection_update: false

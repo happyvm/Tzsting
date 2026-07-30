@@ -1,0 +1,63 @@
+---
+# A single custom script is used because the actual group-creation call
+# (IUpdateServer.CreateComputerTargetGroup) is a raw WSUS Administration
+# API method, not a PowerShell cmdlet - no New-WsusComputerTargetGroup
+# cmdlet exists in the UpdateServices module (confirmed against the
+# module's full cmdlet list). This raw method has no native dry-run
+# support either, so "audit" mode simply skips calling it (see README).
+- name: Resolve existing groups and create the target group if needed
+  ansible.windows.win_powershell:
+    parameters:
+      ServerName: "{{ wsus_server_name }}"
+      PortNumber: "{{ wsus_port_number }}"
+      UseSsl: "{{ wsus_use_ssl | bool }}"
+      GroupName: "{{ wsus_gc_group_name }}"
+      ParentGroupName: "{{ wsus_gc_parent_group_name }}"
+      Operation: "{{ wsus_gc_operation }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$ServerName,
+          [int]$PortNumber,
+          [bool]$UseSsl,
+          [string]$GroupName,
+          [string]$ParentGroupName,
+          [string]$Operation
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      Import-Module UpdateServices
+      $wsus = Get-WsusServer -Name $ServerName -PortNumber $PortNumber -UseSsl:$UseSsl
+
+      $existingGroups = $wsus.GetComputerTargetGroups()
+      $existing = $existingGroups | Where-Object { $_.Name -eq $GroupName }
+      $alreadyExists = [bool]$existing
+
+      $parent = $null
+      if ($ParentGroupName) {
+          $parent = $existingGroups | Where-Object { $_.Name -eq $ParentGroupName }
+          if (-not $parent) {
+              throw "Parent group '$ParentGroupName' was not found on this WSUS server."
+          }
+      }
+
+      $created = $false
+      if (-not $alreadyExists -and $Operation -eq 'create') {
+          if ($parent) {
+              $wsus.CreateComputerTargetGroup($GroupName, $parent) | Out-Null
+          }
+          else {
+              $wsus.CreateComputerTargetGroup($GroupName) | Out-Null
+          }
+          $created = $true
+      }
+
+      $Ansible.Changed = $created
+      $Ansible.Result = [ordered]@{
+          group_name        = $GroupName
+          parent_group_name = $ParentGroupName
+          already_exists    = $alreadyExists
+          created           = $created
+      }
+  register: wsus_gc_result
