@@ -293,6 +293,49 @@ réellement simulée - voir
 
 Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-agent-deploy/README.md).
 
+### `ansible-sccm-device-collection-add`
+
+Ajout idempotent d’une machine dans une device collection **Microsoft
+Configuration Manager (SCCM)**, via le vrai module PowerShell
+`ConfigurationManager` exécuté sur un hôte Windows qui l’a déjà
+installé. Résolution exacte du device et de la collection, ajout d’une
+direct membership rule uniquement (jamais query/include/exclude), mise à
+jour facultative de la collection. Le mode `audit` s’appuie sur le
+support natif `-WhatIf` des cmdlets plutôt que sur le check mode Ansible,
+puisqu’un unique script PowerShell personnalisé gère toute la logique
+dans une même session/PSDrive - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-device-collection-add/README.md`](ansible-sccm-device-collection-add/README.md).
+
+### `ansible-sccm-device-collection-remove`
+
+Pendant de `ansible-sccm-device-collection-add` : retrait d’une machine
+d’une device collection SCCM (suppression de la direct membership rule
+uniquement), avec vérification immédiate après suppression et
+confirmation obligatoire `confirm_remove_from_collection=true`. Publie
+trois indicateurs distincts (query/include/exclude rule present) plutôt
+que de bloquer, puisque ce projet ne peut garantir que la machine quitte
+réellement la collection si un autre mécanisme de règle s’applique.
+
+Documentation : [`ansible-sccm-device-collection-remove/README.md`](ansible-sccm-device-collection-remove/README.md).
+
+### `ansible-wsus-computer-group-create`
+
+Création idempotente d’un groupe d’ordinateurs **WSUS**, via le vrai
+module PowerShell `UpdateServices` exécuté sur un hôte Windows qui l’a
+déjà installé. Aucune cmdlet dédiée n’existe pour cette opération (le
+module `UpdateServices` n’en propose aucune - confirmé en listant
+l’intégralité de ses cmdlets) : ce projet appelle directement la méthode
+`IUpdateServer.CreateComputerTargetGroup` de l’API d’administration WSUS
+sous-jacente. Validation du nom (caractères interdits, longueur, groupes
+système réservés). Le mode `audit` ne s’appuie sur aucun `-WhatIf`
+natif puisqu’il s’agit d’un appel API brut, pas d’une cmdlet - il se
+contente de ne pas appeler la méthode - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-wsus-computer-group-create/README.md`](ansible-wsus-computer-group-create/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -323,6 +366,9 @@ Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-a
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
+| `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
+| `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
+| `ansible-wsus-computer-group-create` | — | — | — | WinRM | Création de groupe |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de
