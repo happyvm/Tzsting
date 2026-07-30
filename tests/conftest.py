@@ -74,10 +74,6 @@ class Project:
             if ".extracted" not in f.parts
         ]
 
-    @property
-    def workflow(self) -> pathlib.Path:
-        return REPO_ROOT / ".github" / "workflows" / f"{self.name}-ci.yml"
-
     def __str__(self) -> str:  # pragma: no cover - pytest ids only
         return self.name
 

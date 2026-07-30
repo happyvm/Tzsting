@@ -1,0 +1,186 @@
+name: Ansible CI
+
+# One workflow for all the Ansible projects, replacing the 39 near-identical
+# per-project files (1745 lines, three distinct shapes once the project name
+# was normalised out). Adding a step used to mean editing 39 files, which is
+# how they drifted apart in the first place.
+#
+# The project list is never hardcoded: `detect` derives it from the paths a
+# push or pull request actually touched, keeping only top-level directories
+# that are Ansible projects - the same `ansible.cfg` marker the test suite
+# uses to discover them. A new project is picked up with no change here.
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+# A newer push to the same branch makes the previous run's answer obsolete.
+concurrency:
+  group: ansible-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect changed projects
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.changed.outputs.projects }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Full history so the diff base is always reachable.
+          fetch-depth: 0
+
+      - name: Work out which projects changed
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # `if` rather than `&&` on purpose: a `&&` chain whose last
+          # iteration does not match leaves the loop with a non-zero status,
+          # which `set -e` would turn into a failed job the moment a
+          # non-project directory happened to sort last.
+          all_projects() {
+            for dir in */; do
+              if [ -f "${dir}ansible.cfg" ]; then
+                basename "$dir"
+              fi
+            done
+          }
+
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$PR_BASE"
+          else
+            base="$PUSH_BEFORE"
+          fi
+
+          # A brand-new branch reports an all-zero "before", and a force-push
+          # can leave a base this clone no longer has. Either way the honest
+          # answer is "we do not know what changed", so lint everything.
+          if [ -z "$base" ] \
+            || [ "$base" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "Diff base unavailable - linting every project."
+            selected="$(all_projects)"
+          else
+            # Three-dot: diff from the merge base, so a pull request is judged
+            # on what it changed rather than on what moved on the base branch
+            # underneath it.
+            changed="$(git diff --name-only "$base...HEAD")"
+            echo "Changed files:"
+            echo "$changed" | sed 's/^/  /'
+            if echo "$changed" | grep -qx '.github/workflows/ansible-projects.yml'; then
+              echo "This workflow changed - linting every project."
+              selected="$(all_projects)"
+            else
+              selected="$(
+                echo "$changed" \
+                  | cut -d/ -f1 \
+                  | sort -u \
+                  | while read -r dir; do
+                      if [ -n "$dir" ] && [ -f "$dir/ansible.cfg" ]; then
+                        echo "$dir"
+                      fi
+                    done
+              )"
+            fi
+          fi
+
+          echo "Selected projects:"
+          echo "${selected:-  (none)}" | sed 's/^/  /'
+          projects="$(
+            printf '%s\n' "$selected" \
+              | jq -R -s -c 'split("\n") | map(select(length > 0))'
+          )"
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: ${{ matrix.project }}
+    needs: detect
+    if: needs.detect.outputs.projects != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every project's result, rather than cancelling the rest on the
+      # first failure - the whole picture is more useful than the first error.
+      fail-fast: false
+      matrix:
+        project: ${{ fromJson(needs.detect.outputs.projects) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install tooling
+        run: pip install yamllint ansible-core ansible-lint
+
+      - name: Install required collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: yamllint
+        run: yamllint .
+
+      - name: ansible-lint
+        run: ansible-lint
+
+      - name: ansible-playbook --syntax-check
+        run: |
+          set -euo pipefail
+          cp inventory/hosts.yml.example inventory/hosts.yml
+          # Every playbook, always - the old per-project files were split
+          # between naming one and looping, and the ones that named a single
+          # playbook silently stopped covering the others when a second was
+          # added.
+          shopt -s nullglob
+          playbooks=(playbooks/*.yml)
+          if [ ${#playbooks[@]} -eq 0 ]; then
+            echo "No playbooks found in ${PWD}" >&2
+            exit 1
+          fi
+          for playbook in "${playbooks[@]}"; do
+            echo "--- $playbook"
+            ansible-playbook "$playbook" --syntax-check
+          done
+
+  shellcheck:
+    name: ansible-resizedisk shellcheck
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.projects), 'ansible-resizedisk')
+    runs-on: ubuntu-latest
+    # Only ansible-resizedisk for now. ansible-inplace-upgrade also embeds
+    # bash, but its extracted scripts trip SC2050/SC1091 purely as artefacts
+    # of the Jinja-to-placeholder substitution, so enabling it here needs
+    # those suppressions agreed first rather than bolted on silently.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install extraction script dependencies
+        run: pip install pyyaml
+
+      - name: Extract embedded bash
+        run: python3 ansible-resizedisk/scripts/extract_embedded_scripts.py bash
+
+      - name: Install ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Run ShellCheck
+        run: shellcheck -s bash ansible-resizedisk/.extracted/bash/*.sh
