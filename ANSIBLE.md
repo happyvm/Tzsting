@@ -320,6 +320,22 @@ réellement la collection si un autre mécanisme de règle s’applique.
 
 Documentation : [`ansible-sccm-device-collection-remove/README.md`](ansible-sccm-device-collection-remove/README.md).
 
+### `ansible-wsus-computer-group-create`
+
+Création idempotente d’un groupe d’ordinateurs **WSUS**, via le vrai
+module PowerShell `UpdateServices` exécuté sur un hôte Windows qui l’a
+déjà installé. Aucune cmdlet dédiée n’existe pour cette opération (le
+module `UpdateServices` n’en propose aucune - confirmé en listant
+l’intégralité de ses cmdlets) : ce projet appelle directement la méthode
+`IUpdateServer.CreateComputerTargetGroup` de l’API d’administration WSUS
+sous-jacente. Validation du nom (caractères interdits, longueur, groupes
+système réservés). Le mode `audit` ne s’appuie sur aucun `-WhatIf`
+natif puisqu’il s’agit d’un appel API brut, pas d’une cmdlet - il se
+contente de ne pas appeler la méthode - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-wsus-computer-group-create/README.md`](ansible-wsus-computer-group-create/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -352,6 +368,7 @@ Documentation : [`ansible-sccm-device-collection-remove/README.md`](ansible-sccm
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
 | `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
 | `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
+| `ansible-wsus-computer-group-create` | — | — | — | WinRM | Création de groupe |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

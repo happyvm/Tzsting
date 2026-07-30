@@ -1,0 +1,6 @@
+# Copy to hosts.yml. The console host is added dynamically via add_host
+# from group_vars, so only localhost is needed statically.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

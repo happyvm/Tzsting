@@ -1,0 +1,44 @@
+---
+- name: Validate the console host connection settings
+  ansible.builtin.assert:
+    that:
+      - wsus_console_host | length > 0
+      - wsus_conn_winrm_username | length > 0
+      - wsus_conn_winrm_password | length > 0
+    fail_msg: "wsus_console_host, wsus_conn_winrm_username and wsus_conn_winrm_password are all mandatory."
+
+- name: Validate the WSUS server settings
+  ansible.builtin.assert:
+    that:
+      - wsus_server_name | length > 0
+      - wsus_port_number | int > 0
+    fail_msg: "wsus_server_name and wsus_port_number are both mandatory."
+
+- name: Validate the operation
+  ansible.builtin.assert:
+    that:
+      - wsus_gc_operation in ['create', 'audit']
+    fail_msg: "wsus_gc_operation must be create or audit."
+
+- name: Validate the group name
+  ansible.builtin.assert:
+    that:
+      - wsus_gc_group_name | length > 0
+      - wsus_gc_group_name | length < 256
+      - wsus_gc_group_name is match('^[^~!@#\$\^&\*\(\)=\+\[\]\\\\{}|;:\x27"<>/]+$')
+      - wsus_gc_group_name not in wsus_gc_reserved_names
+    fail_msg: >-
+      wsus_gc_group_name is mandatory, must be under 256 characters,
+      must not contain any of ~!@#$^&*()=+[]\{}|;:'"<>/, and must not be
+      one of the reserved WSUS system groups
+      ({{ wsus_gc_reserved_names | join(', ') }}).
+
+- name: Validate the optional parent group name
+  ansible.builtin.assert:
+    that:
+      - wsus_gc_parent_group_name | length < 256
+      - wsus_gc_parent_group_name is match('^[^~!@#\$\^&\*\(\)=\+\[\]\\\\{}|;:\x27"<>/]*$')
+    fail_msg: >-
+      wsus_gc_parent_group_name, when set, must be under 256 characters
+      and must not contain any of ~!@#$^&*()=+[]\{}|;:'"<>/.
+  when: wsus_gc_parent_group_name | length > 0

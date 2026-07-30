@@ -26,19 +26,27 @@ respectivement partiel et à faire.
 
 🟡 **`ansible-sccm-device-collection-add`** (Lot 2, étape 7) et
 **`ansible-sccm-device-collection-remove`** (étape 8) implémentés via le
-vrai module PowerShell `ConfigurationManager` (celui livré avec la
-console SCCM), exécuté sur un hôte Windows qui l'a déjà installé :
-résolution exacte du device et de la collection, ajout/suppression d'une
-direct membership rule idempotents, mise à jour facultative de la
-collection. Pour les deux, le mode `audit` s'appuie sur le support natif
-`-WhatIf` des cmdlets, pas sur le check mode Ansible, puisque chaque
-projet utilise un unique script PowerShell personnalisé (voir leurs
-README). Les avertissements sur les règles query/include/exclude sont
-publiés plutôt que bloquants, car les cmdlets utilisés pour ce contrôle
-suivent une convention de nommage cohérente avec les cmdlets confirmés
-mais n'ont pas été vérifiés individuellement. `ansible-sccm-conf` (étape
-5) et `ansible-sccm-client-deploy` (étape 6) restent à faire ; tout WSUS
-(Lot 3) reste à faire.
+vrai module PowerShell `ConfigurationManager`, exécuté sur un hôte
+Windows qui l'a déjà installé - voir leurs README pour le détail.
+`ansible-sccm-conf` (étape 5) et `ansible-sccm-client-deploy` (étape 6)
+restent à faire.
+
+🟡 **`ansible-wsus-computer-group-create`** (Lot 3, étape 10) implémenté
+via le vrai module PowerShell `UpdateServices`. Aucune cmdlet dédiée
+n'existe pour la création de groupe (`New-WsusComputerTargetGroup`
+n'existe pas dans le module - confirmé en listant l'intégralité de ses
+cmdlets) : ce projet appelle directement la méthode
+`IUpdateServer.CreateComputerTargetGroup` de l'API d'administration WSUS
+sous-jacente, documentée par Microsoft. Validation du nom (caractères
+interdits, longueur, groupes système réservés) et création idempotente.
+Le mode `audit` ne s'appuie sur aucun `-WhatIf` natif (c'est un appel
+API brut, pas une cmdlet) : il se contente de ne pas appeler la méthode.
+`ansible-wsus-computer-group-add` (étape 11) reste à faire ;
+`ansible-wsus-computer-group-remove` (étape 12) est délibérément différé
+- il nécessiterait de faire le pont entre l'objet `WsusComputer` des
+cmdlets et le type brut `IComputerTarget` attendu par
+`RemoveComputerTarget`, pas corroboré avec assez de confiance pour
+l'instant.
 
 ## Principes communs
 
@@ -186,6 +194,13 @@ groupe de diffusion :
 - aucun accès direct à SUSDB.
 
 Artefact AAP : `wsus_computer_group_create_summary`.
+
+🟡 Implémenté dans [`ansible-wsus-computer-group-create`](../ansible-wsus-computer-group-create) :
+validation du nom (caractères interdits, longueur, groupes réservés),
+création idempotente via `IUpdateServer.CreateComputerTargetGroup`
+(aucune cmdlet dédiée n'existe pour cette opération). Non couvert :
+association à une définition de ring (laissée à l'exploitant via le nom
+du groupe lui-même).
 
 ### `ansible-wsus-computer-group-add`
 
