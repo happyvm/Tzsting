@@ -1,0 +1,37 @@
+---
+# Publishes the host's current state and the target hostgroup's own
+# definition before any change is applied, so an operator can review what
+# the host would inherit. This is a partial implementation of
+# SATELLITE-ROADMAP.md's "publication préalable de l'impact hérité" -
+# it shows the current host and target hostgroup, not a computed diff of
+# every inherited parameter (host_info/hostgroup_info return a generic,
+# undocumented dict shape) - see README.
+- name: Look up the host's current state
+  theforeman.foreman.host_info:
+    server_url: "{{ satellite_url }}"
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    name: "{{ satellite_host_name }}"
+    organization: "{{ satellite_organization | default(omit, true) }}"
+  register: satellite_hostgroup_add_host_info
+  no_log: true
+
+- name: Look up the target hostgroup's own definition
+  theforeman.foreman.hostgroup_info:
+    server_url: "{{ satellite_url }}"
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    name: "{{ satellite_hostgroup }}"
+    organization: "{{ satellite_organization | default(omit, true) }}"
+  register: satellite_hostgroup_add_hostgroup_info
+  no_log: true
+
+- name: Report the current host state
+  ansible.builtin.debug:
+    var: satellite_hostgroup_add_host_info.host
+
+- name: Report the target hostgroup's definition
+  ansible.builtin.debug:
+    var: satellite_hostgroup_add_hostgroup_info.hostgroup

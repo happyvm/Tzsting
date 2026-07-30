@@ -1,0 +1,11 @@
+---
+profile: basic
+
+skip_list:
+  # satellite_ak_result (set in roles/activation_key) is read back by the
+  # playbook's set_stats task, so this project deliberately uses a
+  # project-wide `satellite_ak_` prefix instead of a per-role one.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml
