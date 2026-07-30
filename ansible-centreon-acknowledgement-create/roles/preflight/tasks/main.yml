@@ -1,0 +1,58 @@
+---
+- name: Validate Centreon connection settings
+  ansible.builtin.assert:
+    that:
+      - centreon_url | length > 0
+      - centreon_username | length > 0
+      - centreon_password | length > 0
+      - centreon_api_version | length > 0
+    fail_msg: "centreon_url, centreon_username, centreon_password and centreon_api_version are all mandatory."
+
+- name: Validate the acknowledgement endpoint has been supplied by the operator
+  ansible.builtin.assert:
+    that:
+      - centreon_ack_endpoint | length > 0
+      - centreon_ack_endpoint is match('^/')
+      - centreon_ack_method in ['POST', 'PUT']
+    fail_msg: >-
+      centreon_ack_endpoint is deliberately left blank in group_vars -
+      confirm the real acknowledgement resource path against your
+      Centreon server's own live API reference
+      (https://<server>/centreon/api/<version>/doc) and set it (starting
+      with a leading /) before running this project. See README.md for
+      why this differs from the login flow, which IS hardcoded in
+      roles/auth.
+
+- name: Validate the acknowledgement target
+  ansible.builtin.assert:
+    that:
+      - centreon_ack_target_type in ['host', 'service']
+      - centreon_host_id is not none
+      - centreon_host_id | int > 0
+      - centreon_ack_target_type == 'host' or (centreon_service_id is not none and centreon_service_id | int > 0)
+    fail_msg: >-
+      centreon_ack_target_type must be host or service; centreon_host_id
+      is always required, and centreon_service_id is additionally
+      required when targeting a service. Host/service name resolution is
+      not implemented in this project - supply the numeric Centreon IDs
+      directly (see README.md).
+
+- name: Validate mandatory acknowledgement metadata
+  ansible.builtin.assert:
+    that:
+      - centreon_ack_comment | length > 0
+      - centreon_ack_author | length > 0
+      - centreon_ack_ticket_reference | length > 0
+    fail_msg: >-
+      centreon_ack_comment, centreon_ack_author and
+      centreon_ack_ticket_reference are all mandatory -
+      CENTREON-ROADMAP.md requires an incident/change ticket reference
+      for every acknowledgement.
+
+- name: Validate the acknowledgement flags are boolean-castable
+  ansible.builtin.assert:
+    that:
+      - centreon_ack_sticky | bool in [true, false]
+      - centreon_ack_notify | bool in [true, false]
+      - centreon_ack_persistent | bool in [true, false]
+    fail_msg: "centreon_ack_sticky, centreon_ack_notify and centreon_ack_persistent must be booleans."

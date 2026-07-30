@@ -1,0 +1,28 @@
+# Creates a runtime acknowledgement on a Centreon host or service via the
+# Centreon REST API. Does not resolve host/service names to IDs, does not
+# check whether the target is currently in a state that warrants an
+# acknowledgement, does not detect an already-present equivalent
+# acknowledgement, and does not touch Centreon's exported monitoring
+# configuration - see README and CENTREON-ROADMAP.md for the full
+# catalogue this is one piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/create_acknowledgement.yml --vault-password-file .vault_pass
+
+- name: Create a Centreon acknowledgement
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Log in to the Centreon API
+      ansible.builtin.include_role:
+        name: auth
+
+    - name: Create the acknowledgement
+      ansible.builtin.include_role:
+        name: acknowledgement

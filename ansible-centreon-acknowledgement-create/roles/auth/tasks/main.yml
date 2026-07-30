@@ -1,0 +1,20 @@
+---
+- name: Log in to the Centreon API
+  ansible.builtin.uri:
+    url: "{{ centreon_url }}/centreon/api/{{ centreon_api_version }}/login"
+    method: POST
+    body_format: json
+    body:
+      security:
+        credentials:
+          login: "{{ centreon_username }}"
+          password: "{{ centreon_password }}"
+    validate_certs: "{{ centreon_validate_certs }}"
+    status_code: [200]
+  register: centreon_ack_auth_result
+  no_log: true
+
+- name: Store the API token for the rest of this play
+  ansible.builtin.set_fact:
+    centreon_ack_token: "{{ centreon_ack_auth_result.json.security.token }}"
+  no_log: true
