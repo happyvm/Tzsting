@@ -1,0 +1,6 @@
+---
+# Copy to hosts.yml. Satellite is managed via its API from localhost.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

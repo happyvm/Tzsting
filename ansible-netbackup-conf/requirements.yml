@@ -1,6 +1,13 @@
 ---
-collections: []
+collections:
+  - name: community.general
+    version: ">=6.0.0"
+
 # No maintained Ansible collection wraps the Veritas NetBackup REST API -
 # configuration here uses ansible.builtin.uri directly. See roles/auth and
 # the README for the (real, version-pinned) JWT login flow this project
-# authenticates with.
+# authenticates with. community.general is only used for
+# community.general.timezone (roles/timezone) - NTP (roles/ntp) and the
+# local account (roles/local_admin) use ansible.builtin modules directly,
+# since no dedicated collection module manages a declarative chrony NTP
+# server list.

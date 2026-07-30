@@ -1,0 +1,7 @@
+---
+# Copy to hosts.yml. The target Windows Server is managed via WinRM from
+# localhost.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

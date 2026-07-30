@@ -38,8 +38,16 @@
 
 - name: Resolve platform matches
   ansible.builtin.set_fact:
-    inplace_upgrade_found_vmware: "{{ inplace_upgrade_vmware_search is defined and inplace_upgrade_vmware_search is succeeded and not (inplace_upgrade_vmware_search.skipped | default(false)) and inplace_upgrade_vmware_search.instance is defined }}"
-    inplace_upgrade_hyperv_matches: "{{ inplace_upgrade_hyperv_search.results | default([]) | selectattr('stdout', 'defined') | selectattr('stdout', 'search', '^FOUND') | map(attribute='item') | list }}"
+    inplace_upgrade_found_vmware: >-
+      {{ inplace_upgrade_vmware_search is defined and
+      inplace_upgrade_vmware_search is succeeded and
+      not (inplace_upgrade_vmware_search.skipped | default(false)) and
+      inplace_upgrade_vmware_search.instance is defined }}
+    inplace_upgrade_hyperv_matches: >-
+      {{ inplace_upgrade_hyperv_search.results | default([]) |
+      selectattr('stdout', 'defined') |
+      selectattr('stdout', 'search', '^FOUND') |
+      map(attribute='item') | list }}
 
 - name: Require exactly one platform match
   ansible.builtin.assert:

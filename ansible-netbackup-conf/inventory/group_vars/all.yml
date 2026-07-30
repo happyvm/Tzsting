@@ -1,5 +1,7 @@
 ---
 # Secrets must be provided through Ansible Vault or an AAP credential.
+# These are the NetBackup *application* credentials for the REST API,
+# distinct from the Linux OS credentials below.
 netbackup_conf_hostname: nbmaster01.example.local
 netbackup_conf_port: 1556
 netbackup_conf_username: "{{ vault_netbackup_conf_username }}"
@@ -8,6 +10,37 @@ netbackup_conf_password: "{{ vault_netbackup_conf_password }}"
 netbackup_conf_domain_name: ""
 netbackup_conf_domain_type: ""
 netbackup_conf_validate_certs: true
+
+# SSH connection to the primary server's own OS - distinct from the REST
+# API connection above. This project's host-level scope assumes a
+# standard RHEL-family Linux primary server; NetBackup Appliances remain
+# out of scope (see VEEAM-NETBACKUP-ROADMAP.md) and AD/LDAP integration
+# for the NetBackup application itself is not yet covered - see README.
+# Provide either netbackup_conf_ssh_password or
+# netbackup_conf_ssh_private_key_file, not necessarily both.
+netbackup_conf_ssh_hostname: "{{ netbackup_conf_hostname }}"
+netbackup_conf_ssh_username: "{{ vault_netbackup_conf_ssh_username }}"
+netbackup_conf_ssh_password: "{{ vault_netbackup_conf_ssh_password | default('') }}"
+netbackup_conf_ssh_private_key_file: "{{ vault_netbackup_conf_ssh_private_key_file | default('') }}"
+netbackup_conf_ssh_port: 22
+netbackup_conf_become: true
+netbackup_conf_become_password: "{{ vault_netbackup_conf_become_password | default('') }}"
+netbackup_conf_python_interpreter: auto
+
+# ansible.builtin.user's password parameter requires a pre-hashed value on
+# Linux - see roles/local_admin and the README for the password_hash/
+# passlib requirement on the control node.
+netbackup_conf_local_admin:
+  name: svc-ansible
+  password: "{{ vault_netbackup_conf_local_admin_password }}"
+  groups: []
+
+netbackup_conf_ntp_servers:
+  - ntp01.example.local
+  - ntp02.example.local
+
+# IANA timezone name (Linux) - NOT a Windows timezone ID.
+netbackup_conf_timezone: Europe/Paris
 
 # NetBackup's REST API requires a versioned custom media type on every
 # request (e.g. "application/vnd.netbackup+json;version=10.0") - this

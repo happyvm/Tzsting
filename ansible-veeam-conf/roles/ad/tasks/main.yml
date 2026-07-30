@@ -1,0 +1,45 @@
+---
+# Joins the VBR server's Windows host to Active Directory. Deliberately
+# never reboots the host itself (-Restart is not used): a domain join only
+# takes full effect after a restart, and restarting the box running Veeam
+# Backup & Replication interrupts every job scheduled on it - that restart
+# is a separate, deliberately-scheduled maintenance action outside this
+# role's scope. The join is idempotent: already being a member of the
+# requested domain is left alone.
+- name: Join the VBR server to Active Directory
+  delegate_to: veeam_conf_target
+  no_log: true
+  ansible.windows.win_shell:
+    cmd: |
+      $ErrorActionPreference = "Stop"
+      $cs = Get-CimInstance Win32_ComputerSystem
+      if ($cs.PartOfDomain -and $cs.Domain -eq '{{ veeam_conf_ad.domain }}') {
+          [PSCustomObject]@{ Joined = $false; AlreadyMember = $true } | ConvertTo-Json -Compress
+      } else {
+          $securePassword = ConvertTo-SecureString -String @'
+      {{ veeam_conf_ad.password }}
+      '@ -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential('{{ veeam_conf_ad.username }}', $securePassword)
+          $params = @{
+              DomainName = '{{ veeam_conf_ad.domain }}'
+              Credential = $cred
+              Restart    = $false
+              Force      = $true
+          }
+          {% if veeam_conf_ad.ou | default('') | length > 0 %}
+          $params['OUPath'] = '{{ veeam_conf_ad.ou }}'
+          {% endif %}
+          Add-Computer @params | Out-Null
+          [PSCustomObject]@{ Joined = $true; AlreadyMember = $false } | ConvertTo-Json -Compress
+      }
+  register: ad_result
+  changed_when: (ad_result.stdout | trim | from_json).Joined
+
+- name: Report the domain join
+  vars:
+    ad_parsed: "{{ ad_result.stdout | trim | from_json }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ veeam_conf_winrm_hostname }}
+      {{ 'was already a member of ' + veeam_conf_ad.domain if ad_parsed.AlreadyMember
+         else 'joined ' + veeam_conf_ad.domain + ' - a restart is required to complete the join, schedule it separately.' }}

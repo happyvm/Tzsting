@@ -1,0 +1,45 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+satellite_url: https://satellite.example.net
+satellite_username: "{{ vault_satellite_username }}"
+# A Foreman/Katello personal access token also works here, used as the
+# password with the same username - a genuine, documented Foreman
+# authentication mechanism, not specific to this project.
+satellite_password: "{{ vault_satellite_password }}"
+satellite_validate_certs: true
+
+satellite_organization: Production
+
+# manage | audit. audit forces Ansible check mode on the activation_key
+# task regardless of how the playbook was invoked, so a dry-run reports
+# what would change without touching Satellite.
+satellite_ak_operation: manage
+
+satellite_ak_name: ak-rhel9-production
+satellite_ak_description: "RHEL 9 production activation key"
+# present | present_with_defaults | absent. present_with_defaults only
+# ensures the key exists without updating an already-present one -
+# see the module's own documentation before relying on it for updates.
+satellite_ak_state: present
+
+# Exactly one of these two groups must be set - they are mutually
+# exclusive per theforeman.foreman.activation_key's own documentation.
+# Leave content_view_environments empty to use the single
+# lifecycle_environment/content_view pair below (the common case).
+satellite_ak_lifecycle_environment: Production
+satellite_ak_content_view: CV-RHEL9
+satellite_ak_content_view_environments: []
+
+satellite_ak_host_collections: []
+satellite_ak_content_overrides: []
+# - label: rhel-9-for-x86_64-appstream-rpms
+#   override: enabled
+
+satellite_ak_unlimited_hosts: true
+satellite_ak_max_hosts: null
+
+satellite_ak_release_version: ""
+satellite_ak_service_level: ""
+satellite_ak_purpose_role: ""
+satellite_ak_purpose_usage: ""
+satellite_ak_purpose_addons: []

@@ -108,3 +108,16 @@ jobs:
             throw "PSScriptAnalyzer found $($issues.Count) issue(s) in ansible-deletevm's embedded PowerShell."
           }
 
+      - name: Extract embedded PowerShell from ansible-inplace-upgrade
+        run: python3 ansible-inplace-upgrade/scripts/extract_embedded_scripts.py powershell
+
+      - name: Run PSScriptAnalyzer on ansible-inplace-upgrade's embedded PowerShell
+        shell: pwsh
+        run: |
+          $issues = Invoke-ScriptAnalyzer -Path ansible-inplace-upgrade/.extracted/powershell -Recurse -Severity Error, Warning `
+            -Settings ansible-inplace-upgrade/scripts/PSScriptAnalyzerSettings.psd1
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found $($issues.Count) issue(s) in ansible-inplace-upgrade's embedded PowerShell."
+          }
+

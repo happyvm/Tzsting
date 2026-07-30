@@ -1,10 +1,46 @@
 ---
 # Secrets must be provided through Ansible Vault or an AAP credential.
+# These are the Veeam *application* credentials for the REST API, distinct
+# from the Windows OS credentials below.
 veeam_conf_hostname: vbr01.example.local
 veeam_conf_port: 9419
 veeam_conf_username: "{{ vault_veeam_conf_username }}"
 veeam_conf_password: "{{ vault_veeam_conf_password }}"
 veeam_conf_validate_certs: true
+
+# WinRM connection to the Windows host running VBR itself - distinct from
+# the REST API connection above. The application account and the Windows
+# local/domain admin account are typically different credentials, even
+# though they usually target the same box.
+veeam_conf_winrm_hostname: "{{ veeam_conf_hostname }}"
+veeam_conf_winrm_username: "{{ vault_veeam_conf_winrm_username }}"
+veeam_conf_winrm_password: "{{ vault_veeam_conf_winrm_password }}"
+veeam_conf_winrm_port: 5986
+veeam_conf_winrm_transport: ntlm
+veeam_conf_winrm_validate_certs: true
+
+# Disabled by default - joining the VBR server to the wrong domain, or with
+# a stale/incorrect payload, is not something to run unattended without
+# review.
+veeam_conf_ad_enabled: false
+veeam_conf_ad:
+  domain: example.local
+  username: "{{ vault_veeam_conf_ad_username }}"
+  password: "{{ vault_veeam_conf_ad_password }}"
+  ou: "OU=Backup,OU=Servers,DC=example,DC=local"
+
+veeam_conf_local_admin:
+  name: svc-ansible
+  password: "{{ vault_veeam_conf_local_admin_password }}"
+
+veeam_conf_ntp_servers:
+  - ntp01.example.local
+  - ntp02.example.local
+
+# Windows time zone ID, NOT an IANA name (e.g. "Romance Standard Time" is
+# the Windows ID for the same zone as IANA's Europe/Paris) - see `tzutil
+# /l` on any Windows host for the full list of valid values.
+veeam_conf_timezone: "Romance Standard Time"
 
 # Every VBR REST API request must carry this header, and its value
 # changes across VBR releases (e.g. "1.3-rev1" for VBR 13's API 1.3

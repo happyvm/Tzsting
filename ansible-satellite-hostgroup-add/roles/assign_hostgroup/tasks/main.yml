@@ -1,0 +1,19 @@
+---
+# check_mode forces a dry-run for this task alone when
+# satellite_hostgroup_add_operation is "audit", regardless of how the
+# playbook itself was invoked - real Ansible behavior, not a custom audit
+# mechanism.
+- name: Assign the host to the target hostgroup
+  check_mode: "{{ satellite_hostgroup_add_operation == 'audit' }}"
+  theforeman.foreman.host:
+    server_url: "{{ satellite_url }}"
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    name: "{{ satellite_host_name }}"
+    hostgroup: "{{ satellite_hostgroup }}"
+    organization: "{{ satellite_organization | default(omit, true) }}"
+    location: "{{ satellite_location | default(omit, true) }}"
+    state: present
+  register: satellite_hostgroup_add_result
+  no_log: true

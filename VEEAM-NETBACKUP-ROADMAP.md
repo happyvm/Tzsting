@@ -40,6 +40,13 @@ Configuration déclarative de Veeam Backup & Replication et de son hôte Windows
 lorsque nécessaire : comptes locaux, AD/RBAC, NTP, timezone, DNS, certificats,
 TLS, SMTP, syslog, audit et tests de connexion.
 
+**Statut** : implémenté - compte local, jonction AD (optionnelle), NTP et
+timezone de l'hôte Windows via WinRM ; authentification OAuth 2.0 réelle et
+notifications email/SNMP de VBR via son API REST. Restent à faire : DNS,
+certificats/TLS, RBAC applicatif VBR (distinct de la jonction AD de l'hôte),
+audit de conformité et test de connexion dédié. Voir
+[`ansible-veeam-conf/README.md`](ansible-veeam-conf/README.md).
+
 Artefact AAP : `veeam_conf_summary`.
 
 #### `ansible-netbackup-conf`
@@ -49,6 +56,12 @@ comptes locaux, AD/LDAP, NTP, timezone, DNS, certificats, autorité NetBackup,
 API, SMTP, syslog, media servers et audit de conformité.
 
 Le playbook refuse toute cible identifiée comme NetBackup Appliance.
+
+**Statut** : implémenté - compte local, NTP et timezone du primary server
+Linux via SSH ; authentification JWT réelle et notifications SMTP/SNMP via
+l'API REST NetBackup. Restent à faire : AD/LDAP applicatif, DNS,
+certificats, autorité NetBackup, media servers et audit de conformité. Voir
+[`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
 Artefact AAP : `netbackup_conf_summary`.
 
@@ -390,9 +403,14 @@ Ansible Vault ou un gestionnaire de secrets externe.
 
 ### Lot 1 — Configuration et découverte
 
-1. `ansible-veeam-conf` ;
-2. `ansible-netbackup-conf` ;
-3. rôles de découverte et authentification.
+1. `ansible-veeam-conf` - **fait** (hôte Windows + notifications VBR), reste
+   AD/RBAC applicatif, DNS, certificats/TLS, audit ;
+2. `ansible-netbackup-conf` - **fait** (hôte Linux + notifications
+   NetBackup), reste AD/LDAP applicatif, DNS, certificats, autorité
+   NetBackup, media servers, audit ;
+3. rôles de découverte et authentification - authentification OAuth2/JWT
+   réelle **faite** dans les deux projets (`roles/auth`) ; la découverte de
+   version/capacités reste à faire.
 
 ### Lot 2 — Déploiement des clients et agents
 

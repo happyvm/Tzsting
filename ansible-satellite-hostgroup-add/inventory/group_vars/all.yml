@@ -1,0 +1,19 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+satellite_url: https://satellite.example.net
+satellite_username: "{{ vault_satellite_username }}"
+satellite_password: "{{ vault_satellite_password }}"
+satellite_validate_certs: true
+
+satellite_organization: Production
+satellite_location: ""
+
+# The exact host to assign and the target hostgroup's title (a child
+# hostgroup "bar" within parent "foo" has title "foo/bar").
+satellite_host_name: srv-rhel-01.example.net
+satellite_hostgroup: "RHEL9/Production"
+
+# manage | audit. audit forces Ansible check mode on the host-update task
+# regardless of how the playbook was invoked, so a dry-run reports what
+# would change without touching Satellite.
+satellite_hostgroup_add_operation: manage
