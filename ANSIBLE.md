@@ -271,6 +271,48 @@ volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
+### `ansible-sql-server-install`
+
+Installation, audit ou réparation d’une instance **Microsoft SQL Server**
+standalone sur Windows Server, via le mécanisme natif `setup.exe
+/ConfigurationFile` (aucun secret persisté dans le fichier - mots de
+passe et PID passés en switches de ligne de commande séparés), sur WinRM.
+Comptes de service (virtuels/gMSA/domaine), comptes sysadmin, collation,
+répertoires data/log/backup/TempDB, port TCP statique (positionné après
+coup via registre), pare-feu scopé aux sources déclarées, CU approuvé en
+option. Ne couvre ni les Failover Cluster Instances/Always On, ni la
+création/restauration de bases - voir
+[`SQL-SERVER-ROADMAP.md`](SQL-SERVER-ROADMAP.md) pour le périmètre cible
+complet et [`ansible-sql-server-install/README.md`](ansible-sql-server-install/README.md)
+pour ce qui est implémenté.
+
+Documentation : [`ansible-sql-server-install/README.md`](ansible-sql-server-install/README.md).
+
+### `ansible-satellite-activation-key-manage`
+
+Création, mise à jour ou suppression déclarative d’une activation key
+**Red Hat Satellite**, via le vrai module `theforeman.foreman.activation_key`
+(collection open source amont, `redhat.satellite` n’étant distribuée que
+via Automation Hub). Mode `audit` (dry-run natif Ansible via `check_mode`).
+Ne couvre ni l’enregistrement d’hôtes, ni les content views/lifecycle
+environments eux-mêmes - voir
+[`SATELLITE-ROADMAP.md`](SATELLITE-ROADMAP.md) pour le catalogue cible
+complet.
+
+Documentation : [`ansible-satellite-activation-key-manage/README.md`](ansible-satellite-activation-key-manage/README.md).
+
+### `ansible-satellite-hostgroup-add`
+
+Affectation idempotente d’un hôte déjà enregistré à un host group
+Satellite (`theforeman.foreman.host`), avec publication de l’état actuel
+de l’hôte et de la définition du host group cible avant application
+(`host_info`/`hostgroup_info`). Ne calcule pas encore un diff complet de
+chaque paramètre hérité (schéma de retour générique des modules
+d’info) - voir le README pour le détail de cette limitation et le mode
+`audit`.
+
+Documentation : [`ansible-satellite-hostgroup-add/README.md`](ansible-satellite-hostgroup-add/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -300,6 +342,9 @@ Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/READ
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
+| `ansible-sql-server-install` | — | — | — | WinRM | Installation |
+| `ansible-satellite-activation-key-manage` | — | — | — | API | Configuration |
+| `ansible-satellite-hostgroup-add` | — | — | — | API | Configuration |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

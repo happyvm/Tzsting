@@ -1,0 +1,29 @@
+---
+# check_mode forces a dry-run for this task alone when
+# satellite_ak_operation is "audit", regardless of how the playbook itself
+# was invoked - real Ansible behavior, not a custom audit mechanism.
+- name: Manage the Satellite activation key
+  check_mode: "{{ satellite_ak_operation == 'audit' }}"
+  theforeman.foreman.activation_key:
+    server_url: "{{ satellite_url }}"
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    organization: "{{ satellite_organization }}"
+    name: "{{ satellite_ak_name }}"
+    description: "{{ satellite_ak_description | default(omit, true) }}"
+    state: "{{ satellite_ak_state }}"
+    lifecycle_environment: "{{ satellite_ak_lifecycle_environment | default(omit, true) }}"
+    content_view: "{{ satellite_ak_content_view | default(omit, true) }}"
+    content_view_environments: "{{ satellite_ak_content_view_environments if satellite_ak_content_view_environments | length > 0 else omit }}"
+    host_collections: "{{ satellite_ak_host_collections if satellite_ak_host_collections | length > 0 else omit }}"
+    content_overrides: "{{ satellite_ak_content_overrides if satellite_ak_content_overrides | length > 0 else omit }}"
+    unlimited_hosts: "{{ satellite_ak_unlimited_hosts | bool }}"
+    max_hosts: "{{ satellite_ak_max_hosts if satellite_ak_max_hosts is not none else omit }}"
+    release_version: "{{ satellite_ak_release_version | default(omit, true) }}"
+    service_level: "{{ satellite_ak_service_level | default(omit, true) }}"
+    purpose_role: "{{ satellite_ak_purpose_role | default(omit, true) }}"
+    purpose_usage: "{{ satellite_ak_purpose_usage | default(omit, true) }}"
+    purpose_addons: "{{ satellite_ak_purpose_addons if satellite_ak_purpose_addons | length > 0 else omit }}"
+  register: satellite_ak_result
+  no_log: true

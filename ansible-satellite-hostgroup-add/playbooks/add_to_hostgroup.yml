@@ -1,0 +1,38 @@
+---
+# Assigns an existing Satellite host to a hostgroup, via the real
+# theforeman.foreman.host module. Publishes the host's current state and
+# the target hostgroup's own definition before applying, so an operator
+# can review what would be inherited - see README for what this does and
+# does not compute. Does not register/unregister hosts, create hostgroups,
+# or trigger any inherited Ansible roles/Puppet classes/jobs.
+#
+# Usage:
+#   ansible-playbook playbooks/add_to_hostgroup.yml --vault-password-file .vault_pass
+
+- name: Assign a Satellite host to a hostgroup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Publish the current host and target hostgroup state
+      ansible.builtin.include_role:
+        name: inspect_hostgroup
+
+    - name: Assign the hostgroup
+      ansible.builtin.include_role:
+        name: assign_hostgroup
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          satellite_hostgroup_add_summary:
+            host: "{{ satellite_host_name }}"
+            hostgroup: "{{ satellite_hostgroup }}"
+            operation: "{{ satellite_hostgroup_add_operation }}"
+            changed: "{{ satellite_hostgroup_add_result.changed | default(false) }}"
+        aggregate: false
