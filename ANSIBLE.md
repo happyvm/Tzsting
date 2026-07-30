@@ -293,6 +293,21 @@ réellement simulée - voir
 
 Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-agent-deploy/README.md).
 
+### `ansible-sccm-device-collection-add`
+
+Ajout idempotent d’une machine dans une device collection **Microsoft
+Configuration Manager (SCCM)**, via le vrai module PowerShell
+`ConfigurationManager` exécuté sur un hôte Windows qui l’a déjà
+installé. Résolution exacte du device et de la collection, ajout d’une
+direct membership rule uniquement (jamais query/include/exclude), mise à
+jour facultative de la collection. Le mode `audit` s’appuie sur le
+support natif `-WhatIf` des cmdlets plutôt que sur le check mode Ansible,
+puisqu’un unique script PowerShell personnalisé gère toute la logique
+dans une même session/PSDrive - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-sccm-device-collection-add/README.md`](ansible-sccm-device-collection-add/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -323,6 +338,7 @@ Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-a
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
+| `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de
