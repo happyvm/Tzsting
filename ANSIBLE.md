@@ -714,6 +714,29 @@ Un snapshot/checkpoint :
 - doit être supprimé ou consolidé après la période de validation selon une
   procédure séparée et auditée.
 
+Depuis l'écart 4.16, cette distinction est **appliquée**, pas seulement
+documentée : `ansible-deletevm` et `ansible-inplace-upgrade` incluent un rôle
+`preflight_backup` qui interroge Veeam VBR ou NetBackup en lecture seule avant
+l'étape irréversible et refuse de continuer sans point de restauration réussi
+et récent pour la VM.
+
+- activé par défaut, il **échoue fermé** : une configuration absente bloque,
+  au lieu d'être interprétée comme « cette VM n'a pas besoin de sauvegarde » ;
+- un job en échec, un point appartenant à une autre VM ou un dernier point
+  hors délai (`*_backup_max_age_hours`, 24 h par défaut) sont refusés ;
+- l'âge est mesuré sur le dernier point **réussi**, de sorte qu'un job échoué
+  plus récent ne masque pas une sauvegarde vieille de trois jours ;
+- la dérogation `*_backup_allow_missing=true` reste possible mais est
+  délibérée et tracée dans l'artefact (`waived` / `stale-waived`, jamais
+  `verified`) ;
+- comme pour les projets d'appliance, le contrat API est résolu depuis la
+  release du serveur de sauvegarde (`*_backup_release`) contre
+  `*_backup_api_contracts`.
+
+Un snapshot de rollback reste utile — `inplace-upgrade` en prend un — mais il
+couvre un échec d'upgrade, pas la perte de la banque de données qui l'héberge.
+Les deux contrôles sont complémentaires et tous les deux exécutés.
+
 ### Concurrence
 
 Les locks évitent surtout deux exécutions simultanées du **même projet**. AAP

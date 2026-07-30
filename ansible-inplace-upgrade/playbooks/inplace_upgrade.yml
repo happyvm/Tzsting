@@ -28,6 +28,14 @@
           ansible.builtin.include_role:
             name: preflight_upgrade_constraints
 
+        - name: Refuse to upgrade without a valid, recent backup
+          # The rollback snapshot taken just below covers a failed upgrade;
+          # it does not cover losing the datastore holding it. A snapshot is
+          # not a backup, so a real one has to exist before the OS is
+          # rewritten in place.
+          ansible.builtin.include_role:
+            name: preflight_backup
+
         - name: Refuse a quiesced snapshot without VMware Tools actually running
           # WinRM/SSH reachability (confirmed by prepare_guest) doesn't
           # guarantee VMware Tools is running inside the guest - quiescing
@@ -100,6 +108,8 @@
                 source_major_version: "{{ inplace_upgrade_source_major }}"
                 target_major_version: "{{ target_major_version }}"
                 verified: true
+                backup_state: "{{ inplace_upgrade_backup_state }}"
+                backup_detail: "{{ inplace_upgrade_backup_detail }}"
             aggregate: false
       always:
         - name: Release the per-VM upgrade lock

@@ -10,7 +10,11 @@
 # scheduled deletion date) is optional, not a prerequisite this playbook
 # checks for or requires.
 #
-# The one hard, non-negotiable gate is confirm_delete=true.
+# There are two hard gates: confirm_delete=true, and a valid recent backup
+# of the VM (preflight_backup). A snapshot is not a backup, and this is the
+# one playbook where being wrong cannot be undone - so the backup check is
+# on by default and fails closed. See the deletevm_backup_* variables for
+# how to configure it, switch it off, or waive it for one run.
 #
 # Required extra-vars:
 #   vm_name          CI / VM name, as known to vCenter and/or Hyper-V
@@ -59,6 +63,10 @@
           ansible.builtin.include_role:
             name: preflight_delete_constraints
 
+        - name: Refuse to delete without a valid, recent backup
+          ansible.builtin.include_role:
+            name: preflight_backup
+
         - name: Delete on VMware
           ansible.builtin.include_role:
             name: delete_vm_vmware
@@ -87,6 +95,10 @@
                 managed_by_scvmm: "{{ deletevm_managed_by_scvmm }}"
                 action: delete
                 deleted: true
+                backup_state: "{{ deletevm_backup_state }}"
+                backup_detail: "{{ deletevm_backup_detail }}"
+                backup_provider: "{{ deletevm_backup_provider | default('') }}"
+                backup_release: "{{ deletevm_backup_release | default('') }}"
             aggregate: false
       always:
         - name: Release the per-VM lock (runs on success or failure)

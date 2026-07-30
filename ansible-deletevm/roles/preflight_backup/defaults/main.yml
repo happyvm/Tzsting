@@ -1,0 +1,77 @@
+---
+# Left on by default: deleting a VM destroys its disks, and a missing
+# configuration must not read as "this VM needs no backup". Turning it off
+# is a deliberate act, and is recorded in the job artifact.
+deletevm_backup_verification_enabled: true
+
+# veeam | netbackup. No default - the check refuses to guess which product
+# holds the authoritative copy of a VM's data.
+deletevm_backup_provider: ""
+
+# The backup server's release, e.g. 12.1 (VBR) or 10.3 (NetBackup). Only
+# major.minor selects a contract below; the patch level rides along in the
+# artifact.
+deletevm_backup_release: ""
+
+deletevm_backup_hostname: ""
+deletevm_backup_port: 9419
+deletevm_backup_validate_certs: true
+deletevm_backup_username: ""
+deletevm_backup_password: ""
+# NetBackup only, and only when the account is not in the default domain.
+deletevm_backup_domain_name: ""
+deletevm_backup_domain_type: ""
+
+# How old the newest successful backup may be. A VM protected on a daily
+# schedule that has not been backed up for more than a day has lost data
+# that deletion would make unrecoverable.
+deletevm_backup_max_age_hours: 24
+
+# Waives a missing or stale backup for one run. Deliberate, audited, and
+# never a default: the whole point of this role is that it fails closed.
+deletevm_backup_allow_missing: false
+
+# Release-specific API contract, keyed by provider then major.minor branch.
+#
+# The values are deliberately empty. Endpoints, the header values that
+# select an API revision, and the response field names all change between
+# releases of both products - and reading the wrong field is worse than
+# failing, because it can turn "no backup" into an apparent pass. Copy them
+# from the API reference of the exact release you point this at.
+#
+#   api_version_header  Veeam: the x-api-version value (e.g. "1.3-rev1")
+#   media_type          NetBackup: the versioned Accept/Content-Type value
+#   login_endpoint      NetBackup: the JWT login path
+#   restore_points_endpoint  path listing restore points / backup images
+#   name_query_parameter     optional query prefix to filter server-side,
+#                            e.g. "?nameFilter=" - the VM name is appended
+#                            and URL-encoded
+#   results_key         wrapper key holding the list, "" if the response
+#                       is the list itself
+#   name_field          field carrying the protected VM's name
+#   timestamp_field     field carrying the restore point's creation time,
+#                       ISO 8601
+#   status_field        field carrying the outcome
+#   success_values      outcomes that count as a usable backup
+deletevm_backup_api_contracts:
+  veeam:
+    "12.1":
+      api_version_header: ""
+      restore_points_endpoint: ""
+      name_query_parameter: ""
+      results_key: data
+      name_field: name
+      timestamp_field: creationTime
+      status_field: result
+      success_values: [Success, Warning]
+  netbackup:
+    "10.3":
+      media_type: ""
+      login_endpoint: /netbackup/login
+      restore_points_endpoint: ""
+      name_query_parameter: ""
+      results_key: data
+      name_field: clientName
+      timestamp_field: backupTime
+      status_field: status
+      success_values: [0, 1]

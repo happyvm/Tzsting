@@ -34,6 +34,50 @@ rollback. Sur Hyper-V, configurez le `CheckpointType` de la VM selon votre
 politique (Production recommandé). Pour un cluster, inventoriez tous les
 nœuds propriétaires possibles.
 
+
+## Vérification de sauvegarde avant opération
+
+Un snapshot n'est pas une sauvegarde. Avant la réécriture de l'OS en place, le
+rôle `preflight_backup`
+interroge le serveur de sauvegarde **en lecture seule** et refuse de continuer
+sans point de restauration réussi et récent pour la VM. Il ne crée, ne
+déclenche et ne supprime jamais rien.
+
+Le contrôle est **actif par défaut et échoue fermé** : sans configuration, le
+run s'arrête. Une configuration absente ne doit pas se lire comme « cette VM
+n'a pas besoin de sauvegarde ».
+
+```yaml
+inplace_upgrade_backup_provider: veeam        # veeam | netbackup
+inplace_upgrade_backup_release: "12.1.2"      # release du serveur de sauvegarde
+inplace_upgrade_backup_hostname: vbr01.example.local
+inplace_upgrade_backup_port: 9419
+inplace_upgrade_backup_max_age_hours: 24
+```
+
+Le contrat API est résolu depuis la release, comme pour les projets
+d'appliance : `inplace_upgrade_backup_api_contracts` porte, par produit puis
+par branche
+`major.minor`, l'endpoint des points de restauration, l'en-tête de version et
+les **noms des champs** de la réponse (nom de la VM, date, statut, valeurs qui
+comptent comme un succès). Ces valeurs sont livrées vides : elles doivent
+provenir de la référence API de la release visée, car lire le mauvais champ
+transformerait « aucune sauvegarde » en apparent succès.
+
+Ce qui est refusé : aucun point de restauration, uniquement des jobs en échec,
+un point appartenant à une autre VM, ou un dernier point réussi plus ancien
+que `inplace_upgrade_backup_max_age_hours`. L'âge est mesuré sur le dernier
+point
+**réussi**, donc un job échoué plus récent ne masque pas une sauvegarde
+périmée.
+
+Pour déroger, `-e inplace_upgrade_backup_allow_missing=true` sur un run.
+L'artefact AAP
+porte alors `backup_state: waived` ou `stale-waived`, jamais `verified` : la
+décision reste visible après coup. Désactiver complètement le contrôle se fait
+avec `-e inplace_upgrade_backup_verification_enabled=false`, également tracé
+(`backup_state: disabled`).
+
 ## Variables
 
 ### Requises

@@ -186,6 +186,48 @@ confirmed from the same documentation, which is also why this role
 doesn't need its own separate disk-cleanup step the way the native
 Hyper-V path does.
 
+
+## Vérification de sauvegarde avant opération
+
+Un snapshot n'est pas une sauvegarde. Avant la suppression définitive de la VM
+et de ses disques, le rôle `preflight_backup`
+interroge le serveur de sauvegarde **en lecture seule** et refuse de continuer
+sans point de restauration réussi et récent pour la VM. Il ne crée, ne
+déclenche et ne supprime jamais rien.
+
+Le contrôle est **actif par défaut et échoue fermé** : sans configuration, le
+run s'arrête. Une configuration absente ne doit pas se lire comme « cette VM
+n'a pas besoin de sauvegarde ».
+
+```yaml
+deletevm_backup_provider: veeam        # veeam | netbackup
+deletevm_backup_release: "12.1.2"      # release du serveur de sauvegarde
+deletevm_backup_hostname: vbr01.example.local
+deletevm_backup_port: 9419
+deletevm_backup_max_age_hours: 24
+```
+
+Le contrat API est résolu depuis la release, comme pour les projets
+d'appliance : `deletevm_backup_api_contracts` porte, par produit puis par
+branche
+`major.minor`, l'endpoint des points de restauration, l'en-tête de version et
+les **noms des champs** de la réponse (nom de la VM, date, statut, valeurs qui
+comptent comme un succès). Ces valeurs sont livrées vides : elles doivent
+provenir de la référence API de la release visée, car lire le mauvais champ
+transformerait « aucune sauvegarde » en apparent succès.
+
+Ce qui est refusé : aucun point de restauration, uniquement des jobs en échec,
+un point appartenant à une autre VM, ou un dernier point réussi plus ancien
+que `deletevm_backup_max_age_hours`. L'âge est mesuré sur le dernier point
+**réussi**, donc un job échoué plus récent ne masque pas une sauvegarde
+périmée.
+
+Pour déroger, `-e deletevm_backup_allow_missing=true` sur un run. L'artefact AAP
+porte alors `backup_state: waived` ou `stale-waived`, jamais `verified` : la
+décision reste visible après coup. Désactiver complètement le contrôle se fait
+avec `-e deletevm_backup_verification_enabled=false`, également tracé
+(`backup_state: disabled`).
+
 ## Directory layout
 
 ```

@@ -1,0 +1,289 @@
+---
+# Refuses to upgrade a VM in place that has no valid, recent backup.
+#
+# ANSIBLE.md is explicit that a snapshot is not a backup. This project
+# already takes a rollback snapshot/checkpoint before starting, and that
+# covers a failed upgrade - it does not cover the datastore or the
+# appliance holding it. An in-place upgrade rewrites the running OS, so a
+# real backup has to exist before it begins.
+#
+# It is read-only against the backup server: it authenticates, asks for
+# the VM's restore points, and evaluates them. It never creates, deletes
+# or triggers a backup.
+#
+# It fails closed. With inplace_upgrade_backup_verification_enabled left true
+# and nothing configured, the run stops - a missing configuration must
+# not read as "no backup needed". Skipping is possible but has to be
+# deliberate (inplace_upgrade_backup_verification_enabled=false) or explicitly
+# waived per run (inplace_upgrade_backup_allow_missing=true), and both land in
+# the AAP artifact so the decision is auditable.
+#
+# Like the appliance projects, the release-specific parts - endpoint,
+# header value, response field names - come from a contract table keyed
+# by the backup server's release, because they change between releases
+# and guessing them would mean reading the wrong field and concluding
+# "backed up" from a response that says nothing of the sort.
+
+- name: Note that backup verification was skipped by configuration
+  when: not (inplace_upgrade_backup_verification_enabled | bool)
+  ansible.builtin.set_fact:
+    inplace_upgrade_backup_state: disabled
+    inplace_upgrade_backup_detail: >-
+      Backup verification is switched off
+      (inplace_upgrade_backup_verification_enabled=false).
+
+- name: Verify a valid backup exists before deleting
+  when: inplace_upgrade_backup_verification_enabled | bool
+  block:
+
+    - name: Assert the backup provider and release are configured
+      ansible.builtin.assert:
+        that:
+          - inplace_upgrade_backup_provider in ['veeam', 'netbackup']
+          - inplace_upgrade_backup_release | default('') | length > 0
+          - inplace_upgrade_backup_release is regex('^[0-9]+\\.[0-9]+(\\.[0-9A-Za-z.-]+)?$')
+          - inplace_upgrade_backup_hostname | default('') | length > 0
+        fail_msg: >-
+          Backup verification is enabled but not configured:
+          inplace_upgrade_backup_provider must be 'veeam' or 'netbackup',
+          inplace_upgrade_backup_release must be the backup server's release
+          (e.g. 12.1), and inplace_upgrade_backup_hostname must point at it.
+          Configure them, or switch the check off deliberately with
+          -e inplace_upgrade_backup_verification_enabled=false - it is left on by
+          default because upgrading a VM in place is not reversible.
+
+    - name: Derive the contract branch from the backup server release
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_branch: "{{ inplace_upgrade_backup_release.split('.')[0:2] | join('.') }}"
+
+    - name: Assert a contract is declared for this provider and branch
+      ansible.builtin.assert:
+        that:
+          - inplace_upgrade_backup_provider in inplace_upgrade_backup_api_contracts
+          - inplace_upgrade_backup_branch in inplace_upgrade_backup_api_contracts[inplace_upgrade_backup_provider]
+        fail_msg: >-
+          No backup API contract is declared for {{ inplace_upgrade_backup_provider }}
+          branch {{ inplace_upgrade_backup_branch }}. Known branches for this
+          provider:
+          {{ inplace_upgrade_backup_api_contracts[inplace_upgrade_backup_provider] | default({}) | list | sort | join(', ') | default('none', true) }}.
+          Add it to inplace_upgrade_backup_api_contracts with the values from that
+          release's API reference - pointing this at a neighbouring branch
+          risks reading a field that does not mean what it used to.
+
+    - name: Select the contract
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_contract: "{{ inplace_upgrade_backup_api_contracts[inplace_upgrade_backup_provider][inplace_upgrade_backup_branch] }}"
+
+    - name: Assert the contract is complete enough to interpret a response
+      ansible.builtin.assert:
+        that:
+          - inplace_upgrade_backup_contract.restore_points_endpoint | default('') is match('^/[^ ]+$')
+          - inplace_upgrade_backup_contract.timestamp_field | default('') | length > 0
+          - inplace_upgrade_backup_contract.success_values | default([]) | length > 0
+        fail_msg: >-
+          The {{ inplace_upgrade_backup_provider }} {{ inplace_upgrade_backup_branch }}
+          contract is incomplete. It needs restore_points_endpoint (an
+          absolute path), timestamp_field and status_field (the response
+          fields carrying the restore point's date and outcome) and
+          success_values (the outcomes that count as a usable backup).
+          Without them this role cannot tell a successful backup from a
+          failed one.
+
+    # --- authenticate ------------------------------------------------------
+    # Both flows are the ones ansible-veeam-conf and ansible-netbackup-conf
+    # already use against these products: VBR takes an OAuth2 password
+    # grant, NetBackup a JWT login carrying its versioned media type.
+
+    - name: Request a Veeam VBR access token
+      when: inplace_upgrade_backup_provider == 'veeam'
+      ansible.builtin.uri:
+        url: "https://{{ inplace_upgrade_backup_hostname }}:{{ inplace_upgrade_backup_port }}/api/oauth2/token"
+        method: POST
+        headers:
+          x-api-version: "{{ inplace_upgrade_backup_contract.api_version_header }}"
+        body_format: form-urlencoded
+        body:
+          grant_type: password
+          username: "{{ inplace_upgrade_backup_username }}"
+          password: "{{ inplace_upgrade_backup_password }}"
+        validate_certs: "{{ inplace_upgrade_backup_validate_certs }}"
+        status_code: [200]
+      register: inplace_upgrade_backup_veeam_auth
+      no_log: true
+
+    - name: Log in to the NetBackup REST API
+      when: inplace_upgrade_backup_provider == 'netbackup'
+      ansible.builtin.uri:
+        url: "https://{{ inplace_upgrade_backup_hostname }}:{{ inplace_upgrade_backup_port }}{{ inplace_upgrade_backup_contract.login_endpoint }}"
+        method: POST
+        headers:
+          Content-Type: "{{ inplace_upgrade_backup_contract.media_type }}"
+          Accept: "{{ inplace_upgrade_backup_contract.media_type }}"
+        body_format: json
+        body:
+          userName: "{{ inplace_upgrade_backup_username }}"
+          password: "{{ inplace_upgrade_backup_password }}"
+          domainName: "{{ inplace_upgrade_backup_domain_name | default(omit, true) }}"
+          domainType: "{{ inplace_upgrade_backup_domain_type | default(omit, true) }}"
+        validate_certs: "{{ inplace_upgrade_backup_validate_certs }}"
+        status_code: [200, 201]
+      register: inplace_upgrade_backup_netbackup_auth
+      no_log: true
+
+    - name: Build the authenticated request headers
+      no_log: true
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_headers: >-
+          {{
+            {'Authorization': 'Bearer ' ~ inplace_upgrade_backup_veeam_auth.json.access_token,
+             'x-api-version': inplace_upgrade_backup_contract.api_version_header,
+             'Accept': 'application/json'}
+            if inplace_upgrade_backup_provider == 'veeam'
+            else {'Authorization': 'Bearer ' ~ inplace_upgrade_backup_netbackup_auth.json.token,
+                  'Accept': inplace_upgrade_backup_contract.media_type}
+          }}
+
+    # --- query -------------------------------------------------------------
+
+    # Built separately so the query stays readable: the optional
+    # name_query_parameter lets a release filter server-side (e.g.
+    # "?nameFilter="), and the VM name is only appended when one is declared.
+    - name: Build the restore-point query URL
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_url: >-
+          https://{{ inplace_upgrade_backup_hostname }}:{{ inplace_upgrade_backup_port }}{{ inplace_upgrade_backup_contract.restore_points_endpoint }}
+          {%- set filter = inplace_upgrade_backup_contract.name_query_parameter | default('') -%}
+          {{ filter ~ (vm_name | urlencode) if filter | length > 0 else '' }}
+
+    - name: Ask the backup server for this VM's restore points
+      ansible.builtin.uri:
+        url: "{{ inplace_upgrade_backup_url }}"
+        method: GET
+        headers: "{{ inplace_upgrade_backup_headers }}"
+        validate_certs: "{{ inplace_upgrade_backup_validate_certs }}"
+        status_code: [200]
+      register: inplace_upgrade_backup_query
+      changed_when: false
+
+    # The list can sit at the top level of the response or under a single
+    # wrapper key, which is what results_key names. Anything deeper would
+    # be a different contract, not a variation of this one.
+    - name: Extract the restore point list from the response
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_points: >-
+          {{
+            inplace_upgrade_backup_query.json[inplace_upgrade_backup_contract.results_key]
+            if (inplace_upgrade_backup_contract.results_key | default('')) | length > 0
+            else inplace_upgrade_backup_query.json
+          }}
+
+    # The endpoint may return every VM's points, so filter by name here
+    # rather than trusting the query parameter to have done it. Comparing
+    # case-insensitively: vCenter and the backup catalogue disagree on case
+    # more often than they disagree on the name.
+    - name: Keep only this VM's restore points
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_own_points: >-
+          {{
+            inplace_upgrade_backup_points
+            | selectattr(inplace_upgrade_backup_contract.name_field, 'defined')
+            | selectattr(inplace_upgrade_backup_contract.name_field, 'equalto', vm_name)
+            | list
+            if (inplace_upgrade_backup_contract.name_field | default('')) | length > 0
+            else inplace_upgrade_backup_points
+          }}
+
+    - name: Keep only the restore points that actually succeeded
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_good_points: >-
+          {{
+            inplace_upgrade_backup_own_points
+            | selectattr(inplace_upgrade_backup_contract.status_field, 'defined')
+            | selectattr(inplace_upgrade_backup_contract.status_field, 'in', inplace_upgrade_backup_contract.success_values)
+            | list
+            if (inplace_upgrade_backup_contract.status_field | default('')) | length > 0
+            else inplace_upgrade_backup_own_points
+          }}
+
+    # --- evaluate ----------------------------------------------------------
+
+    - name: Determine the most recent successful restore point
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_latest: >-
+          {{
+            (inplace_upgrade_backup_good_points
+             | sort(attribute=inplace_upgrade_backup_contract.timestamp_field)
+             | last)[inplace_upgrade_backup_contract.timestamp_field]
+            if inplace_upgrade_backup_good_points | length > 0 else ''
+          }}
+
+    # Fractional seconds and a trailing Z or +00:00 are dropped before
+    # parsing: they vary between releases of the same product and carry no
+    # information this check needs, which only compares whole seconds.
+    #
+    # Single backslash in the regex, not double: inside a folded scalar the
+    # pattern reaches the regex engine as written, so '\\.' would match a
+    # literal backslash and quietly leave the fractional part in place -
+    # to_datetime then fails on the leftover. (In the plain scalars used by
+    # the assert tasks above, both spellings resolve the same; here they do
+    # not.)
+    - name: Compute the age of that restore point
+      when: inplace_upgrade_backup_latest | length > 0
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_age_hours: >-
+          {{
+            (
+              (now(utc=true).strftime('%s') | int)
+              - ((inplace_upgrade_backup_latest | regex_replace('\.[0-9]+', '') | regex_replace('(Z|[+-][0-9]{2}:?[0-9]{2})$', ''))
+                 | to_datetime('%Y-%m-%dT%H:%M:%S')).strftime('%s') | int
+            ) / 3600
+          }}
+
+    - name: Refuse to upgrade a VM in place with no usable backup
+      when:
+        - inplace_upgrade_backup_good_points | length == 0
+        - not (inplace_upgrade_backup_allow_missing | bool)
+      ansible.builtin.fail:
+        msg: >-
+          '{{ vm_name }}' has no successful restore point on
+          {{ inplace_upgrade_backup_hostname }} ({{ inplace_upgrade_backup_provider }}
+          {{ inplace_upgrade_backup_release }}), out of
+          {{ inplace_upgrade_backup_own_points | length }} restore point(s) found
+          for it. An in-place upgrade rewrites the running OS; without a backup there is nothing to fall back to if it fails.
+          Take a backup first, or - if this VM is genuinely not meant to be
+          backed up - waive the check for this run with
+          -e inplace_upgrade_backup_allow_missing=true, which is recorded in the
+          job artifact.
+
+    - name: Refuse to upgrade a VM in place whose newest backup is too old
+      when:
+        - inplace_upgrade_backup_good_points | length > 0
+        - (inplace_upgrade_backup_age_hours | float) > (inplace_upgrade_backup_max_age_hours | float)
+        - not (inplace_upgrade_backup_allow_missing | bool)
+      ansible.builtin.fail:
+        msg: >-
+          The newest successful backup of '{{ vm_name }}' is
+          {{ inplace_upgrade_backup_age_hours | float | round(1) }}h old
+          ({{ inplace_upgrade_backup_latest }}), past the
+          {{ inplace_upgrade_backup_max_age_hours }}h limit. Anything written to
+          the VM since then would be lost for good. Run a fresh backup,
+          raise inplace_upgrade_backup_max_age_hours deliberately if this VM's
+          protection schedule is genuinely slower, or waive the check with
+          -e inplace_upgrade_backup_allow_missing=true.
+
+    - name: Record the verification outcome
+      ansible.builtin.set_fact:
+        inplace_upgrade_backup_state: >-
+          {{ 'waived' if (inplace_upgrade_backup_allow_missing | bool) and inplace_upgrade_backup_good_points | length == 0
+             else ('stale-waived' if (inplace_upgrade_backup_allow_missing | bool) and (inplace_upgrade_backup_age_hours | default(0) | float) > (inplace_upgrade_backup_max_age_hours | float)
+             else 'verified') }}
+        inplace_upgrade_backup_detail: >-
+          {{ inplace_upgrade_backup_good_points | length }} successful restore point(s);
+          newest {{ inplace_upgrade_backup_latest | default('none', true) }}
+          ({{ (inplace_upgrade_backup_age_hours | default(0) | float) | round(1) }}h old).
+
+    - name: Report the verification outcome
+      ansible.builtin.debug:
+        msg: >-
+          Backup check for '{{ vm_name }}': {{ inplace_upgrade_backup_state }} -
+          {{ inplace_upgrade_backup_detail }}

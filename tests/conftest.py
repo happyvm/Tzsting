@@ -91,9 +91,21 @@ PROJECTS = discover_projects()
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrize any test taking a `project` argument over every project."""
-    if "project" in metafunc.fixturenames:
-        metafunc.parametrize("project", PROJECTS, ids=[p.name for p in PROJECTS])
+    """Parametrize any test taking a `project` argument over every project.
+
+    A test that parametrizes `project` itself - to run against a chosen pair
+    of projects rather than all 39 - keeps its own values; parametrizing it
+    twice is an error, and silently overriding the test's own list would be
+    worse.
+    """
+    if "project" not in metafunc.fixturenames:
+        return
+    for marker in metafunc.definition.iter_markers("parametrize"):
+        argnames = marker.args[0] if marker.args else ""
+        names = [n.strip() for n in argnames.split(",")] if isinstance(argnames, str) else list(argnames)
+        if "project" in names:
+            return
+    metafunc.parametrize("project", PROJECTS, ids=[p.name for p in PROJECTS])
 
 
 def load_yaml(path: pathlib.Path):
