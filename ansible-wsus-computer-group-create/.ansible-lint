@@ -1,0 +1,12 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `wsus_gc_` prefix on
+  # register/set_fact vars produced in one role and read by another
+  # (e.g. wsus_gc_result, set in roles/create_group, feeds the
+  # playbook's own set_stats task).
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml

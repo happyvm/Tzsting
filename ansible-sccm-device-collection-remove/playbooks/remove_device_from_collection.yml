@@ -1,0 +1,59 @@
+# Removes a device from an SCCM device collection's direct membership
+# rule, using the real ConfigurationManager PowerShell module on a
+# Windows host that has the Configuration Manager console installed.
+# Does not delete the SCCM device object, does not uninstall the client,
+# does not remove the machine from Active Directory/CMDB, and does not
+# guarantee removal from the collection if query/include/exclude rules
+# also apply - see README and ENDPOINT-MANAGEMENT-ROADMAP.md for the full
+# catalogue this is one piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/remove_device_from_collection.yml --vault-password-file .vault_pass
+
+- name: Remove a device from an SCCM device collection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the console host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: sccm_dcr_console
+        ansible_host: "{{ sccm_console_host }}"
+        ansible_connection: winrm
+        ansible_user: "{{ sccm_conn_winrm_username }}"
+        ansible_password: "{{ sccm_conn_winrm_password }}"
+        ansible_port: "{{ sccm_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ sccm_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if sccm_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Resolve the device/collection and remove the membership rule
+      delegate_to: sccm_dcr_console
+      block:
+        - name: Include the remove_membership role
+          ansible.builtin.include_role:
+            name: remove_membership
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          sccm_device_collection_remove_summary:
+            site_code: "{{ sccm_site_code }}"
+            operation: "{{ sccm_dcr_operation }}"
+            resource_id: "{{ sccm_dcr_result.result.resource_id }}"
+            device_name: "{{ sccm_dcr_result.result.device_name }}"
+            collection_id: "{{ sccm_dcr_result.result.collection_id }}"
+            collection_name: "{{ sccm_dcr_result.result.collection_name }}"
+            rule_existed: "{{ sccm_dcr_result.result.rule_existed }}"
+            removed: "{{ sccm_dcr_result.result.removed }}"
+            direct_rule_still_present_after: "{{ sccm_dcr_result.result.direct_rule_still_present_after }}"
+            query_rule_present: "{{ sccm_dcr_result.result.query_rule_present }}"
+            include_rule_present: "{{ sccm_dcr_result.result.include_rule_present }}"
+            exclude_rule_present: "{{ sccm_dcr_result.result.exclude_rule_present }}"
+            collection_update_triggered: "{{ sccm_dcr_result.result.collection_update_triggered }}"
+        aggregate: false

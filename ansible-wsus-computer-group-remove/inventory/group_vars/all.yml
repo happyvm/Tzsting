@@ -1,0 +1,39 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# --- Connection to a Windows host with the WSUS console/RSAT feature
+# (and therefore the UpdateServices PowerShell module) installed -
+# typically the WSUS server itself or an admin workstation. See README.
+wsus_console_host: wsus01.example.local
+wsus_conn_winrm_username: "{{ vault_wsus_conn_winrm_username }}"
+wsus_conn_winrm_password: "{{ vault_wsus_conn_winrm_password }}"
+wsus_conn_winrm_port: 5986
+wsus_conn_winrm_transport: ntlm
+wsus_conn_winrm_validate_certs: true
+
+# --- WSUS server ---
+wsus_server_name: wsus01.example.local
+wsus_port_number: 8531
+wsus_use_ssl: true
+
+# remove | audit - no native dry-run exists for the raw
+# RemoveComputerTarget API call used here (same situation as
+# ansible-wsus-computer-group-create) - audit simply skips calling it.
+wsus_gr_operation: audit
+
+# The exact FQDN as reported to WSUS - resolution is exact via
+# IUpdateServer.GetComputerTargetByName, never partial/wildcard matching.
+wsus_gr_computer_name: ""
+wsus_gr_target_group_name: ""
+
+# Removing from a group can stop update deployments/approvals from
+# targeting the device the way it used to - refuse to run in "remove"
+# mode without this.
+confirm_remove_from_wsus_group: false
+
+# WSUS's own client-side targeting (a GPO/registry setting on the
+# client) can silently reassign group membership the next time the
+# client checks in, undoing this removal. This project cannot reliably
+# auto-detect whether client-side targeting is in effect - state it
+# explicitly here so the risk is surfaced in the result. See README.
+wsus_gr_client_side_targeting_enabled: false

@@ -1,0 +1,82 @@
+---
+# A single custom script is used because the actual removal call
+# (IComputerTargetGroup.RemoveComputerTarget) is a raw WSUS
+# Administration API method, not a PowerShell cmdlet (like
+# ansible-wsus-computer-group-create's CreateComputerTargetGroup). This
+# also avoids bridging the WsusComputer object Get-WsusComputer returns
+# to the raw IComputerTarget type this API needs - resolving the
+# computer directly via IUpdateServer.GetComputerTargetByName (which
+# returns a real IComputerTarget) sidesteps that entirely.
+- name: Resolve the computer and group, then remove the membership
+  ansible.windows.win_powershell:
+    parameters:
+      ServerName: "{{ wsus_server_name }}"
+      PortNumber: "{{ wsus_port_number }}"
+      UseSsl: "{{ wsus_use_ssl | bool }}"
+      ComputerName: "{{ wsus_gr_computer_name }}"
+      TargetGroupName: "{{ wsus_gr_target_group_name }}"
+      Operation: "{{ wsus_gr_operation }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$ServerName,
+          [int]$PortNumber,
+          [bool]$UseSsl,
+          [string]$ComputerName,
+          [string]$TargetGroupName,
+          [string]$Operation
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      Import-Module UpdateServices
+      $wsus = Get-WsusServer -Name $ServerName -PortNumber $PortNumber -UseSsl:$UseSsl
+
+      # GetComputerTargetByName matches FullDomainName exactly
+      # (case-insensitive) and throws WsusObjectNotFoundException if no
+      # match exists - no partial/wildcard matching involved.
+      try {
+          $target = $wsus.GetComputerTargetByName($ComputerName)
+      }
+      catch {
+          throw "No WSUS computer found with FullDomainName exactly matching '$ComputerName': $($_.Exception.Message)"
+      }
+
+      # DateTime.MinValue means the client has never reported status to
+      # this WSUS server (documented on IComputerTarget.LastReportedStatusTime).
+      if ($target.LastReportedStatusTime -eq [DateTime]::MinValue) {
+          throw "'$ComputerName' has never reported status to this WSUS server."
+      }
+
+      $group = $wsus.GetComputerTargetGroups() | Where-Object { $_.Name -eq $TargetGroupName }
+      if (-not $group) {
+          throw "Target group '$TargetGroupName' was not found on this WSUS server."
+      }
+
+      $currentGroups = $target.GetComputerTargetGroups()
+      $wasMember = [bool]($currentGroups | Where-Object { $_.Name -eq $TargetGroupName })
+
+      $removed = $false
+      if ($wasMember -and $Operation -eq 'remove') {
+          # Moves the client to the Unassigned Computers system group -
+          # documented behavior of this exact method, not a side effect
+          # this project invents.
+          $group.RemoveComputerTarget($target)
+          $removed = $true
+      }
+
+      $stillMemberAfter = $null
+      if ($removed) {
+          $groupsAfter = $target.GetComputerTargetGroups()
+          $stillMemberAfter = [bool]($groupsAfter | Where-Object { $_.Name -eq $TargetGroupName })
+      }
+
+      $Ansible.Changed = $removed
+      $Ansible.Result = [ordered]@{
+          computer_name          = $target.FullDomainName
+          target_group_name      = $TargetGroupName
+          was_member             = $wasMember
+          removed                = $removed
+          still_member_after     = $stillMemberAfter
+      }
+  register: wsus_gr_result

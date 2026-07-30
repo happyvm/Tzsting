@@ -1,0 +1,80 @@
+---
+# A single custom script is used because Get-WsusServer/Get-WsusComputer/
+# Add-WsusComputer all need to operate against the same IUpdateServer
+# connection object within one PowerShell session.
+- name: Resolve the computer and add it to the target group
+  ansible.windows.win_powershell:
+    parameters:
+      ServerName: "{{ wsus_server_name }}"
+      PortNumber: "{{ wsus_port_number }}"
+      UseSsl: "{{ wsus_use_ssl | bool }}"
+      ComputerName: "{{ wsus_ga_computer_name }}"
+      TargetGroupName: "{{ wsus_ga_target_group_name }}"
+      Operation: "{{ wsus_ga_operation }}"
+    script: |
+      [CmdletBinding()]
+      param(
+          [string]$ServerName,
+          [int]$PortNumber,
+          [bool]$UseSsl,
+          [string]$ComputerName,
+          [string]$TargetGroupName,
+          [string]$Operation
+      )
+
+      $ErrorActionPreference = 'Stop'
+
+      Import-Module UpdateServices
+      $wsus = Get-WsusServer -Name $ServerName -PortNumber $PortNumber -UseSsl:$UseSsl
+
+      # -NameIncludes is a substring/partial match (not exact, no
+      # wildcards) per its own documentation - filter down to an exact
+      # FullDomainName match ourselves to keep resolution unambiguous.
+      $candidates = Get-WsusComputer -UpdateServer $wsus -NameIncludes $ComputerName |
+          Where-Object { $_.FullDomainName -eq $ComputerName }
+      $candidateCount = @($candidates).Count
+      if ($candidateCount -eq 0) {
+          throw "No WSUS computer found with FullDomainName exactly matching '$ComputerName' - has it ever contacted this WSUS server?"
+      }
+      if ($candidateCount -gt 1) {
+          throw "Ambiguous computer resolution: $candidateCount computers matched '$ComputerName' exactly - refusing to proceed."
+      }
+      $computer = $candidates
+
+      # DateTime.MinValue means the client has never reported status to
+      # this WSUS server (documented on IComputerTarget.LastReportedStatusTime).
+      if ($computer.LastReportedStatusTime -eq [DateTime]::MinValue) {
+          throw "'$ComputerName' has never reported status to this WSUS server - refusing to add it to a group."
+      }
+
+      $alreadyMember = [bool](
+          Get-WsusComputer -UpdateServer $wsus -ComputerTargetGroups @($TargetGroupName) -NameIncludes $ComputerName |
+              Where-Object { $_.FullDomainName -eq $ComputerName }
+      )
+
+      $added = $false
+      if (-not $alreadyMember -and $Operation -eq 'add') {
+          $computer | Add-WsusComputer -TargetGroupName $TargetGroupName
+          $added = $true
+      }
+      elseif (-not $alreadyMember -and $Operation -eq 'audit') {
+          $computer | Add-WsusComputer -TargetGroupName $TargetGroupName -WhatIf
+      }
+
+      $verifiedMemberAfter = $null
+      if ($added) {
+          $verifiedMemberAfter = [bool](
+              Get-WsusComputer -UpdateServer $wsus -ComputerTargetGroups @($TargetGroupName) -NameIncludes $ComputerName |
+                  Where-Object { $_.FullDomainName -eq $ComputerName }
+          )
+      }
+
+      $Ansible.Changed = $added
+      $Ansible.Result = [ordered]@{
+          computer_name          = $computer.FullDomainName
+          target_group_name      = $TargetGroupName
+          already_member         = $alreadyMember
+          added                  = $added
+          verified_member_after  = $verifiedMemberAfter
+      }
+  register: wsus_ga_result
