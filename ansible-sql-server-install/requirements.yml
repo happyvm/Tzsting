@@ -1,0 +1,14 @@
+---
+collections:
+  - name: ansible.windows
+    version: ">=2.0.0,<4.0.0"
+  - name: community.windows
+    version: ">=2.0.0"
+
+# No collection wraps SQL Server's own setup.exe silent-install mechanism
+# (there is no maintained Ansible module for this) - it's Microsoft's own
+# long-stable /ConfigurationFile.ini + command-line switch contract,
+# invoked directly over WinRM. See roles/install and the README.
+# community.windows.win_firewall_rule (used by roles/install) scopes the
+# SQL Server TCP port rule to the declared source networks only - no
+# blanket firewall opening.

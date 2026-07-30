@@ -271,6 +271,23 @@ volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
+### `ansible-sql-server-install`
+
+Installation, audit ou réparation d’une instance **Microsoft SQL Server**
+standalone sur Windows Server, via le mécanisme natif `setup.exe
+/ConfigurationFile` (aucun secret persisté dans le fichier - mots de
+passe et PID passés en switches de ligne de commande séparés), sur WinRM.
+Comptes de service (virtuels/gMSA/domaine), comptes sysadmin, collation,
+répertoires data/log/backup/TempDB, port TCP statique (positionné après
+coup via registre), pare-feu scopé aux sources déclarées, CU approuvé en
+option. Ne couvre ni les Failover Cluster Instances/Always On, ni la
+création/restauration de bases - voir
+[`SQL-SERVER-ROADMAP.md`](SQL-SERVER-ROADMAP.md) pour le périmètre cible
+complet et [`ansible-sql-server-install/README.md`](ansible-sql-server-install/README.md)
+pour ce qui est implémenté.
+
+Documentation : [`ansible-sql-server-install/README.md`](ansible-sql-server-install/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -300,6 +317,7 @@ Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/READ
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
+| `ansible-sql-server-install` | — | — | — | WinRM | Installation |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

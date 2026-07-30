@@ -1,0 +1,94 @@
+---
+# ConfigurationFile.ini intentionally carries no secrets - service account
+# passwords, the sa password and the PID are appended as separate
+# command-line switches to setup.exe instead, so nothing sensitive is ever
+# written to disk on the target or persisted anywhere.
+- name: Render the setup.exe ConfigurationFile.ini (no secrets)
+  delegate_to: sql_server_target
+  ansible.windows.win_template:
+    src: ConfigurationFile.ini.j2
+    dest: 'C:\Windows\Temp\ansible-sql-server-install-ConfigurationFile.ini'
+
+- name: Run SQL Server Setup
+  delegate_to: sql_server_target
+  no_log: true
+  ansible.windows.win_command:
+    argv: >-
+      {{
+        [sql_server_media_path, '/ConfigurationFile=C:\Windows\Temp\ansible-sql-server-install-ConfigurationFile.ini']
+        + (['/SQLSVCPASSWORD=' + sql_server_engine_service_account.password] if sql_server_engine_service_account.password | length > 0 else [])
+        + (['/AGTSVCPASSWORD=' + sql_server_agent_service_account.password] if sql_server_agent_service_account.password | length > 0 else [])
+        + (['/SAPWD=' + sql_server_sa_password] if sql_server_authentication_mode == 'mixed' else [])
+        + (['/PID=' + sql_server_pid] if sql_server_pid | length > 0 else [])
+      }}
+  register: sql_server_setup_result
+  failed_when: sql_server_setup_result.rc not in [0, 3010]
+  changed_when: sql_server_setup_result.rc in [0, 3010]
+
+- name: Remove the temporary ConfigurationFile.ini
+  delegate_to: sql_server_target
+  ansible.windows.win_file:
+    path: 'C:\Windows\Temp\ansible-sql-server-install-ConfigurationFile.ini'
+    state: absent
+
+- name: Report whether a reboot is required
+  when: sql_server_setup_result.rc == 3010
+  ansible.builtin.debug:
+    msg: >-
+      Setup completed successfully but requires a reboot to finish
+      (exit code 3010). allow_reboot is false by default in this project
+      - schedule the restart as a separate, deliberate maintenance action.
+
+- name: Configure a static TCP port for the instance
+  when: sql_server_tcp_enabled | bool
+  delegate_to: sql_server_target
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\{{ sql_server_instance_name }}\MSSQLSERVER\SuperSocketNetLib\Tcp\IPAll'
+    name: TcpPort
+    data: "{{ sql_server_tcp_port }}"
+    type: string
+  register: sql_server_tcp_port_result
+
+- name: Clear dynamic port allocation on IPAll so the static port takes effect
+  when: sql_server_tcp_enabled | bool
+  delegate_to: sql_server_target
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\{{ sql_server_instance_name }}\MSSQLSERVER\SuperSocketNetLib\Tcp\IPAll'
+    name: TcpDynamicPorts
+    data: ""
+    type: string
+  register: sql_server_tcp_dynamic_result
+
+- name: Restart the SQL Server service if the TCP port configuration changed
+  when: sql_server_tcp_enabled | bool and (sql_server_tcp_port_result.changed or sql_server_tcp_dynamic_result.changed)
+  delegate_to: sql_server_target
+  ansible.windows.win_service:
+    name: "{{ 'MSSQLSERVER' if sql_server_instance_name == 'MSSQLSERVER' else 'MSSQL$' + sql_server_instance_name }}"
+    state: restarted
+
+- name: Allow the declared sources to reach the SQL Server TCP port
+  when: sql_server_tcp_enabled | bool and sql_server_firewall_sources | length > 0
+  delegate_to: sql_server_target
+  community.windows.win_firewall_rule:
+    name: "SQL Server ({{ sql_server_instance_name }}) - Ansible managed"
+    localport: "{{ sql_server_tcp_port }}"
+    remoteip: "{{ sql_server_firewall_sources | join(',') }}"
+    protocol: tcp
+    direction: in
+    action: allow
+    enabled: true
+    state: present
+
+- name: Configure min/max server memory
+  when: sql_server_max_memory_mb is not none and sql_server_min_memory_mb is not none
+  delegate_to: sql_server_target
+  no_log: true
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    $instance = if ('{{ sql_server_instance_name }}' -eq 'MSSQLSERVER') { '.' } else { ".\{{ sql_server_instance_name }}" }
+    $tsql = "EXEC sp_configure 'show advanced options', 1; RECONFIGURE;" +
+      " EXEC sp_configure 'max server memory', {{ sql_server_max_memory_mb }};" +
+      " EXEC sp_configure 'min server memory', {{ sql_server_min_memory_mb }}; RECONFIGURE;"
+    sqlcmd -S $instance -Q $tsql
+  register: sql_server_memory_result
+  changed_when: true
