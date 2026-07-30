@@ -1,0 +1,33 @@
+---
+- name: Validate the console host connection settings
+  ansible.builtin.assert:
+    that:
+      - wsus_console_host | length > 0
+      - wsus_conn_winrm_username | length > 0
+      - wsus_conn_winrm_password | length > 0
+    fail_msg: "wsus_console_host, wsus_conn_winrm_username and wsus_conn_winrm_password are all mandatory."
+
+- name: Validate the WSUS server settings
+  ansible.builtin.assert:
+    that:
+      - wsus_server_name | length > 0
+      - wsus_port_number | int > 0
+    fail_msg: "wsus_server_name and wsus_port_number are both mandatory."
+
+- name: Validate the operation and confirmation
+  ansible.builtin.assert:
+    that:
+      - wsus_gr_operation in ['remove', 'audit']
+      - wsus_gr_operation != 'remove' or confirm_remove_from_wsus_group | bool
+    fail_msg: >-
+      wsus_gr_operation must be remove or audit; removing requires
+      confirm_remove_from_wsus_group=true since it can stop update
+      deployments/approvals from targeting the device the way they used
+      to.
+
+- name: Validate the computer and target group
+  ansible.builtin.assert:
+    that:
+      - wsus_gr_computer_name | length > 0
+      - wsus_gr_target_group_name | length > 0
+    fail_msg: "wsus_gr_computer_name and wsus_gr_target_group_name are both mandatory."

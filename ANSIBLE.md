@@ -365,6 +365,20 @@ déclarée par l’exploitant plutôt que deviné.
 
 Documentation : [`ansible-wsus-computer-group-add/README.md`](ansible-wsus-computer-group-add/README.md).
 
+### `ansible-wsus-computer-group-remove`
+
+Pendant de `ansible-wsus-computer-group-add` : retrait d’une machine
+d’un groupe de diffusion WSUS. Résolution directe via
+`IUpdateServer.GetComputerTargetByName` (renvoie un vrai
+`IComputerTarget`, sans passer par l’objet wrapper `WsusComputer` des
+cmdlets - le pont entre les deux avait initialement fait différer ce
+projet), retrait via `IComputerTargetGroup.RemoveComputerTarget`
+(déplace documentairement la machine vers `Unassigned Computers`),
+idempotence vérifiée avant/après, confirmation obligatoire
+`confirm_remove_from_wsus_group=true`.
+
+Documentation : [`ansible-wsus-computer-group-remove/README.md`](ansible-wsus-computer-group-remove/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -400,6 +414,7 @@ Documentation : [`ansible-wsus-computer-group-add/README.md`](ansible-wsus-compu
 | `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
 | `ansible-wsus-computer-group-create` | — | — | — | WinRM | Création de groupe |
 | `ansible-wsus-computer-group-add` | — | — | — | WinRM | Ajout à un groupe |
+| `ansible-wsus-computer-group-remove` | — | — | — | WinRM | Retrait d'un groupe |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

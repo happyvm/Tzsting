@@ -24,40 +24,27 @@ automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
 uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
 respectivement partiel et à faire.
 
-🟡 **`ansible-sccm-client-deploy`** (Lot 2, étape 6) implémenté via
-`ccmsetup.exe` exécuté directement (pas de client push console), le
-même choix qu'`ansible-sql-server-install` : un mécanisme d'installation
-officiel long-stable plutôt qu'un contrat d'API deviné. Modes
-`install`/`repair`/`upgrade`/`audit`, checksum du média obligatoire même
-en `audit`, vérification bornée post-installation (`SMS_Client` WMI,
-service `CcmExec`, site assigné via `GetAssignedSite()`), déclenchement
-facultatif des cycles policy/discovery via `TriggerSchedule` (GUID
-officiellement documentés). Non couvert : client push console, ajout à
-une device collection (délibérément un projet séparé,
-`ansible-sccm-device-collection-add`), vérification côté-site de l'état
-"actif", désinstallation.
+🟡 **`ansible-sccm-client-deploy`** (Lot 2, étape 6),
+**`ansible-sccm-device-collection-add`** (étape 7) et
+**`ansible-sccm-device-collection-remove`** (étape 8) implémentés via
+`ccmsetup.exe`/le module PowerShell `ConfigurationManager` selon le cas
+- voir leurs README pour le détail. `ansible-sccm-conf` (étape 5) reste
+à faire.
 
-🟡 **`ansible-sccm-device-collection-add`** (étape 7) et
-**`ansible-sccm-device-collection-remove`** (étape 8) implémentés via le
-vrai module PowerShell `ConfigurationManager`, exécuté sur un hôte
-Windows qui l'a déjà installé - voir leurs README. `ansible-sccm-conf`
-(étape 5) reste à faire.
-
-🟡 **`ansible-wsus-computer-group-create`** (Lot 3, étape 10) et
-**`ansible-wsus-computer-group-add`** (étape 11) implémentés via le vrai
-module PowerShell `UpdateServices`. Le premier appelle directement la
-méthode brute `IUpdateServer.CreateComputerTargetGroup` (aucune cmdlet
-dédiée n'existe pour la création de groupe) ; le second utilise la vraie
-cmdlet `Add-WsusComputer`, avec résolution exacte sur `FullDomainName` et
-refus si la machine n'a jamais reporté de statut
-(`LastReportedStatusTime` égal à `DateTime.MinValue`). Le ciblage
-client-side (GPO) n'est pas détecté automatiquement - publié via une
-variable déclarée par l'exploitant plutôt que deviné.
-`ansible-wsus-computer-group-remove` (étape 12) est délibérément différé
-- il nécessiterait de faire le pont entre l'objet `WsusComputer` des
-cmdlets et le type brut `IComputerTarget` attendu par
-`RemoveComputerTarget`, pas corroboré avec assez de confiance pour
-l'instant.
+🟡 **Tout le Lot 3 (WSUS) est désormais implémenté** :
+`ansible-wsus-computer-group-create` (étape 10, via la méthode brute
+`IUpdateServer.CreateComputerTargetGroup`, aucune cmdlet dédiée
+n'existant),
+`ansible-wsus-computer-group-add` (étape 11, via la vraie cmdlet
+`Add-WsusComputer`), et
+`ansible-wsus-computer-group-remove` (étape 12, via
+`IUpdateServer.GetComputerTargetByName`/`IComputerTargetGroup.RemoveComputerTarget`).
+Ce dernier avait d'abord été différé (incertitude sur le pont entre
+l'objet `WsusComputer` des cmdlets et le type brut `IComputerTarget`) -
+`GetComputerTargetByName` s'est révélé résoudre directement un
+`IComputerTarget` à partir du nom, sans avoir besoin de ce pont, une
+fois corroboré sur la documentation officielle archivée
+Microsoft.UpdateServices.Administration.
 
 ## Principes communs
 
@@ -263,6 +250,17 @@ Retrait d'une machine d'un groupe WSUS :
 - confirmation `confirm_remove_from_wsus_group=true`.
 
 Artefact AAP : `wsus_computer_group_remove_summary`.
+
+🟡 Implémenté dans [`ansible-wsus-computer-group-remove`](../ansible-wsus-computer-group-remove) :
+résolution directe via `IUpdateServer.GetComputerTargetByName` (retourne
+un vrai `IComputerTarget`, sans passer par l'objet wrapper
+`WsusComputer` des cmdlets), retrait via
+`IComputerTargetGroup.RemoveComputerTarget` (déplace documentairement
+vers `Unassigned Computers`), idempotence vérifiée via
+`IComputerTarget.GetComputerTargetGroups()` avant et après, confirmation
+`confirm_remove_from_wsus_group=true` obligatoire. Non couvert :
+suppression de l'objet machine, changement d'approval/deadline/
+classification.
 
 ---
 
