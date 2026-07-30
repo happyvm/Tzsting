@@ -1,0 +1,53 @@
+# Adds a computer already registered in WSUS to a computer target group
+# (used as a deployment ring or broadcast group), using the real
+# UpdateServices PowerShell module on a Windows host with the WSUS
+# console/RSAT feature installed. Does not trigger any patch or reboot,
+# and does not remove other group memberships - see README and
+# ENDPOINT-MANAGEMENT-ROADMAP.md for the full catalogue this is one
+# piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/add_computer_to_group.yml --vault-password-file .vault_pass
+
+- name: Add a computer to a WSUS computer target group
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the console host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: wsus_ga_console
+        ansible_host: "{{ wsus_console_host }}"
+        ansible_connection: winrm
+        ansible_user: "{{ wsus_conn_winrm_username }}"
+        ansible_password: "{{ wsus_conn_winrm_password }}"
+        ansible_port: "{{ wsus_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ wsus_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if wsus_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Resolve the computer and add it to the target group
+      delegate_to: wsus_ga_console
+      block:
+        - name: Include the add_membership role
+          ansible.builtin.include_role:
+            name: add_membership
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          wsus_computer_group_add_summary:
+            wsus_server: "{{ wsus_server_name }}"
+            operation: "{{ wsus_ga_operation }}"
+            computer_name: "{{ wsus_ga_result.result.computer_name }}"
+            target_group_name: "{{ wsus_ga_result.result.target_group_name }}"
+            already_member: "{{ wsus_ga_result.result.already_member }}"
+            added: "{{ wsus_ga_result.result.added }}"
+            verified_member_after: "{{ wsus_ga_result.result.verified_member_after }}"
+            client_side_targeting_enabled: "{{ wsus_ga_client_side_targeting_enabled | bool }}"
+        aggregate: false
