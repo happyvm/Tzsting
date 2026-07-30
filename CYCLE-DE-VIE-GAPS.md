@@ -239,9 +239,10 @@ plus deux scripts PowerShell de reporting (performance, volumes physiques).
 
 ### Sauvegarde — Quantum DXi / HPE StoreOnce
 
-Couvert : comptes locaux, AD, NTP, timezone — et uniquement cela, avec des
-endpoints REST **délibérément vides** que l'exploitant doit renseigner depuis
-le guide API de sa version (choix de conception prudent et bien documenté).
+Couvert : comptes locaux, AD, NTP, timezone — et uniquement cela. Les chemins
+REST restent **délibérément non devinés** dans le code, mais ils sont
+maintenant organisés par branche logicielle et sélectionnés depuis une
+variable de release, au lieu d'une liste plate à remplir par appliance.
 
 Écarts :
 
@@ -250,7 +251,7 @@ le guide API de sa version (choix de conception prudent et bien documenté).
 | 4.14 | **Pas de configuration fonctionnelle** | Aucun partage NAS/CIFS/NFS, aucun Catalyst Store, aucune VTL, aucune politique de rétention, aucune réplication ni air gap. Les appliances sont configurées « identité et temps » uniquement — elles ne sont pas rendues exploitables. |
 | 4.15 | 🟡 **Intégration au logiciel de sauvegarde — partiellement couvert** | `ansible-veeam-conf` et `ansible-netbackup-conf` configurent désormais les réglages de notification (SMTP/SNMP) des serveurs Veeam Backup & Replication et NetBackup, sur le même modèle que les autres projets `*-conf` (identité/alerting d'un équipement). **Restent absents, et c'est le plus gros du sujet** : création/gestion de job ou de policy de sauvegarde, storage lifecycle policies, repositories, restauration, et vérification qu'une sauvegarde valide existe (voir 4.16, qui n'est pas non plus couvert par ces deux projets). Commvault reste totalement absent. |
 | 4.16 | **Pas de chaînage sauvegarde ↔ cycle de vie VM** | `deletevm` et `inplace-upgrade` ne vérifient pas qu'une sauvegarde valide existe, alors que `ANSIBLE.md` insiste sur le fait qu'un snapshot n'est pas une sauvegarde. Le préflight le plus utile du dépôt est celui qui manque. |
-| 4.17 | **Contrat API non implémenté** | Les projets DXi/StoreOnce sont, en l'état, des squelettes : sans les `*_endpoint`, le préflight bloque toute exécution. Il faut une variante validée par version de firmware pour qu'ils soient utilisables. |
+| 4.17 | 🟡 **Contrat API — mécanisme multi-version en place, chemins à renseigner** | La release de l'appliance est désormais une donnée d'entrée (`dxi_release` / `storeonce_release`), résolue par le rôle `api_contract` contre une table de contrats par branche (`*_api_contracts`) : endpoints, méthodes et capacités. Un parc multi-générations tient donc dans un seul inventaire, les capacités déclarées sont contrôlées au préflight (demander SNMPv3 sur une branche qui ne l'expose pas échoue explicitement au lieu d'être silencieusement rétrogradé), et les surcharges par appliance restent possibles. **Reste à la charge de l'exploitant** : les chemins REST eux-mêmes, qui doivent provenir du guide API de chaque release visée — ils ne sont volontairement pas devinés dans le code. Le préflight bloque en nommant la branche et le réglage manquants. |
 
 ### Réseau et services d'infrastructure
 

@@ -176,18 +176,23 @@ Documentation : [`ansible-synergy-get/README.md`](ansible-synergy-get/README.md)
 ### `ansible-quantum-dxi-conf`
 
 Configuration des comptes locaux, Active Directory, NTP et timezone d’une
-appliance Quantum DXi au moyen de son contrat REST spécifique au firmware,
-plus redirection syslog, alertes SMTP et SNMP (v3 recommandé selon le
-firmware) en options.
+appliance Quantum DXi, plus redirection syslog, alertes SMTP et SNMP en
+options. La release de l’appliance est fournie en variable (`dxi_release`) et
+résolue contre une table de contrats REST par branche (`dxi_api_contracts`),
+ce qui permet de couvrir un parc multi-générations depuis un seul inventaire.
+Les capacités déclarées par branche (SNMPv3 par exemple) sont contrôlées au
+préflight.
 
 Documentation : [`ansible-quantum-dxi-conf/README.md`](ansible-quantum-dxi-conf/README.md).
 
 ### `ansible-hpe-storeonce-conf`
 
-Configuration équivalente pour une appliance HPE StoreOnce, avec validation
-obligatoire des endpoints correspondant à sa version logicielle, plus
-redirection syslog, alertes SMTP et SNMP (v3 recommandé, v1/v2c selon le
-firmware) en options.
+Configuration équivalente pour une appliance HPE StoreOnce, avec le même
+mécanisme de contrat REST par branche (`storeonce_release` /
+`storeonce_api_contracts`), plus redirection syslog, alertes SMTP et SNMP en
+options. Les chemins restent fournis par l’exploitant depuis le guide API de
+la release visée ; le préflight bloque en nommant la branche et le réglage
+manquants.
 
 Documentation : [`ansible-hpe-storeonce-conf/README.md`](ansible-hpe-storeonce-conf/README.md).
 
@@ -717,6 +722,46 @@ projets, par exemple : resize disque pendant un revert, suppression pendant un
 upgrade, ou power-cycle compute pendant une sauvegarde.
 
 ## Tests et analyse statique
+
+### Suite de tests transverse
+
+Le dépôt embarque une suite `pytest` qui couvre les 39 projets d'un seul bloc,
+dans [`tests/`](tests/) :
+
+```bash
+pip install -r tests/requirements.txt
+cd tests && pytest -n auto        # ~2 min
+```
+
+Elle vérifie ce que les linters ne peuvent pas voir, parce qu'ils analysent
+chaque projet isolément et statiquement :
+
+- structure commune de chaque projet et câblage réel de la CI ;
+- rôles inclus qui existent et qui sont tous utilisés, tâches nommées, modules
+  en FQCN, collections appelées effectivement déclarées dans `requirements.yml` ;
+- couverture des extracteurs de scripts embarqués — chaque bloc PowerShell/bash
+  présent dans le YAML doit bien être écrit sur disque, sans quoi
+  PSScriptAnalyzer et ShellCheck analysent moins que ce qu'ils annoncent ;
+- comportement réel des garde-fous de préflight : chaque condition
+  `is regex(...)` du dépôt est relue depuis son rôle et rejouée via
+  `ansible-playbook` avec une valeur hostile ;
+- résolution des contrats REST par release pour les projets DXi/StoreOnce.
+
+### CI
+
+Trois workflows GitHub Actions :
+
+| Workflow | Déclenchement | Rôle |
+|---|---|---|
+| `ansible-projects.yml` | matrice calculée depuis les chemins modifiés | `yamllint`, `ansible-lint` et `--syntax-check` des projets touchés, plus ShellCheck pour `ansible-resizedisk` |
+| `powershell-quality.yml` | fichiers PowerShell et projets à script embarqué | PSScriptAnalyzer |
+| `tests.yml` | tout push | la suite `pytest` ci-dessus |
+
+`ansible-projects.yml` ne contient aucune liste de projets : il retient les
+répertoires de premier niveau modifiés qui contiennent un `ansible.cfg`. Un
+nouveau projet est donc couvert sans toucher à la CI.
+
+### En local
 
 Depuis chaque répertoire modifié :
 

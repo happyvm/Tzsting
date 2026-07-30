@@ -2,8 +2,8 @@
 - name: Configure HPE StoreOnce SNMP
   when: storeonce_snmp_enabled | bool
   ansible.builtin.uri:
-    url: "https://{{ storeonce_hostname }}{{ storeonce_snmp_endpoint }}"
-    method: "{{ storeonce_snmp_method }}"
+    url: "https://{{ storeonce_hostname }}{{ storeonce_endpoints.snmp }}"
+    method: "{{ storeonce_methods.snmp }}"
     url_username: "{{ storeonce_api_username }}"
     url_password: "{{ storeonce_api_password }}"
     force_basic_auth: true

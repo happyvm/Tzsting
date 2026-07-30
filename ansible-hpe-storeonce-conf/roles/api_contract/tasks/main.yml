@@ -1,0 +1,97 @@
+---
+# Resolves the REST contract to use for the appliance's software release.
+#
+# StoreOnce's REST resource paths, request methods and available features
+# change between software branches, which is why this project used to
+# require the operator to paste every path into a flat set of
+# `storeonce_*_endpoint` variables - and why it was unusable until they
+# did. That flat form also could not express a fleet: an estate running
+# two branches needed two inventories.
+#
+# The contract is now keyed by release branch in
+# `storeonce_api_contracts`, and the operator declares which branch an
+# appliance runs through `storeonce_release`. This role turns that into
+# three facts the rest of the roles read - `storeonce_endpoints`,
+# `storeonce_methods` and `storeonce_capabilities` - so no role has to
+# know how the contract was selected.
+#
+# The per-setting `storeonce_*_endpoint` / `storeonce_*_method` variables
+# are still honoured and still win: an operator pinning one path for one
+# appliance should not have to fork the whole contract table, and any
+# inventory written against the previous flat form keeps working.
+
+- name: Assert a release was supplied
+  ansible.builtin.assert:
+    that:
+      - storeonce_release | default('') | length > 0
+      - storeonce_release is regex('^[0-9]+\\.[0-9]+(\\.[0-9A-Za-z.-]+)?$')
+    fail_msg: >-
+      storeonce_release must be supplied as the appliance's software
+      release (e.g. -e storeonce_release=4.3.2). It selects which REST
+      contract to use from storeonce_api_contracts; there is no safe
+      default, because the paths and payloads differ between branches.
+
+# Only major.minor selects a contract - patch releases within a branch do
+# not change the REST surface. The full release is kept for the artifact
+# so the CMDB records what was actually configured, not just the branch.
+- name: Derive the contract branch from the release
+  ansible.builtin.set_fact:
+    storeonce_release_branch: "{{ storeonce_release.split('.')[0:2] | join('.') }}"
+
+- name: Assert the release branch has a declared contract
+  ansible.builtin.assert:
+    that:
+      - storeonce_release_branch in storeonce_api_contracts
+    fail_msg: >-
+      No REST contract is declared for StoreOnce branch
+      '{{ storeonce_release_branch }}' (from storeonce_release
+      '{{ storeonce_release }}'). Known branches:
+      {{ storeonce_api_contracts.keys() | list | sort | join(', ') }}.
+      Add the branch to storeonce_api_contracts with the paths from that
+      release's API guide rather than pointing this at a neighbouring
+      branch - that is exactly the mismatch this lookup exists to stop.
+
+- name: Select the contract for this release
+  ansible.builtin.set_fact:
+    storeonce_contract: "{{ storeonce_api_contracts[storeonce_release_branch] }}"
+
+# A per-setting override is only applied when it is actually set, so an
+# empty override never blanks out a path the contract does provide.
+- name: Resolve the endpoints, letting per-setting overrides win
+  ansible.builtin.set_fact:
+    storeonce_endpoints: >-
+      {{
+        storeonce_contract.endpoints
+        | combine({'local_accounts': storeonce_local_accounts_endpoint} if (storeonce_local_accounts_endpoint | default('')) | length > 0 else {})
+        | combine({'ad': storeonce_ad_endpoint} if (storeonce_ad_endpoint | default('')) | length > 0 else {})
+        | combine({'ntp': storeonce_ntp_endpoint} if (storeonce_ntp_endpoint | default('')) | length > 0 else {})
+        | combine({'timezone': storeonce_timezone_endpoint} if (storeonce_timezone_endpoint | default('')) | length > 0 else {})
+        | combine({'syslog': storeonce_syslog_endpoint} if (storeonce_syslog_endpoint | default('')) | length > 0 else {})
+        | combine({'smtp': storeonce_smtp_endpoint} if (storeonce_smtp_endpoint | default('')) | length > 0 else {})
+        | combine({'snmp': storeonce_snmp_endpoint} if (storeonce_snmp_endpoint | default('')) | length > 0 else {})
+      }}
+
+- name: Resolve the request methods, letting per-setting overrides win
+  ansible.builtin.set_fact:
+    storeonce_methods: >-
+      {{
+        storeonce_contract.methods
+        | combine({'local_accounts': storeonce_local_accounts_method} if (storeonce_local_accounts_method | default('')) | length > 0 else {})
+        | combine({'ad': storeonce_ad_method} if (storeonce_ad_method | default('')) | length > 0 else {})
+        | combine({'ntp': storeonce_ntp_method} if (storeonce_ntp_method | default('')) | length > 0 else {})
+        | combine({'timezone': storeonce_timezone_method} if (storeonce_timezone_method | default('')) | length > 0 else {})
+        | combine({'syslog': storeonce_syslog_method} if (storeonce_syslog_method | default('')) | length > 0 else {})
+        | combine({'smtp': storeonce_smtp_method} if (storeonce_smtp_method | default('')) | length > 0 else {})
+        | combine({'snmp': storeonce_snmp_method} if (storeonce_snmp_method | default('')) | length > 0 else {})
+      }}
+
+- name: Resolve the capabilities this release exposes
+  ansible.builtin.set_fact:
+    storeonce_capabilities: "{{ storeonce_contract.capabilities | default({}) }}"
+
+- name: Report the resolved contract
+  ansible.builtin.debug:
+    msg: >-
+      StoreOnce {{ storeonce_hostname }} running {{ storeonce_release }}
+      resolved to contract branch {{ storeonce_release_branch }}
+      (capabilities: {{ storeonce_capabilities | dict2items | selectattr('value') | map(attribute='key') | list | sort | join(', ') | default('none', true) }}).

@@ -1,8 +1,8 @@
 ---
 - name: Configure HPE StoreOnce timezone
   ansible.builtin.uri:
-    url: "https://{{ storeonce_hostname }}{{ storeonce_timezone_endpoint }}"
-    method: "{{ storeonce_timezone_method }}"
+    url: "https://{{ storeonce_hostname }}{{ storeonce_endpoints.timezone }}"
+    method: "{{ storeonce_methods.timezone }}"
     url_username: "{{ storeonce_api_username }}"
     url_password: "{{ storeonce_api_password }}"
     force_basic_auth: true

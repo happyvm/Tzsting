@@ -314,9 +314,17 @@ def test_preflight_runs_before_anything_else(project):
             preflights = [i for i, n in enumerate(names) if "preflight" in n]
             if not preflights:
                 continue
-            # A lock may legitimately be taken before validation, to close the
-            # window between "the name is free" and "the VM is created".
-            allowed_before = {i for i, n in enumerate(names) if "lock" in n}
+            # Two kinds of role may legitimately run before validation, and
+            # neither mutates anything:
+            #  - a lock, to close the window between "the name is free" and
+            #    "the VM is created";
+            #  - api_contract, which resolves the release-specific REST
+            #    contract that preflight then validates - running it after
+            #    would leave preflight with nothing to check.
+            allowed_before = {
+                i for i, n in enumerate(names)
+                if "lock" in n or n == "api_contract"
+            }
             if any(i not in allowed_before for i in range(preflights[0])):
                 offenders.append(
                     f"{playbook.name}: {names[:preflights[0] + 1]}"

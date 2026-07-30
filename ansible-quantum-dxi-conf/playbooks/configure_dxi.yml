@@ -4,7 +4,9 @@
   connection: local
   gather_facts: false
   tasks:
-    - name: Validate request and release-specific API contract
+    - name: Resolve the REST contract for the appliance's release
+      ansible.builtin.include_role: {name: api_contract}
+    - name: Validate request and resolved API contract
       ansible.builtin.include_role: {name: preflight}
     - name: Maintain local accounts
       ansible.builtin.include_role: {name: local_accounts}
@@ -25,6 +27,8 @@
         data:
           dxi_conf_summary:
             appliance: "{{ dxi_hostname }}"
+            release: "{{ dxi_release }}"
+            contract_branch: "{{ dxi_release_branch }}"
             local_accounts: "{{ dxi_local_accounts | map(attribute='username') | list }}"
             ad_domain: "{{ dxi_ad_configuration.domain | default('unspecified') }}"
             ntp_servers: "{{ dxi_ntp_configuration.servers }}"

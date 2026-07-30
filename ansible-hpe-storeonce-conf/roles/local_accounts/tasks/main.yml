@@ -1,8 +1,8 @@
 ---
 - name: Create or maintain HPE StoreOnce local accounts
   ansible.builtin.uri:
-    url: "https://{{ storeonce_hostname }}{{ storeonce_local_accounts_endpoint }}"
-    method: "{{ storeonce_local_accounts_method }}"
+    url: "https://{{ storeonce_hostname }}{{ storeonce_endpoints.local_accounts }}"
+    method: "{{ storeonce_methods.local_accounts }}"
     url_username: "{{ storeonce_api_username }}"
     url_password: "{{ storeonce_api_password }}"
     force_basic_auth: true

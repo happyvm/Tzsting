@@ -1,23 +1,87 @@
 ---
+# Runs after api_contract, so it validates the *resolved* endpoints rather
+# than the raw per-appliance overrides: what matters is that whatever the
+# release's contract produced is usable, wherever it came from.
+
 - name: Validate HPE StoreOnce configuration request
   ansible.builtin.assert:
     that:
       - storeonce_hostname | length > 0
       - storeonce_api_username | length > 0
       - storeonce_api_password | length > 0
-      - storeonce_local_accounts_endpoint is match('^/[^ ]+$')
-      - storeonce_ad_endpoint is match('^/[^ ]+$')
-      - storeonce_ntp_endpoint is match('^/[^ ]+$')
-      - storeonce_timezone_endpoint is match('^/[^ ]+$')
       - storeonce_local_accounts | length > 0
       - storeonce_ntp_configuration.servers | length > 0
-      - not storeonce_syslog_enabled | bool or storeonce_syslog_endpoint is match('^/[^ ]+$')
-      - not storeonce_smtp_enabled | bool or storeonce_smtp_endpoint is match('^/[^ ]+$')
-      - not storeonce_snmp_enabled | bool or storeonce_snmp_endpoint is match('^/[^ ]+$')
     fail_msg: >-
-      Credentials and firmware-specific HTTPS API paths are mandatory.
-      Copy paths/payloads from the API guide for the target release;
-      enabling syslog/SMTP/SNMP each requires their own validated endpoint.
+      storeonce_hostname, API credentials, at least one local account and at
+      least one NTP server are all mandatory.
+
+- name: Validate the resolved API paths for the settings always applied
+  ansible.builtin.assert:
+    that:
+      - storeonce_endpoints[item] | default('') is match('^/[^ ]+$')
+    fail_msg: >-
+      No usable API path for '{{ item }}' on StoreOnce branch
+      {{ storeonce_release_branch }}. Fill in
+      storeonce_api_contracts['{{ storeonce_release_branch }}'].endpoints.{{ item }}
+      from that release's API guide, or override it for this appliance with
+      -e storeonce_{{ item }}_endpoint=/... - it must be an absolute path
+      with no spaces.
+  loop:
+    - local_accounts
+    - ad
+    - ntp
+    - timezone
+
+- name: Validate the resolved API paths for the optional settings that are enabled
+  when: lookup('vars', 'storeonce_' ~ item ~ '_enabled') | bool
+  ansible.builtin.assert:
+    that:
+      - storeonce_endpoints[item] | default('') is match('^/[^ ]+$')
+    fail_msg: >-
+      storeonce_{{ item }}_enabled is true but branch
+      {{ storeonce_release_branch }} has no usable API path for it. Fill in
+      storeonce_api_contracts['{{ storeonce_release_branch }}'].endpoints.{{ item }},
+      override it with -e storeonce_{{ item }}_endpoint=/..., or leave the
+      feature disabled.
+  loop:
+    - syslog
+    - smtp
+    - snmp
+
+- name: Validate every resolved request method
+  ansible.builtin.assert:
+    that:
+      - storeonce_methods[item] | default('') in ['POST', 'PUT', 'PATCH']
+    fail_msg: >-
+      The request method for '{{ item }}' resolved to
+      '{{ storeonce_methods[item] | default('(unset)') }}' - it must be POST,
+      PUT or PATCH. A read-only verb cannot apply a configuration.
+  loop:
+    - local_accounts
+    - ad
+    - ntp
+    - timezone
+    - syslog
+    - smtp
+    - snmp
+
+# Capability gate: a release either exposes a feature or it does not, and
+# asking for one it lacks should stop here rather than let the appliance
+# quietly accept a downgraded configuration.
+- name: Refuse SNMPv3 on a release that does not expose it
+  when:
+    - storeonce_snmp_enabled | bool
+    - storeonce_snmp_configuration.version | default('') == 'v3'
+  ansible.builtin.assert:
+    that:
+      - storeonce_capabilities.snmp_v3 | default(false) | bool
+    fail_msg: >-
+      SNMPv3 was requested but StoreOnce branch {{ storeonce_release_branch }}
+      is declared without snmp_v3 support, so the appliance would fall back to
+      a community-string configuration without saying so. Either target a
+      release that supports it, set storeonce_snmp_configuration.version to
+      v2c deliberately, or correct the capability flag in
+      storeonce_api_contracts if this branch does support v3.
 
 - name: Validate each local account has a username and password
   ansible.builtin.assert:

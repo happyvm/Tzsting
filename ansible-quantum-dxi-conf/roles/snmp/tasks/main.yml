@@ -2,8 +2,8 @@
 - name: Configure Quantum DXi SNMP
   when: dxi_snmp_enabled | bool
   ansible.builtin.uri:
-    url: "https://{{ dxi_hostname }}{{ dxi_snmp_endpoint }}"
-    method: "{{ dxi_snmp_method }}"
+    url: "https://{{ dxi_hostname }}{{ dxi_endpoints.snmp }}"
+    method: "{{ dxi_methods.snmp }}"
     url_username: "{{ dxi_api_username }}"
     url_password: "{{ dxi_api_password }}"
     force_basic_auth: true

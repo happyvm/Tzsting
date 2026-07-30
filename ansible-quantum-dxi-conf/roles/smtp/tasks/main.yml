@@ -2,8 +2,8 @@
 - name: Configure Quantum DXi SMTP alert email
   when: dxi_smtp_enabled | bool
   ansible.builtin.uri:
-    url: "https://{{ dxi_hostname }}{{ dxi_smtp_endpoint }}"
-    method: "{{ dxi_smtp_method }}"
+    url: "https://{{ dxi_hostname }}{{ dxi_endpoints.smtp }}"
+    method: "{{ dxi_methods.smtp }}"
     url_username: "{{ dxi_api_username }}"
     url_password: "{{ dxi_api_password }}"
     force_basic_auth: true

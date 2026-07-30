@@ -1,8 +1,8 @@
 ---
 - name: Configure Quantum DXi timezone
   ansible.builtin.uri:
-    url: "https://{{ dxi_hostname }}{{ dxi_timezone_endpoint }}"
-    method: "{{ dxi_timezone_method }}"
+    url: "https://{{ dxi_hostname }}{{ dxi_endpoints.timezone }}"
+    method: "{{ dxi_methods.timezone }}"
     url_username: "{{ dxi_api_username }}"
     url_password: "{{ dxi_api_password }}"
     force_basic_auth: true

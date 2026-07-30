@@ -7,15 +7,79 @@ dxi_api_headers:
   Accept: application/json
   Content-Type: application/json
 
-# DXi REST paths and payload schemas vary by DXi software generation. These
-# paths are intentionally required inventory values: copy them from the API
-# guide shipped with the exact target release instead of guessing in code.
+# --- Release-specific REST contract -----------------------------------------
+# DXi REST paths, methods and payload schemas vary by DXi software generation.
+# The generation an appliance runs is declared here (or per run with
+# -e dxi_release=...), and the api_contract role resolves it against the table
+# below.
+#
+# IMPORTANT - the paths below are deliberately empty, and the branch keys are
+# examples. Both must come from the API guide of the exact release you target:
+# a path guessed from a neighbouring generation can resolve to a different
+# resource and silently reconfigure the wrong thing. Rename the keys to the
+# branches you actually run and fill each one in once; every appliance on that
+# branch is then covered.
+#
+# The key is major.minor. The patch level in dxi_release is ignored for
+# selection (it does not change the REST surface) but is still recorded in the
+# AAP artifact.
+dxi_release: ""
+
+dxi_api_contracts:
+  "4.0":
+    endpoints:
+      local_accounts: ""
+      ad: ""
+      ntp: ""
+      timezone: ""
+      syslog: ""
+      smtp: ""
+      snmp: ""
+    methods:
+      local_accounts: POST
+      ad: PUT
+      ntp: PUT
+      timezone: PUT
+      syslog: PUT
+      smtp: PUT
+      snmp: PUT
+    capabilities:
+      # Older generations expose only v1/v2c on the SNMP endpoint. Requesting
+      # v3 against one that lacks it fails in preflight with a clear message
+      # instead of being silently downgraded by the appliance.
+      snmp_v3: false
+  "4.5":
+    endpoints:
+      local_accounts: ""
+      ad: ""
+      ntp: ""
+      timezone: ""
+      syslog: ""
+      smtp: ""
+      snmp: ""
+    methods:
+      local_accounts: POST
+      ad: PUT
+      ntp: PUT
+      timezone: PUT
+      syslog: PUT
+      smtp: PUT
+      snmp: PUT
+    capabilities:
+      snmp_v3: true
+
+# --- Per-appliance overrides -------------------------------------------------
+# Left empty, each of these falls back to the contract selected above. Set one
+# to pin a single path or method for a single appliance without forking the
+# whole table - an inventory written against the previous flat-variable form
+# keeps working unchanged.
 dxi_local_accounts_endpoint: ""
 # POST is not idempotent against most REST APIs: re-running the playbook
 # against an account that already exists will fail unless the target
-# firmware's endpoint accepts POST as an upsert. Use PUT/PATCH here instead
-# if the API guide documents an idempotent update-by-username operation.
-dxi_local_accounts_method: POST
+# release's endpoint accepts POST as an upsert. Set the branch's
+# methods.local_accounts to PUT/PATCH if its API guide documents an
+# idempotent update-by-username operation.
+dxi_local_accounts_method: ""
 dxi_local_accounts:
   - username: svc-ansible
     password: "{{ vault_dxi_local_admin_password }}"
@@ -23,7 +87,7 @@ dxi_local_accounts:
     enabled: true
 
 dxi_ad_endpoint: ""
-dxi_ad_method: PUT
+dxi_ad_method: ""
 dxi_ad_configuration:
   enabled: true
   domain: example.local
@@ -33,21 +97,22 @@ dxi_ad_configuration:
   base_dn: DC=example,DC=local
 
 dxi_ntp_endpoint: ""
-dxi_ntp_method: PUT
+dxi_ntp_method: ""
 dxi_ntp_configuration:
   enabled: true
   servers: [ntp01.example.local, ntp02.example.local]
 
 dxi_timezone_endpoint: ""
-dxi_timezone_method: PUT
+dxi_timezone_method: ""
 dxi_timezone_configuration:
   timezone: Europe/Paris
 
 # Optional - disabled by default, unlike the four settings above which are
-# always applied. Same "leave the endpoint blank until validated" contract.
+# always applied. Enabling one requires its path to be present in the
+# selected branch's contract (or overridden just below).
 dxi_syslog_enabled: false
 dxi_syslog_endpoint: ""
-dxi_syslog_method: PUT
+dxi_syslog_method: ""
 dxi_syslog_configuration:
   enabled: true
   server: syslog01.example.local
@@ -56,7 +121,7 @@ dxi_syslog_configuration:
 
 dxi_smtp_enabled: false
 dxi_smtp_endpoint: ""
-dxi_smtp_method: PUT
+dxi_smtp_method: ""
 dxi_smtp_configuration:
   enabled: true
   relay_host: smtp.example.local
@@ -72,7 +137,7 @@ dxi_smtp_configuration:
 # releases only expose v1/v2c over this endpoint.
 dxi_snmp_enabled: false
 dxi_snmp_endpoint: ""
-dxi_snmp_method: PUT
+dxi_snmp_method: ""
 dxi_snmp_configuration:
   enabled: true
   version: v3

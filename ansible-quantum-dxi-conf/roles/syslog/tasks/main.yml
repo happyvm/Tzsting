@@ -2,8 +2,8 @@
 - name: Configure Quantum DXi remote syslog forwarding
   when: dxi_syslog_enabled | bool
   ansible.builtin.uri:
-    url: "https://{{ dxi_hostname }}{{ dxi_syslog_endpoint }}"
-    method: "{{ dxi_syslog_method }}"
+    url: "https://{{ dxi_hostname }}{{ dxi_endpoints.syslog }}"
+    method: "{{ dxi_methods.syslog }}"
     url_username: "{{ dxi_api_username }}"
     url_password: "{{ dxi_api_password }}"
     force_basic_auth: true

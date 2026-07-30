@@ -410,7 +410,13 @@ Ansible Vault ou un gestionnaire de secrets externe.
    NetBackup, media servers, audit ;
 3. rôles de découverte et authentification - authentification OAuth2/JWT
    réelle **faite** dans les deux projets (`roles/auth`) ; la découverte de
-   version/capacités reste à faire.
+   version/capacités reste à faire. Le motif de référence existe désormais
+   dans `ansible-quantum-dxi-conf` et `ansible-hpe-storeonce-conf` : la
+   release est une variable d'entrée, résolue par un rôle `api_contract`
+   contre une table par branche qui porte endpoints, méthodes **et**
+   capacités, ces dernières étant contrôlées au préflight. Reprendre ce
+   motif ici, en remplaçant la release fournie par une release découverte
+   quand l'API le permet (`backup_api_version: auto`).
 
 ### Lot 2 — Déploiement des clients et agents
 

@@ -1,8 +1,8 @@
 ---
 - name: Configure Quantum DXi NTP
   ansible.builtin.uri:
-    url: "https://{{ dxi_hostname }}{{ dxi_ntp_endpoint }}"
-    method: "{{ dxi_ntp_method }}"
+    url: "https://{{ dxi_hostname }}{{ dxi_endpoints.ntp }}"
+    method: "{{ dxi_methods.ntp }}"
     url_username: "{{ dxi_api_username }}"
     url_password: "{{ dxi_api_password }}"
     force_basic_auth: true

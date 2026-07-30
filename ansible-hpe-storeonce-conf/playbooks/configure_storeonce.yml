@@ -4,7 +4,9 @@
   connection: local
   gather_facts: false
   tasks:
-    - name: Validate request and release-specific API contract
+    - name: Resolve the REST contract for the appliance's release
+      ansible.builtin.include_role: {name: api_contract}
+    - name: Validate request and resolved API contract
       ansible.builtin.include_role: {name: preflight}
     - name: Maintain local accounts
       ansible.builtin.include_role: {name: local_accounts}
@@ -25,6 +27,8 @@
         data:
           storeonce_conf_summary:
             appliance: "{{ storeonce_hostname }}"
+            release: "{{ storeonce_release }}"
+            contract_branch: "{{ storeonce_release_branch }}"
             local_accounts: "{{ storeonce_local_accounts | map(attribute='username') | list }}"
             ad_domain: "{{ storeonce_ad_configuration.domain | default('unspecified') }}"
             ntp_servers: "{{ storeonce_ntp_configuration.servers }}"
