@@ -1,0 +1,48 @@
+---
+- name: Validate SQL Server installation request
+  ansible.builtin.assert:
+    that:
+      - sql_server_operation in ['install', 'audit', 'repair', 'add_features']
+      - sql_server_winrm_hostname | length > 0
+      - sql_server_winrm_username | length > 0
+      - sql_server_winrm_password | length > 0
+      - sql_server_operation == 'audit' or sql_server_media_path | length > 0
+      - sql_server_operation == 'audit' or sql_server_media_checksum | length > 0
+      - not sql_server_update_enabled | bool or sql_server_update_source | length > 0
+      - not sql_server_update_enabled | bool or sql_server_update_checksum | length > 0
+      - sql_server_edition in ['Developer', 'Evaluation'] or sql_server_pid | length > 0
+      - sql_server_instance_name is match('^[A-Za-z_][A-Za-z0-9_$#]{0,15}$')
+      - sql_server_features | length > 0
+      - sql_server_features | difference(['SQLENGINE', 'REPLICATION', 'FULLTEXT', 'AS', 'IS', 'CONN', 'BC', 'SDK']) | length == 0
+      - sql_server_engine_service_account.name | length > 0
+      - >-
+        sql_server_engine_service_account.name is match('^(NT SERVICE\\\\|NT AUTHORITY\\\\).*') or
+        sql_server_engine_service_account.name is match('.*\\$$') or
+        sql_server_engine_service_account.password | length > 0
+      - sql_server_agent_service_account.name | length > 0
+      - >-
+        sql_server_agent_service_account.name is match('^(NT SERVICE\\\\|NT AUTHORITY\\\\).*') or
+        sql_server_agent_service_account.name is match('.*\\$$') or
+        sql_server_agent_service_account.password | length > 0
+      - sql_server_sysadmin_accounts | length > 0
+      - sql_server_authentication_mode in ['windows', 'mixed']
+      - sql_server_authentication_mode != 'mixed' or sql_server_sa_password | length >= 8
+      - sql_server_collation | length > 0
+      - sql_server_data_dir is match('^[A-Za-z]:\\\\')
+      - sql_server_log_dir is match('^[A-Za-z]:\\\\')
+      - sql_server_backup_dir is match('^[A-Za-z]:\\\\')
+      - sql_server_tempdb_dir is match('^[A-Za-z]:\\\\')
+      - sql_server_tempdb_file_count | int >= 1
+      - sql_server_tcp_port | int >= 1 and sql_server_tcp_port | int <= 65535
+      - sql_server_max_memory_mb is none or sql_server_min_memory_mb is none or sql_server_max_memory_mb | int >= sql_server_min_memory_mb | int
+      - sql_server_operation != 'repair' or confirm_sql_server_repair | bool
+    fail_msg: >-
+      A valid operation, WinRM credentials, an approved media path with a
+      SHA256 checksum (except in audit mode), a PID for any non-Developer/
+      Evaluation edition, a valid instance name, an allowlisted feature
+      set, valid service accounts (password required unless a virtual/gMSA
+      account), at least one sysadmin account, a valid authentication mode
+      (with an 8+ character sa password in mixed mode), directories under a
+      drive letter, a valid TempDB file count and TCP port are all
+      required; repair mode additionally requires
+      confirm_sql_server_repair=true. See README.
