@@ -1,14 +1,16 @@
 ---
-# Configures Veritas NetBackup primary server notification settings (SMTP,
-# SNMP) over its real REST API. Does NOT create/manage backup policies,
-# storage lifecycle policies, clients, or perform restores - see README
-# for exactly what this project covers and what it deliberately leaves
-# out.
+# Configures a NetBackup primary server's own Linux OS (local automation
+# account, NTP, timezone, over SSH) - assumes a standard RHEL-family host,
+# NetBackup Appliances are out of scope (see VEEAM-NETBACKUP-ROADMAP.md) -
+# and Veritas NetBackup primary server notification settings (SMTP, SNMP)
+# over its real REST API. Does NOT create/manage backup policies, storage
+# lifecycle policies, clients, or perform restores - see README for
+# exactly what this project covers and what it deliberately leaves out.
 #
 # Usage:
 #   ansible-playbook playbooks/configure_netbackup.yml --vault-password-file .vault_pass
 
-- name: Configure NetBackup primary server notification settings
+- name: Configure the NetBackup primary server's host and notification settings
   hosts: localhost
   connection: local
   gather_facts: false
@@ -17,6 +19,32 @@
     - name: Run request preflight
       ansible.builtin.include_role:
         name: preflight
+
+    - name: Add the NetBackup primary server to the in-memory inventory
+      ansible.builtin.add_host:
+        name: netbackup_conf_target
+        ansible_host: "{{ netbackup_conf_ssh_hostname }}"
+        ansible_connection: ssh
+        ansible_user: "{{ netbackup_conf_ssh_username }}"
+        ansible_password: "{{ netbackup_conf_ssh_password | default(omit, true) }}"
+        ansible_ssh_private_key_file: "{{ netbackup_conf_ssh_private_key_file | default(omit, true) }}"
+        ansible_port: "{{ netbackup_conf_ssh_port }}"
+        ansible_become: "{{ netbackup_conf_become | bool }}"
+        ansible_become_password: "{{ netbackup_conf_become_password | default(omit, true) }}"
+        ansible_python_interpreter: "{{ netbackup_conf_python_interpreter }}"
+      no_log: true
+
+    - name: Maintain the local automation account
+      ansible.builtin.include_role:
+        name: local_admin
+
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: ntp
+
+    - name: Configure timezone
+      ansible.builtin.include_role:
+        name: timezone
 
     - name: Authenticate to the NetBackup REST API
       ansible.builtin.include_role:
@@ -37,6 +65,9 @@
         data:
           netbackup_conf_summary:
             server: "{{ netbackup_conf_hostname }}"
+            local_admin: "{{ netbackup_conf_local_admin.name }}"
+            ntp_servers: "{{ netbackup_conf_ntp_servers }}"
+            timezone: "{{ netbackup_conf_timezone }}"
             smtp_configured: "{{ netbackup_conf_smtp_enabled | bool }}"
             snmp_configured: "{{ netbackup_conf_snmp_enabled | bool }}"
         aggregate: false

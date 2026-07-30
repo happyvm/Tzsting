@@ -1,0 +1,33 @@
+---
+- name: Validate activation key request
+  ansible.builtin.assert:
+    that:
+      - satellite_url | length > 0
+      - satellite_username | length > 0
+      - satellite_password | length > 0
+      - satellite_organization | length > 0
+      - satellite_ak_operation in ['manage', 'audit']
+      - satellite_ak_name | length > 0
+      - satellite_ak_state in ['present', 'present_with_defaults', 'absent']
+      - >-
+        satellite_ak_state == 'absent' or
+        (satellite_ak_lifecycle_environment | length > 0 and satellite_ak_content_view | length > 0 and satellite_ak_content_view_environments | length == 0) or
+        (satellite_ak_lifecycle_environment | length == 0 and satellite_ak_content_view | length == 0 and satellite_ak_content_view_environments | length > 0)
+      - satellite_ak_unlimited_hosts | bool or satellite_ak_max_hosts is not none
+      - not (satellite_ak_unlimited_hosts | bool) or satellite_ak_max_hosts is none or satellite_ak_max_hosts | int > 0
+    fail_msg: >-
+      Satellite credentials, an organization and an activation key name are
+      mandatory; when creating/updating a key, set exactly one of
+      (satellite_ak_lifecycle_environment + satellite_ak_content_view) or
+      satellite_ak_content_view_environments (they are mutually exclusive);
+      a non-unlimited key requires a positive satellite_ak_max_hosts.
+
+- name: Validate each content override
+  ansible.builtin.assert:
+    that:
+      - item.label | default('') | length > 0
+      - item.override | default('') in ['enabled', 'disabled', 'default']
+    fail_msg: "Every entry in satellite_ak_content_overrides requires a label and a valid override (enabled/disabled/default)."
+  loop: "{{ satellite_ak_content_overrides }}"
+  loop_control:
+    label: "{{ item.label | default('(missing label)') }}"

@@ -1,0 +1,71 @@
+# Installs and configures an NRPE-compatible agent on a Linux host for
+# Centreon supervision: package from an approved internal repository
+# (checksum-verified), nrpe.cfg (poller allowlist, allowlisted commands
+# only, no arbitrary arguments), and a firewall rule scoping the NRPE port
+# to the declared pollers. Windows (NSClient++ in NRPE mode) is out of
+# scope - see README and ENDPOINT-MANAGEMENT-ROADMAP.md.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy_nrpe_agent.yml --vault-password-file .vault_pass
+
+- name: Deploy an NRPE agent for Centreon supervision
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the target host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: centreon_nrpe_target
+        ansible_host: "{{ centreon_nrpe_ssh_hostname }}"
+        ansible_connection: ssh
+        ansible_user: "{{ centreon_nrpe_ssh_username }}"
+        ansible_password: "{{ centreon_nrpe_ssh_password | default(omit, true) }}"
+        ansible_ssh_private_key_file: "{{ centreon_nrpe_ssh_private_key_file | default(omit, true) }}"
+        ansible_port: "{{ centreon_nrpe_ssh_port }}"
+        ansible_become: "{{ centreon_nrpe_become | bool }}"
+        ansible_become_password: "{{ centreon_nrpe_become_password | default(omit, true) }}"
+        ansible_python_interpreter: "{{ centreon_nrpe_python_interpreter }}"
+      no_log: true
+
+    - name: Gather facts from the target host
+      ansible.builtin.setup:
+      delegate_to: centreon_nrpe_target
+      delegate_facts: true
+
+    - name: Record the target's OS family
+      ansible.builtin.set_fact:
+        centreon_nrpe_detected_os_family: "{{ hostvars['centreon_nrpe_target']['ansible_facts']['os_family'] }}"
+
+    - name: Install the NRPE package
+      ansible.builtin.include_role:
+        name: install
+      when: centreon_nrpe_operation == 'install'
+
+    - name: Configure NRPE
+      ansible.builtin.include_role:
+        name: configure
+
+    - name: Verify the NRPE agent
+      ansible.builtin.include_role:
+        name: verify
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          centreon_nrpe_agent_deploy_summary:
+            target: "{{ centreon_nrpe_ssh_hostname }}"
+            operation: "{{ centreon_nrpe_operation }}"
+            os_family: "{{ centreon_nrpe_detected_os_family }}"
+            service_name: "{{ centreon_nrpe_service_name }}"
+            port: "{{ centreon_nrpe_port }}"
+            pollers: "{{ centreon_pollers }}"
+            agent_backend: "{{ centreon_agent_backend }}"
+            commands: "{{ centreon_nrpe_commands | map(attribute='name') | list }}"
+            package_changed: "{{ centreon_nrpe_package_changed | default(false) }}"
+            config_changed: "{{ centreon_nrpe_config_render.changed }}"
+        aggregate: false

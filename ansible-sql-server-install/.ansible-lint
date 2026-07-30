@@ -1,0 +1,15 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses a project-wide `sql_server_` prefix
+  # instead of a per-role prefix on register vars: sql_server_setup_result
+  # (set in roles/install) is read back in the playbook's set_stats task,
+  # and the checksum/service/version results follow the same convention
+  # for consistency, even though most are only read within their own role -
+  # a per-role prefix would be inconsistent and actively misleading about
+  # which of these is meant to be read outside its role.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml

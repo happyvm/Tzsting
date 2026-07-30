@@ -1,0 +1,90 @@
+---
+- name: Validate Centreon connection settings
+  ansible.builtin.assert:
+    that:
+      - centreon_url | length > 0
+      - centreon_username | length > 0
+      - centreon_password | length > 0
+      - centreon_api_version | length > 0
+    fail_msg: "centreon_url, centreon_username, centreon_password and centreon_api_version are all mandatory."
+
+- name: Validate the downtime endpoint has been supplied by the operator
+  ansible.builtin.assert:
+    that:
+      - centreon_downtime_endpoint | length > 0
+      - centreon_downtime_endpoint is match('^/')
+      - centreon_downtime_method in ['POST', 'PUT']
+    fail_msg: >-
+      centreon_downtime_endpoint is deliberately left blank in group_vars -
+      confirm the real downtime resource path against your Centreon server's
+      own live API reference (https://<server>/centreon/api/<version>/doc)
+      and set it (starting with a leading /) before running this project.
+      See README.md for why this differs from the login flow, which IS
+      hardcoded in roles/auth.
+
+- name: Validate the downtime target
+  ansible.builtin.assert:
+    that:
+      - centreon_downtime_target_type in ['host', 'service']
+      - centreon_host_id is not none
+      - centreon_host_id | int > 0
+      - centreon_downtime_target_type == 'host' or (centreon_service_id is not none and centreon_service_id | int > 0)
+    fail_msg: >-
+      centreon_downtime_target_type must be host or service; centreon_host_id
+      is always required, and centreon_service_id is additionally required
+      when targeting a service. Host/service name resolution is not
+      implemented in this project - supply the numeric Centreon IDs
+      directly (see README.md).
+
+- name: Validate mandatory downtime metadata
+  ansible.builtin.assert:
+    that:
+      - centreon_downtime_comment | length > 0
+      - centreon_downtime_author | length > 0
+      - centreon_downtime_start_time | length > 0
+      - centreon_downtime_end_time | length > 0 or centreon_downtime_duration_seconds is not none
+    fail_msg: >-
+      centreon_downtime_comment, centreon_downtime_author and
+      centreon_downtime_start_time are mandatory, and at least one of
+      centreon_downtime_end_time or centreon_downtime_duration_seconds must
+      be set so the downtime has a bounded end.
+
+- name: Validate the explicit duration, when supplied directly
+  ansible.builtin.assert:
+    that:
+      - centreon_downtime_duration_seconds | int > 0
+      - centreon_downtime_duration_seconds | int <= centreon_downtime_max_duration_seconds
+    fail_msg: >-
+      centreon_downtime_duration_seconds must be a positive number of seconds
+      not exceeding centreon_downtime_max_duration_seconds
+      ({{ centreon_downtime_max_duration_seconds }}) - CENTREON-ROADMAP.md's
+      guard-rails reject open-ended/excessive downtimes.
+  when: centreon_downtime_duration_seconds is not none
+
+- name: Compute the duration implied by start/end time, when duration isn't given directly
+  ansible.builtin.set_fact:
+    centreon_downtime_computed_duration_seconds: >-
+      {{ ((centreon_downtime_end_time | to_datetime(format=centreon_downtime_time_format)) -
+      (centreon_downtime_start_time | to_datetime(format=centreon_downtime_time_format))).total_seconds() | int }}
+  when: centreon_downtime_duration_seconds is none
+
+- name: Validate the duration implied by start/end time
+  ansible.builtin.assert:
+    that:
+      - centreon_downtime_computed_duration_seconds | int > 0
+      - centreon_downtime_computed_duration_seconds | int <= centreon_downtime_max_duration_seconds
+    fail_msg: >-
+      centreon_downtime_end_time must be after centreon_downtime_start_time,
+      and the resulting duration must not exceed
+      centreon_downtime_max_duration_seconds
+      ({{ centreon_downtime_max_duration_seconds }}). Both timestamps must
+      match centreon_downtime_time_format
+      ({{ centreon_downtime_time_format }}).
+  when: centreon_downtime_duration_seconds is none
+
+- name: Validate is_fixed/with_services are boolean-castable
+  ansible.builtin.assert:
+    that:
+      - centreon_downtime_is_fixed | bool in [true, false]
+      - centreon_downtime_with_services | bool in [true, false]
+    fail_msg: "centreon_downtime_is_fixed and centreon_downtime_with_services must be booleans."

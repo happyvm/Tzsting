@@ -264,6 +264,14 @@ pourra être publiée sous `ansible-centreon-cma-agent-deploy`.
 
 Artefact AAP : `centreon_nrpe_agent_deploy_summary`.
 
+🟡 Implémenté pour Linux dans
+[`ansible-centreon-nrpe-agent-deploy`](../ansible-centreon-nrpe-agent-deploy) :
+installation depuis un dépôt interne approuvé, `nrpe.cfg` (pollers
+autorisés, commandes allowlistées), pare-feu ciblé, contrôle du service,
+publication des macros/paramètres pour `ansible-centreon-host-add`. Non
+couvert : Windows/NSClient++, la résolution nom → ID (n'importe pas ici,
+ce projet ne parle qu'à l'hôte lui-même), et le passage à CMA.
+
 ---
 
 ## Flexera Inventory Agent

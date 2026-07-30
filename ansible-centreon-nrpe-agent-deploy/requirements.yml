@@ -1,0 +1,7 @@
+---
+collections:
+  - name: ansible.posix
+  - name: community.general
+# ansible.posix.firewalld (RHEL family) and community.general.ufw (Debian
+# family) scope the NRPE port to the declared pollers only. Everything
+# else uses ansible.builtin modules.

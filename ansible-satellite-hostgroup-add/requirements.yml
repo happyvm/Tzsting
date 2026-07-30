@@ -1,0 +1,10 @@
+---
+collections:
+  - name: theforeman.foreman
+    version: ">=3.0.0"
+
+# Same collection choice as ansible-satellite-activation-key-manage - see
+# that project's README for why theforeman.foreman rather than
+# redhat.satellite. theforeman.foreman.host, .host_info and
+# .hostgroup_info were all verified via `ansible-doc -j` against the
+# installed collection before writing these roles.
