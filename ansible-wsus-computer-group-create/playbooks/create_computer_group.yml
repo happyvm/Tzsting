@@ -1,0 +1,52 @@
+# Creates a WSUS computer target group (used as a deployment ring or
+# broadcast group), using the real UpdateServices PowerShell module and
+# the underlying WSUS Administration API's CreateComputerTargetGroup
+# method (there is no dedicated New-WsusComputerTargetGroup cmdlet - see
+# README), run on a Windows host with the WSUS console/RSAT feature
+# installed. Does not approve any update and does not touch SUSDB
+# directly - see README and ENDPOINT-MANAGEMENT-ROADMAP.md for the full
+# catalogue this is one piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/create_computer_group.yml --vault-password-file .vault_pass
+
+- name: Create a WSUS computer target group
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the console host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: wsus_gc_console
+        ansible_host: "{{ wsus_console_host }}"
+        ansible_connection: winrm
+        ansible_user: "{{ wsus_conn_winrm_username }}"
+        ansible_password: "{{ wsus_conn_winrm_password }}"
+        ansible_port: "{{ wsus_conn_winrm_port }}"
+        ansible_winrm_transport: "{{ wsus_conn_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if wsus_conn_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Resolve and create the computer target group
+      delegate_to: wsus_gc_console
+      block:
+        - name: Include the create_group role
+          ansible.builtin.include_role:
+            name: create_group
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          wsus_computer_group_create_summary:
+            wsus_server: "{{ wsus_server_name }}"
+            operation: "{{ wsus_gc_operation }}"
+            group_name: "{{ wsus_gc_result.result.group_name }}"
+            parent_group_name: "{{ wsus_gc_result.result.parent_group_name }}"
+            already_exists: "{{ wsus_gc_result.result.already_exists }}"
+            created: "{{ wsus_gc_result.result.created }}"
+        aggregate: false

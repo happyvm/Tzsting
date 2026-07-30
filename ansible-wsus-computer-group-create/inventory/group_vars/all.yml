@@ -1,0 +1,31 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# --- Connection to a Windows host with the WSUS console/RSAT feature
+# (and therefore the UpdateServices PowerShell module) installed -
+# typically the WSUS server itself or an admin workstation. See README.
+wsus_console_host: wsus01.example.local
+wsus_conn_winrm_username: "{{ vault_wsus_conn_winrm_username }}"
+wsus_conn_winrm_password: "{{ vault_wsus_conn_winrm_password }}"
+wsus_conn_winrm_port: 5986
+wsus_conn_winrm_transport: ntlm
+wsus_conn_winrm_validate_certs: true
+
+# --- WSUS server ---
+wsus_server_name: wsus01.example.local
+wsus_port_number: 8531
+wsus_use_ssl: true
+
+# create | audit - audit only reports what would be created (no native
+# dry-run exists for the raw CreateComputerTargetGroup API call used
+# here - see README).
+wsus_gc_operation: audit
+
+# The two reserved WSUS system groups - never allowed as a target name.
+wsus_gc_reserved_names:
+  - "All Computers"
+  - "Unassigned Computers"
+
+wsus_gc_group_name: ""
+# Optional - set to nest the new group under an existing one.
+wsus_gc_parent_group_name: ""
