@@ -22,8 +22,42 @@ modèle Vault/Credential AAP du dépôt). `azcmagent check` (validation
 réseau préalable) n'est pas exposé par le rôle officiel et n'est donc pas
 automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
 uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
-respectivement partiel et à faire ; tout le catalogue SCCM/WSUS (Lots
-2-3) reste à faire.
+respectivement partiel et à faire.
+
+🟡 **`ansible-sccm-client-deploy`** (Lot 2, étape 6) implémenté via
+`ccmsetup.exe` exécuté directement (pas de client push console), le
+même choix qu'`ansible-sql-server-install` : un mécanisme d'installation
+officiel long-stable plutôt qu'un contrat d'API deviné. Modes
+`install`/`repair`/`upgrade`/`audit`, checksum du média obligatoire même
+en `audit`, vérification bornée post-installation (`SMS_Client` WMI,
+service `CcmExec`, site assigné via `GetAssignedSite()`), déclenchement
+facultatif des cycles policy/discovery via `TriggerSchedule` (GUID
+officiellement documentés). Non couvert : client push console, ajout à
+une device collection (délibérément un projet séparé,
+`ansible-sccm-device-collection-add`), vérification côté-site de l'état
+"actif", désinstallation.
+
+🟡 **`ansible-sccm-device-collection-add`** (étape 7) et
+**`ansible-sccm-device-collection-remove`** (étape 8) implémentés via le
+vrai module PowerShell `ConfigurationManager`, exécuté sur un hôte
+Windows qui l'a déjà installé - voir leurs README. `ansible-sccm-conf`
+(étape 5) reste à faire.
+
+🟡 **`ansible-wsus-computer-group-create`** (Lot 3, étape 10) et
+**`ansible-wsus-computer-group-add`** (étape 11) implémentés via le vrai
+module PowerShell `UpdateServices`. Le premier appelle directement la
+méthode brute `IUpdateServer.CreateComputerTargetGroup` (aucune cmdlet
+dédiée n'existe pour la création de groupe) ; le second utilise la vraie
+cmdlet `Add-WsusComputer`, avec résolution exacte sur `FullDomainName` et
+refus si la machine n'a jamais reporté de statut
+(`LastReportedStatusTime` égal à `DateTime.MinValue`). Le ciblage
+client-side (GPO) n'est pas détecté automatiquement - publié via une
+variable déclarée par l'exploitant plutôt que deviné.
+`ansible-wsus-computer-group-remove` (étape 12) est délibérément différé
+- il nécessiterait de faire le pont entre l'objet `WsusComputer` des
+cmdlets et le type brut `IComputerTarget` attendu par
+`RemoveComputerTarget`, pas corroboré avec assez de confiance pour
+l'instant.
 
 ## Principes communs
 
@@ -98,6 +132,14 @@ un serveur Windows physique ou virtuel :
 
 Artefact AAP : `sccm_client_deploy_summary`.
 
+🟡 Implémenté dans [`ansible-sccm-client-deploy`](../ansible-sccm-client-deploy) :
+`ccmsetup.exe` exécuté directement (checksum obligatoire du média),
+modes `install`/`repair`/`upgrade`/`audit`, vérification bornée post-
+installation (`SMS_Client`, `CcmExec`, site assigné), déclenchement
+facultatif des cycles policy/discovery. Non couvert : client push
+console, ajout à une device collection, vérification côté-site "actif",
+désinstallation.
+
 ### `ansible-sccm-device-collection-add`
 
 Ajout idempotent d'une machine dans une device collection SCCM existante :
@@ -114,6 +156,14 @@ Ajout idempotent d'une machine dans une device collection SCCM existante :
 - aucune installation du client et aucun déploiement applicatif implicites.
 
 Artefact AAP : `sccm_device_collection_add_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-device-collection-add`](../ansible-sccm-device-collection-add) :
+résolution exacte du device (ResourceId ou nom exact,
+`-DisableWildcardHandling`) et de la collection, ajout d'une direct
+membership rule idempotent, avertissement non bloquant sur les règles
+query/include/exclude existantes, mise à jour facultative de la
+collection. Non couvert : installation du client, création de la
+collection.
 
 ### `ansible-sccm-device-collection-remove`
 
@@ -132,6 +182,14 @@ Retrait contrôlé d'une machine d'une device collection SCCM :
 - confirmation `confirm_remove_from_collection=true`.
 
 Artefact AAP : `sccm_device_collection_remove_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-device-collection-remove`](../ansible-sccm-device-collection-remove) :
+suppression d'une direct membership rule idempotente, vérification
+immédiate après suppression, publication de trois indicateurs distincts
+(`query_rule_present`/`include_rule_present`/`exclude_rule_present`)
+plutôt qu'un blocage, confirmation `confirm_remove_from_collection=true`
+obligatoire. Non couvert : suppression de l'objet device, désinstallation
+du client, suppression Active Directory/CMDB.
 
 ---
 
@@ -156,6 +214,13 @@ groupe de diffusion :
 
 Artefact AAP : `wsus_computer_group_create_summary`.
 
+🟡 Implémenté dans [`ansible-wsus-computer-group-create`](../ansible-wsus-computer-group-create) :
+validation du nom (caractères interdits, longueur, groupes réservés),
+création idempotente via `IUpdateServer.CreateComputerTargetGroup`
+(aucune cmdlet dédiée n'existe pour cette opération). Non couvert :
+association à une définition de ring (laissée à l'exploitant via le nom
+du groupe lui-même).
+
 ### `ansible-wsus-computer-group-add`
 
 Ajout ou déplacement contrôlé d'une machine déjà enregistrée dans WSUS vers un
@@ -173,6 +238,15 @@ groupe de diffusion :
 - aucun déclenchement de patch ou de redémarrage implicite.
 
 Artefact AAP : `wsus_computer_group_add_summary`.
+
+🟡 Implémenté dans [`ansible-wsus-computer-group-add`](../ansible-wsus-computer-group-add) :
+résolution exacte sur `FullDomainName` (jamais la correspondance
+partielle de `-NameIncludes`), refus si la machine n'a jamais reporté de
+statut, ajout idempotent via la vraie cmdlet `Add-WsusComputer` (mode
+`audit` via son propre `-WhatIf` natif), vérification finale de
+l'appartenance. Le ciblage client-side (GPO) n'est pas détecté
+automatiquement - publié via une variable déclarée par l'exploitant.
+Non couvert : le mode `move` (retrait des autres groupes).
 
 ### `ansible-wsus-computer-group-remove`
 

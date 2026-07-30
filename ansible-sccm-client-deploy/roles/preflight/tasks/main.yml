@@ -1,0 +1,55 @@
+---
+- name: Validate the target connection settings
+  ansible.builtin.assert:
+    that:
+      - sccm_cd_target_hostname | length > 0
+      - sccm_conn_winrm_username | length > 0
+      - sccm_conn_winrm_password | length > 0
+    fail_msg: "sccm_cd_target_hostname, sccm_conn_winrm_username and sccm_conn_winrm_password are all mandatory."
+
+- name: Validate the operation
+  ansible.builtin.assert:
+    that:
+      - sccm_cd_operation in ['install', 'repair', 'upgrade', 'audit']
+    fail_msg: "sccm_cd_operation must be install, repair, upgrade or audit."
+
+- name: Validate the ccmsetup media
+  ansible.builtin.assert:
+    that:
+      - sccm_cd_ccmsetup_path | length > 0
+      - sccm_cd_ccmsetup_checksum_sha256 | length > 0
+    fail_msg: >-
+      sccm_cd_ccmsetup_path and sccm_cd_ccmsetup_checksum_sha256 are
+      both mandatory - stage ccmsetup.exe on an approved internal
+      distribution point/repository and set both, even in audit mode
+      (so configuration mistakes surface before a real run).
+
+- name: Validate the site identity and content source
+  ansible.builtin.assert:
+    that:
+      - sccm_cd_site_code | length > 0
+      - sccm_cd_site_code is match('^[A-Za-z0-9]{3}$')
+      - sccm_cd_management_point | length > 0 or sccm_cd_source_path | length > 0
+    fail_msg: >-
+      sccm_cd_site_code is mandatory and must be a 3-character site
+      code, and at least one of sccm_cd_management_point or
+      sccm_cd_source_path must be set so ccmsetup can find content.
+
+- name: Validate the PKI/HTTPS options
+  ansible.builtin.assert:
+    that:
+      - sccm_cd_http_port | int > 0
+      - sccm_cd_https_port | int > 0
+    fail_msg: "sccm_cd_http_port and sccm_cd_https_port must be valid port numbers."
+
+- name: Validate the download and verification bounds
+  ansible.builtin.assert:
+    that:
+      - sccm_cd_retry_minutes | int > 0
+      - sccm_cd_download_timeout_minutes | int > 0
+      - sccm_cd_verify_attempts | int > 0
+      - sccm_cd_verify_delay_seconds | int > 0
+    fail_msg: >-
+      sccm_cd_retry_minutes, sccm_cd_download_timeout_minutes,
+      sccm_cd_verify_attempts and sccm_cd_verify_delay_seconds must all
+      be positive integers.
