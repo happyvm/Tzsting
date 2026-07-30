@@ -7,6 +7,21 @@ isolément et de façon statique, alors que cette suite vérifie ce qu'ils ne
 peuvent pas voir — la cohérence entre projets, le câblage réel de la CI, et
 le comportement effectif des garde-fous de préflight.
 
+## Les workflows du dépôt
+
+| Workflow | Déclenchement | Rôle |
+|---|---|---|
+| `ansible-projects.yml` | matrice calculée depuis les chemins modifiés | yamllint + ansible-lint + `--syntax-check` du ou des projets touchés, plus ShellCheck pour `ansible-resizedisk` |
+| `powershell-quality.yml` | fichiers PowerShell et 6 projets à script embarqué | PSScriptAnalyzer |
+| `tests.yml` | tout push | cette suite |
+
+`ansible-projects.yml` remplace les 39 fichiers `*-ci.yml` d'origine (1745
+lignes pour trois formes distinctes une fois le nom du projet normalisé).
+Il ne contient aucune liste de projets : le job `detect` retient les
+répertoires de premier niveau modifiés qui contiennent un `ansible.cfg`, le
+même marqueur que `conftest.py` utilise pour les découvrir. Un nouveau
+projet est donc pris en charge sans toucher à la CI.
+
 ## Exécution
 
 ```bash
@@ -29,7 +44,7 @@ cd tests && pytest --ignore=test_guards.py
 | Fichier | Ce qu'il vérifie |
 |---|---|
 | `conftest.py` | Découverte des projets, parcours des tâches (y compris dans `block`/`rescue`/`always`), et le harnais qui rejoue les garde-fous d'un rôle via `ansible-playbook` |
-| `test_layout.py` | Chaque projet a la structure commune (`ansible.cfg`, `requirements.yml`, inventaire d'exemple, configs de lint) et un workflow CI qui surveille le bon répertoire et `--syntax-check` des playbooks qui existent réellement |
+| `test_layout.py` | Chaque projet a la structure commune (`ansible.cfg`, `requirements.yml`, inventaire d'exemple, configs de lint), et le workflow consolidé `ansible-projects.yml` conserve ses quatre contrôles, couvre tous les playbooks et ne contient aucune liste de projets en dur |
 | `test_structure.py` | Les rôles inclus existent et sont tous utilisés, chaque tâche est nommée, les modules sont en FQCN, toute collection appelée est déclarée dans `requirements.yml`, et aucun secret en clair dans `group_vars` |
 | `test_embedded_scripts.py` | Les extracteurs `scripts/extract_embedded_scripts.py` écrivent bien **tous** les scripts PowerShell/bash embarqués dans le YAML |
 | `test_guards.py` | Les `assert` de préflight acceptent les requêtes valides et rejettent réellement les entrées hostiles |

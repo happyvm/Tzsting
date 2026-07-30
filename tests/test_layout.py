@@ -1,10 +1,15 @@
-"""Every project follows the same layout and is wired into CI.
+"""Every project follows the same layout, and CI is wired to find it.
 
 These are the conventions that make the projects interchangeable for an
 operator: same entry points, same lint configuration, same inventory
-example, and a CI workflow that actually watches the right directory and
-syntax-checks a playbook that exists. A project that quietly drifts from
-them still passes its own lint job, so nothing else would catch it.
+example. A project that quietly drifts from them still passes lint, so
+nothing else would catch it.
+
+Since the 39 per-project workflows were merged into `ansible-projects.yml`,
+CI discovers projects by their `ansible.cfg` marker rather than from a list.
+The tests below therefore check the shape of that single workflow - that it
+keeps all four checks, covers every playbook, and stays list-free - instead
+of checking 39 near-identical files against each other.
 """
 from __future__ import annotations
 
@@ -74,91 +79,164 @@ def test_ansible_lint_excludes_generated_paths(project):
 # --- CI wiring -------------------------------------------------------------
 
 
-def test_project_has_ci_workflow(project):
-    assert project.workflow.is_file(), (
-        f"{project.name} has no .github/workflows/{project.name}-ci.yml, so "
-        f"nothing lints it on push"
-    )
+POWERSHELL_QUALITY = REPO_ROOT / ".github" / "workflows" / "powershell-quality.yml"
 
 
-def test_workflow_watches_its_own_project(project):
-    workflow = load_yaml(project.workflow)
-    # `on` is parsed as the boolean True by YAML 1.1, which is what PyYAML does.
-    triggers = workflow.get("on", workflow.get(True))
-    assert triggers, f"{project.workflow.name} declares no triggers"
-    for event in ("push", "pull_request"):
-        paths = triggers[event]["paths"]
-        assert f"{project.name}/**" in paths, (
-            f"{project.workflow.name} does not watch {project.name}/** on "
-            f"{event}, so changes to the project would not trigger its CI"
-        )
-        assert f".github/workflows/{project.name}-ci.yml" in paths, (
-            f"{project.workflow.name} does not watch itself on {event}"
-        )
+def test_powershell_quality_covers_every_extraction_it_runs():
+    """Its path filter must trigger for every project it then analyses.
 
-
-def test_workflow_working_directory_is_the_project(project):
-    workflow = load_yaml(project.workflow)
-    working_dir = workflow.get("defaults", {}).get("run", {}).get("working-directory")
-    assert working_dir == project.name, (
-        f"{project.workflow.name} runs in {working_dir!r}, expected "
-        f"{project.name!r} - every step is written relative to the project root"
-    )
-
-
-def _syntax_check_coverage(project) -> tuple[set[str], bool]:
-    """What the workflow's --syntax-check step covers.
-
-    Projects with a single entry point name it directly; the multi-playbook
-    ones loop over `playbooks/*.yml`, which covers everything including
-    playbooks added later. Both forms are fine.
+    The workflow is scoped so a doc-only push does not pay for installing
+    PSScriptAnalyzer. That scoping is only safe while the filter still
+    matches every project the workflow extracts from - otherwise a change to
+    a project's embedded PowerShell would silently never be analysed.
     """
-    workflow_text = project.workflow.read_text()
-    assert "--syntax-check" in workflow_text, (
-        f"{project.workflow.name} has no `ansible-playbook ... --syntax-check` step"
-    )
-    globbed = bool(re.search(r"for\s+\w+\s+in\s+playbooks/\*\.yml", workflow_text))
-    named = set(re.findall(r"ansible-playbook\s+(playbooks/\S+\.yml)", workflow_text))
-    return named, globbed
-
-
-def test_workflow_syntax_checks_existing_playbooks(project):
-    """Any playbook the workflow names by hand must actually exist."""
-    named, globbed = _syntax_check_coverage(project)
-    assert named or globbed, (
-        f"{project.workflow.name} syntax-checks nothing identifiable"
-    )
-    for playbook in sorted(named):
-        assert (project.path / playbook).is_file(), (
-            f"{project.workflow.name} syntax-checks {playbook}, which does not "
-            f"exist in {project.name}"
+    workflow = load_yaml(POWERSHELL_QUALITY)
+    triggers = workflow.get("on", workflow.get(True))
+    text = POWERSHELL_QUALITY.read_text()
+    extracted = set(re.findall(r"python3 (\S+?)/scripts/extract_embedded_scripts\.py", text))
+    assert extracted, "no extraction steps found in powershell-quality.yml"
+    for event in ("push", "pull_request"):
+        paths = set(triggers[event]["paths"])
+        missing = sorted(p for p in extracted if f"{p}/**" not in paths)
+        assert not missing, (
+            f"powershell-quality.yml extracts from {missing} on {event} but its "
+            f"path filter does not match them - their embedded PowerShell would "
+            f"stop being analysed"
         )
 
 
-def test_every_playbook_is_syntax_checked(project):
-    """A playbook nobody syntax-checks is a playbook CI does not cover."""
-    named, globbed = _syntax_check_coverage(project)
-    if globbed:
-        return
-    missing = sorted({f"playbooks/{p.name}" for p in project.playbooks()} - named)
-    assert not missing, (
-        f"{project.workflow.name} never syntax-checks {missing} - name them in "
-        f"the --syntax-check step, or loop over playbooks/*.yml like "
-        f"ansible-snapshot does"
+def test_powershell_quality_matches_standalone_scripts_anywhere(repo_root):
+    """Every .ps1/.psm1/.psd1 in the repo must still trigger the workflow."""
+    workflow = load_yaml(POWERSHELL_QUALITY)
+    triggers = workflow.get("on", workflow.get(True))
+    for event in ("push", "pull_request"):
+        paths = set(triggers[event]["paths"])
+        for suffix in ("ps1", "psm1", "psd1"):
+            assert f"**/*.{suffix}" in paths, (
+                f"powershell-quality.yml does not match **/*.{suffix} on {event}, "
+                f"so a standalone script added outside the six extraction "
+                f"projects would go unanalysed"
+            )
+
+
+def test_no_workflow_uses_yaml_anchors(repo_root):
+    """GitHub Actions does not expand YAML anchors, so they silently misfire."""
+    offenders = []
+    for workflow in sorted((repo_root / ".github" / "workflows").glob("*.yml")):
+        for number, line in enumerate(workflow.read_text().splitlines(), 1):
+            if re.search(r":\s*[&*][A-Za-z_][\w-]*\s*$", line):
+                offenders.append(f"{workflow.name}:{number}")
+    assert not offenders, (
+        f"YAML anchor/alias used in {offenders} - the Actions workflow parser "
+        f"does not support them, so the value would not expand"
     )
 
 
-def test_no_orphan_workflows(repo_root):
-    """Every *-ci.yml workflow corresponds to a project that still exists."""
+ANSIBLE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ansible-projects.yml"
+
+
+def test_consolidated_workflow_exists():
+    assert ANSIBLE_WORKFLOW.is_file(), (
+        "ansible-projects.yml is gone - it is the only thing linting the "
+        "Ansible projects since the 39 per-project workflows were merged"
+    )
+
+
+def test_no_per_project_workflows_remain(repo_root):
+    """The per-project files were merged; a stray one would lint twice.
+
+    They were 39 files for three distinct shapes, and reintroducing one
+    means the next shared change has to be made in two places again.
+    """
+    leftovers = sorted(
+        w.name for w in (repo_root / ".github" / "workflows").glob("*-ci.yml")
+    )
+    assert not leftovers, (
+        f"per-project workflow(s) {leftovers} are back - the Ansible projects "
+        f"are linted by ansible-projects.yml's matrix now"
+    )
+
+
+def test_consolidated_workflow_discovers_projects_by_ansible_cfg():
+    """Discovery must stay marker-based so a new project needs no CI edit."""
+    text = ANSIBLE_WORKFLOW.read_text()
+    assert "ansible.cfg" in text, (
+        "ansible-projects.yml no longer keys off ansible.cfg to find projects - "
+        "if it now carries a hardcoded list, a new project is silently unlinted"
+    )
     from conftest import PROJECTS
 
-    names = {p.name for p in PROJECTS}
-    orphans = []
-    for workflow in sorted((repo_root / ".github" / "workflows").glob("*-ci.yml")):
-        project_name = workflow.name[: -len("-ci.yml")]
-        if project_name not in names:
-            orphans.append(workflow.name)
-    assert not orphans, f"workflows without a matching project: {orphans}"
+    for project in PROJECTS:
+        assert f"'{project.name}'" not in text or project.name == "ansible-resizedisk", (
+            f"{project.name} is named explicitly in ansible-projects.yml - the "
+            f"matrix is meant to be derived from the changed paths, not listed"
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ansible-galaxy collection install -r requirements.yml",
+        "yamllint .",
+        "ansible-lint",
+        "--syntax-check",
+    ],
+)
+def test_consolidated_workflow_keeps_every_check(command):
+    """The merge must not have quietly dropped one of the four checks.
+
+    This reads the lint job's actual steps rather than searching the file
+    text: `ansible-lint` also appears in the `pip install` line, so a
+    substring match over the whole workflow would still pass with the
+    ansible-lint step deleted.
+    """
+    workflow = load_yaml(ANSIBLE_WORKFLOW)
+    runs = [
+        step["run"].strip()
+        for step in workflow["jobs"]["lint"]["steps"]
+        if "run" in step and not step["run"].strip().startswith("pip install")
+    ]
+    assert any(command in run for run in runs), (
+        f"no step in ansible-projects.yml's lint job runs `{command}`, which "
+        f"every per-project workflow used to run. Steps found: {runs}"
+    )
+
+
+def test_consolidated_workflow_syntax_checks_every_playbook():
+    """Looping over playbooks/*.yml is what makes coverage automatic.
+
+    Half the old workflows named a single playbook instead, and silently
+    stopped covering the rest as soon as a second one was added.
+    """
+    text = ANSIBLE_WORKFLOW.read_text()
+    assert re.search(r"playbooks=\(playbooks/\*\.yml\)", text), (
+        "ansible-projects.yml does not glob playbooks/*.yml for --syntax-check, "
+        "so newly added playbooks would not be covered"
+    )
+    assert "nullglob" in text, (
+        "the playbook glob needs nullglob, or an empty playbooks/ directory "
+        "would hand ansible-playbook the literal glob string"
+    )
+
+
+def test_consolidated_workflow_does_not_fail_fast():
+    """One project failing must not hide the state of the other 38."""
+    workflow = load_yaml(ANSIBLE_WORKFLOW)
+    assert workflow["jobs"]["lint"]["strategy"]["fail-fast"] is False, (
+        "ansible-projects.yml's lint matrix is fail-fast, so the first failing "
+        "project would cancel the rest and hide their results"
+    )
+
+
+def test_consolidated_workflow_skips_cleanly_when_nothing_changed():
+    """An empty matrix must be guarded, not handed to fromJson."""
+    workflow = load_yaml(ANSIBLE_WORKFLOW)
+    condition = workflow["jobs"]["lint"].get("if", "")
+    assert "projects != '[]'" in condition, (
+        "ansible-projects.yml's lint job has no guard for an empty project "
+        "list - a push touching no project should skip it, not run an empty "
+        "matrix"
+    )
 
 
 def test_committed_inventory_is_absent(project):
