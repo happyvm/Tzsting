@@ -1,0 +1,43 @@
+---
+- name: Gather service facts from the target host
+  become: "{{ centreon_nrpe_become | bool }}"
+  delegate_to: centreon_nrpe_target
+  ansible.builtin.service_facts:
+  register: centreon_nrpe_service_facts
+  when: centreon_nrpe_operation != 'audit'
+
+- name: Confirm the NRPE service is active
+  ansible.builtin.assert:
+    that:
+      - centreon_nrpe_service_name + '.service' in centreon_nrpe_service_facts.ansible_facts.services
+      - centreon_nrpe_service_facts.ansible_facts.services[centreon_nrpe_service_name + '.service']['state'] == 'running'
+    fail_msg: "{{ centreon_nrpe_service_name }} is not running after configuration."
+  when: centreon_nrpe_operation != 'audit'
+
+- name: Add each declared poller to the in-memory inventory
+  ansible.builtin.add_host:
+    name: "centreon_nrpe_poller_{{ item }}"
+    groups: centreon_nrpe_pollers
+    ansible_host: "{{ item }}"
+    ansible_connection: ssh
+    ansible_user: "{{ centreon_nrpe_poller_ssh_username }}"
+    ansible_password: "{{ centreon_nrpe_poller_ssh_password | default(omit, true) }}"
+    ansible_ssh_private_key_file: "{{ centreon_nrpe_poller_ssh_private_key_file | default(omit, true) }}"
+    ansible_python_interpreter: "{{ centreon_nrpe_python_interpreter }}"
+    centreon_nrpe_verify_target_host: "{{ centreon_nrpe_ssh_hostname }}"
+  loop: "{{ centreon_pollers }}"
+  no_log: true
+  when: centreon_nrpe_verify_from_poller | bool and centreon_nrpe_operation != 'audit'
+
+- name: Test check_nrpe connectivity from each poller
+  ansible.builtin.command:
+    argv:
+      - "{{ centreon_nrpe_poller_check_nrpe_path }}"
+      - "-H"
+      - "{{ hostvars[item]['centreon_nrpe_verify_target_host'] }}"
+      - "-p"
+      - "{{ centreon_nrpe_port | string }}"
+  loop: "{{ groups['centreon_nrpe_pollers'] | default([]) }}"
+  delegate_to: "{{ item }}"
+  changed_when: false
+  when: centreon_nrpe_verify_from_poller | bool and centreon_nrpe_operation != 'audit'

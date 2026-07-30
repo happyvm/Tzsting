@@ -276,21 +276,20 @@ volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
-### `ansible-centreon-downtime-create`
+### `ansible-centreon-nrpe-agent-deploy`
 
-Création d’une downtime runtime **Centreon** (hôte ou service identifié
-par son ID numérique), via l’API REST directe (`ansible.builtin.uri`,
-aucune collection maintenue n’existe pour Centreon). Le flux
-d’authentification est corroboré par `docs.centreon.com` ; l’endpoint de
-création de downtime lui-même est volontairement laissé vide/obligatoire
-- à confirmer par l’exploitant sur la documentation API vivante de son
-propre serveur (voir le README pour le détail des niveaux de confiance).
-Durée explicite ou calculée depuis début/fin, avec un plafond anti-durée-
-illimitée. Ne couvre ni la résolution nom → ID, ni les downtimes de
-groupe, ni la suppression de downtime - voir
-[`CENTREON-ROADMAP.md`](CENTREON-ROADMAP.md).
+Installation et configuration d’un agent compatible **NRPE** sur un hôte
+Linux (Debian ou RHEL/dérivés) pour la supervision Centreon, via SSH : le
+paquet est téléchargé et vérifié par checksum depuis un dépôt interne
+approuvé (jamais un dépôt public/EPEL - le nom exact du paquet, NRPE
+classique/NRPE4/bundle Centreon, varie selon l’organisation et n’est pas
+deviné), `nrpe.cfg` n’autorise que des pollers et des commandes
+explicitement déclarés, et le pare-feu (`firewalld`/`ufw`) est scopé à
+ces mêmes pollers. Windows (NSClient++ en mode NRPE) n’est pas couvert
+par cette première version - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
 
-Documentation : [`ansible-centreon-downtime-create/README.md`](ansible-centreon-downtime-create/README.md).
+Documentation : [`ansible-centreon-nrpe-agent-deploy/README.md`](ansible-centreon-nrpe-agent-deploy/README.md).
 
 ## Matrice fonctionnelle
 
@@ -321,7 +320,7 @@ Documentation : [`ansible-centreon-downtime-create/README.md`](ansible-centreon-
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
-| `ansible-centreon-downtime-create` | — | — | — | API | Runtime (downtime) |
+| `ansible-centreon-nrpe-agent-deploy` | — | — | — | SSH | Installation/configuration |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

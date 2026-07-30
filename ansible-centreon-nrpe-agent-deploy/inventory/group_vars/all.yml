@@ -1,0 +1,80 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# SSH connection to the Linux host that will run the NRPE agent. Provide
+# either centreon_nrpe_ssh_password or centreon_nrpe_ssh_private_key_file.
+centreon_nrpe_target_hostname: srv-example.example.net
+centreon_nrpe_ssh_hostname: "{{ centreon_nrpe_target_hostname }}"
+centreon_nrpe_ssh_username: "{{ vault_centreon_nrpe_ssh_username }}"
+centreon_nrpe_ssh_password: "{{ vault_centreon_nrpe_ssh_password | default('') }}"
+centreon_nrpe_ssh_private_key_file: "{{ vault_centreon_nrpe_ssh_private_key_file | default('') }}"
+centreon_nrpe_ssh_port: 22
+centreon_nrpe_become: true
+centreon_nrpe_become_password: "{{ vault_centreon_nrpe_become_password | default('') }}"
+centreon_nrpe_python_interpreter: auto
+
+# install | configure | audit - see README. "install" also configures and
+# starts the service; "configure" skips the package step (use it once the
+# agent is already installed and you're only changing nrpe.cfg/firewall);
+# "audit" forces Ansible's native check_mode on every mutating task.
+centreon_nrpe_operation: audit
+
+# Windows (NSClient++ in NRPE mode) is explicitly out of scope for this
+# first version - see README and ENDPOINT-MANAGEMENT-ROADMAP.md.
+centreon_nrpe_os_family: linux
+
+# ENDPOINT-MANAGEMENT-ROADMAP.md's own guard-rails require packages to
+# come only from an approved internal repository, with a checksum - and
+# separately, the exact package (classic NRPE from the OS/EPEL repos vs
+# the actively maintained NRPE4 fork the roadmap asks for, vs a
+# Centreon-specific plugin bundle) varies by organization. Neither is
+# guessed here: stage a .deb (Debian family) or .rpm (RHEL family) on
+# your own approved internal repository/artifact store and point these
+# at it. Both are mandatory when centreon_nrpe_operation is "install".
+centreon_nrpe_package_url: ""
+centreon_nrpe_package_checksum_sha256: ""
+
+centreon_nrpe_service_name_debian: nagios-nrpe-server
+centreon_nrpe_service_name_redhat: nrpe
+centreon_nrpe_config_path: /etc/nagios/nrpe.cfg
+
+centreon_nrpe_port: 5666
+centreon_nrpe_bind_address: "0.0.0.0"
+# Poller IPs/hostnames allowed to query this agent. Mandatory - feeds both
+# nrpe.cfg's allowed_hosts and the firewall rule sources below.
+centreon_pollers: []
+
+centreon_nrpe_command_timeout: 60
+centreon_nrpe_connection_timeout: 300
+# Never let a poller pass arbitrary arguments to a plugin - NRPE's own
+# long-standing security guidance. Only override this if you understand
+# and accept the risk.
+centreon_nrpe_dont_blame_nrpe: false
+
+# Allowlisted commands only - no arbitrary/unvalidated plugin invocation.
+# Each entry: {name: check_something, command: "/path/to/plugin -w X -c Y"}
+centreon_nrpe_commands: []
+
+# Verbatim lines appended to nrpe.cfg as-is - use this for anything
+# version-specific this project does not hardcode (e.g. NRPE4's TLS/
+# cipher directives, which vary by build and are not corroborated with
+# enough confidence to hardcode here - see README).
+centreon_nrpe_extra_config_lines: []
+
+centreon_nrpe_configure_firewall: true
+
+# Informational only - published in centreon_nrpe_agent_deploy_summary
+# for ansible-centreon-host-add to read, without this project creating
+# the Centreon host object itself. nsclient_nrpe (Windows) isn't a valid
+# value here since Windows isn't implemented yet.
+centreon_agent_backend: nrpe4
+
+# Optional: also test connectivity from a Centreon poller via check_nrpe
+# over SSH, in addition to the local service-status check. Off by
+# default since it requires separate SSH access to the poller(s) and the
+# check_nrpe plugin path there varies - see README.
+centreon_nrpe_verify_from_poller: false
+centreon_nrpe_poller_ssh_username: "{{ vault_centreon_nrpe_poller_ssh_username | default('') }}"
+centreon_nrpe_poller_ssh_password: "{{ vault_centreon_nrpe_poller_ssh_password | default('') }}"
+centreon_nrpe_poller_ssh_private_key_file: "{{ vault_centreon_nrpe_poller_ssh_private_key_file | default('') }}"
+centreon_nrpe_poller_check_nrpe_path: /usr/lib/nagios/plugins/check_nrpe
