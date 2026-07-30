@@ -308,6 +308,18 @@ dans une même session/PSDrive - voir
 
 Documentation : [`ansible-sccm-device-collection-add/README.md`](ansible-sccm-device-collection-add/README.md).
 
+### `ansible-sccm-device-collection-remove`
+
+Pendant de `ansible-sccm-device-collection-add` : retrait d’une machine
+d’une device collection SCCM (suppression de la direct membership rule
+uniquement), avec vérification immédiate après suppression et
+confirmation obligatoire `confirm_remove_from_collection=true`. Publie
+trois indicateurs distincts (query/include/exclude rule present) plutôt
+que de bloquer, puisque ce projet ne peut garantir que la machine quitte
+réellement la collection si un autre mécanisme de règle s’applique.
+
+Documentation : [`ansible-sccm-device-collection-remove/README.md`](ansible-sccm-device-collection-remove/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -339,6 +351,7 @@ Documentation : [`ansible-sccm-device-collection-add/README.md`](ansible-sccm-de
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
 | `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
 | `ansible-sccm-device-collection-add` | — | — | — | WinRM | Ajout à une collection |
+| `ansible-sccm-device-collection-remove` | — | — | — | WinRM | Retrait d'une collection |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de
