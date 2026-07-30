@@ -271,6 +271,22 @@ volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
+### `ansible-centreon-downtime-create`
+
+Création d’une downtime runtime **Centreon** (hôte ou service identifié
+par son ID numérique), via l’API REST directe (`ansible.builtin.uri`,
+aucune collection maintenue n’existe pour Centreon). Le flux
+d’authentification est corroboré par `docs.centreon.com` ; l’endpoint de
+création de downtime lui-même est volontairement laissé vide/obligatoire
+- à confirmer par l’exploitant sur la documentation API vivante de son
+propre serveur (voir le README pour le détail des niveaux de confiance).
+Durée explicite ou calculée depuis début/fin, avec un plafond anti-durée-
+illimitée. Ne couvre ni la résolution nom → ID, ni les downtimes de
+groupe, ni la suppression de downtime - voir
+[`CENTREON-ROADMAP.md`](CENTREON-ROADMAP.md).
+
+Documentation : [`ansible-centreon-downtime-create/README.md`](ansible-centreon-downtime-create/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -300,6 +316,7 @@ Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/READ
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
+| `ansible-centreon-downtime-create` | — | — | — | API | Runtime (downtime) |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de
