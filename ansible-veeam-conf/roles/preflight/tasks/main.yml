@@ -9,8 +9,21 @@
       - veeam_conf_api_version | length > 0
       - not veeam_conf_email_notifications_enabled | bool or veeam_conf_email_notifications_endpoint is match('^/[^ ]+$')
       - not veeam_conf_snmp_enabled | bool or veeam_conf_snmp_endpoint is match('^/[^ ]+$')
+      - veeam_conf_winrm_hostname | length > 0
+      - veeam_conf_winrm_username | length > 0
+      - veeam_conf_winrm_password | length > 0
+      - veeam_conf_ntp_servers | length > 0
+      - veeam_conf_timezone | length > 0
+      - veeam_conf_local_admin.name is match('^[A-Za-z0-9._-]+$')
+      - veeam_conf_local_admin.password | length >= 8
+      - not veeam_conf_ad_enabled | bool or veeam_conf_ad.domain | length > 0
+      - not veeam_conf_ad_enabled | bool or veeam_conf_ad.username | length > 0
+      - not veeam_conf_ad_enabled | bool or veeam_conf_ad.password | length > 0
     fail_msg: >-
       Credentials, the exact x-api-version header value for the target
       VBR release, and (when a notification channel is enabled)
       release-specific REST paths are all mandatory - copy them from the
-      API guide/Swagger page for the target server. See README.
+      API guide/Swagger page for the target server; a WinRM connection to
+      the Windows host, NTP servers, timezone and a valid local automation
+      account are also required; enabling AD also requires a domain,
+      username and password. See README.

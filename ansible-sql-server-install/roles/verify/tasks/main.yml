@@ -1,0 +1,28 @@
+---
+- name: Check the SQL Server service is running
+  delegate_to: sql_server_target
+  ansible.windows.win_service_info:
+    name: "{{ 'MSSQLSERVER' if sql_server_instance_name == 'MSSQLSERVER' else 'MSSQL$' + sql_server_instance_name }}"
+  register: sql_server_service_info
+
+- name: Fail if the SQL Server service isn't running
+  ansible.builtin.assert:
+    that:
+      - sql_server_service_info.services | length > 0
+      - sql_server_service_info.services[0].state == 'started'
+    fail_msg: >-
+      The SQL Server service for instance {{ sql_server_instance_name }}
+      is not running after Setup - installation did not complete
+      successfully.
+
+- name: Query the installed engine version
+  delegate_to: sql_server_target
+  ansible.windows.win_shell: |
+    $instance = if ('{{ sql_server_instance_name }}' -eq 'MSSQLSERVER') { '.' } else { ".\{{ sql_server_instance_name }}" }
+    sqlcmd -S $instance -h -1 -W -Q "SET NOCOUNT ON; SELECT @@VERSION"
+  register: sql_server_version_result
+  changed_when: false
+
+- name: Report the verified engine version
+  ansible.builtin.debug:
+    msg: "{{ sql_server_version_result.stdout | trim }}"

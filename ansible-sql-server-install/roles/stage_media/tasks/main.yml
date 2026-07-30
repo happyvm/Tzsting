@@ -1,0 +1,37 @@
+---
+# The installer stays on the internal media share - no ISO mount, no local
+# copy - only its checksum is verified before Setup runs directly against
+# it, so there's no extra staged file to clean up afterward.
+- name: Compute the installer checksum
+  delegate_to: sql_server_target
+  ansible.windows.win_shell: |
+    (Get-FileHash -LiteralPath '{{ sql_server_media_path }}' -Algorithm SHA256).Hash
+  register: sql_server_media_hash_result
+  changed_when: false
+
+- name: Verify the installer checksum matches the approved value
+  ansible.builtin.assert:
+    that:
+      - (sql_server_media_hash_result.stdout | trim | lower) == (sql_server_media_checksum | lower)
+    fail_msg: >-
+      The installer at {{ sql_server_media_path }} does not match
+      sql_server_media_checksum - refusing to run an unapproved or
+      tampered installer.
+
+- name: Compute the CU package checksum
+  when: sql_server_update_enabled | bool
+  delegate_to: sql_server_target
+  ansible.windows.win_shell: |
+    (Get-FileHash -LiteralPath '{{ sql_server_update_source }}' -Algorithm SHA256).Hash
+  register: sql_server_update_hash_result
+  changed_when: false
+
+- name: Verify the CU package checksum matches the approved value
+  when: sql_server_update_enabled | bool
+  ansible.builtin.assert:
+    that:
+      - (sql_server_update_hash_result.stdout | trim | lower) == (sql_server_update_checksum | lower)
+    fail_msg: >-
+      The update package at {{ sql_server_update_source }} does not match
+      sql_server_update_checksum - refusing to apply an unapproved or
+      tampered CU.

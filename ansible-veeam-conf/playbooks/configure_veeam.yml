@@ -1,5 +1,7 @@
 ---
-# Configures Veeam Backup & Replication (VBR) server-level notification
+# Configures the Windows host running Veeam Backup & Replication (VBR) -
+# AD domain join (optional), local automation account, NTP client and
+# timezone, directly over WinRM - and VBR server-level notification
 # settings (global email, global SNMP) over its real REST API. This does
 # NOT create/manage backup jobs, policies, repositories, or perform
 # restores - see README for exactly what this project covers and what it
@@ -8,7 +10,7 @@
 # Usage:
 #   ansible-playbook playbooks/configure_veeam.yml --vault-password-file .vault_pass
 
-- name: Configure Veeam Backup & Replication server notification settings
+- name: Configure the Veeam Backup & Replication server's host and notification settings
   hosts: localhost
   connection: local
   gather_facts: false
@@ -17,6 +19,35 @@
     - name: Run request preflight
       ansible.builtin.include_role:
         name: preflight
+
+    - name: Add the VBR server to the in-memory inventory
+      ansible.builtin.add_host:
+        name: veeam_conf_target
+        ansible_host: "{{ veeam_conf_winrm_hostname }}"
+        ansible_connection: winrm
+        ansible_user: "{{ veeam_conf_winrm_username }}"
+        ansible_password: "{{ veeam_conf_winrm_password }}"
+        ansible_port: "{{ veeam_conf_winrm_port }}"
+        ansible_winrm_transport: "{{ veeam_conf_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if veeam_conf_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+
+    - name: Configure Active Directory domain join
+      ansible.builtin.include_role:
+        name: ad
+      when: veeam_conf_ad_enabled | bool
+
+    - name: Maintain the local automation account
+      ansible.builtin.include_role:
+        name: local_admin
+
+    - name: Configure NTP
+      ansible.builtin.include_role:
+        name: ntp
+
+    - name: Configure timezone
+      ansible.builtin.include_role:
+        name: timezone
 
     - name: Authenticate to the VBR REST API
       ansible.builtin.include_role:
@@ -37,6 +68,11 @@
         data:
           veeam_conf_summary:
             server: "{{ veeam_conf_hostname }}"
+            ad_joined: "{{ veeam_conf_ad_enabled | bool }}"
+            ad_domain: "{{ veeam_conf_ad.domain if veeam_conf_ad_enabled | bool else '' }}"
+            local_admin: "{{ veeam_conf_local_admin.name }}"
+            ntp_servers: "{{ veeam_conf_ntp_servers }}"
+            timezone: "{{ veeam_conf_timezone }}"
             email_notifications_configured: "{{ veeam_conf_email_notifications_enabled | bool }}"
             snmp_configured: "{{ veeam_conf_snmp_enabled | bool }}"
         aggregate: false
