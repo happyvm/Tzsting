@@ -8,6 +8,23 @@ Il décrit des projets Ansible autonomes pour Configuration Manager (SCCM),
 WSUS, Azure Arc, Centreon/NRPE et Flexera. Chaque brique doit pouvoir être
 récupérée et exécutée indépendamment des autres projets du dépôt.
 
+## Statut de réalisation
+
+🟡 **`ansible-azure-arc-agent-deploy`** (Lot 1, étape 3) implémenté comme
+une enveloppe fine autour du rôle officiel
+`azure.azcollection.azure_arc` (documenté par Microsoft pour cet usage
+précis), plutôt qu'une réimplémentation d'`azcmagent` - installation,
+idempotence et refus de re-enregistrer une machine déjà connectée à un
+autre tenant/cloud/resource group/location sont hérités gratuitement du
+rôle officiel. Authentification par service principal uniquement (pas
+de CLI interactif ni d'identité managée, pour rester cohérent avec le
+modèle Vault/Credential AAP du dépôt). `azcmagent check` (validation
+réseau préalable) n'est pas exposé par le rôle officiel et n'est donc pas
+automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
+uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
+respectivement partiel et à faire ; tout le catalogue SCCM/WSUS (Lots
+2-3) reste à faire.
+
 ## Principes communs
 
 - aucune écriture directe dans les bases SCCM, SUSDB, Centreon ou Flexera ;
@@ -203,6 +220,16 @@ dans Azure Arc-enabled Servers :
 - aucune installation d'extension Azure implicite.
 
 Artefact AAP : `azure_arc_agent_deploy_summary`.
+
+🟡 Implémenté dans [`ansible-azure-arc-agent-deploy`](../ansible-azure-arc-agent-deploy) :
+enveloppe fine du rôle officiel `azure.azcollection.azure_arc`
+(installation, idempotence, refus de re-enregistrement croisé hérités du
+rôle), authentification par service principal uniquement, mode `audit`
+(avec ses limites documentées dans le README - le rôle officiel exécute
+toujours pour de vrai sa requête de jeton Azure AD et son `azcmagent
+show`, seule la commande `connect` elle-même est simulée). Non couvert :
+`azcmagent check`, CLI interactif/identité managée, déconnexion/
+désinstallation.
 
 ---
 

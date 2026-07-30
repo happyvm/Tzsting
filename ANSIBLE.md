@@ -271,6 +271,23 @@ volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).
 
+### `ansible-azure-arc-agent-deploy`
+
+Enregistrement d’un serveur Windows ou Linux dans **Azure Arc-enabled
+Servers**, via SSH ou WinRM. Enveloppe fine du rôle officiel
+`azure.azcollection.azure_arc` documenté par Microsoft pour cet usage
+(installation de l’agent, idempotence et refus de re-enregistrement
+croisé d’un tenant/cloud/resource group/location différent, tous hérités
+du rôle officiel) plutôt qu’une réimplémentation d’`azcmagent`.
+Authentification par service principal uniquement. Le mode `audit` a des
+limites documentées dans le README : le rôle officiel exécute toujours
+pour de vrai sa requête de jeton Azure AD et son `azcmagent show`
+(lecture seule), seule la commande mutante `azcmagent connect` est
+réellement simulée - voir
+[`ENDPOINT-MANAGEMENT-ROADMAP.md`](ENDPOINT-MANAGEMENT-ROADMAP.md).
+
+Documentation : [`ansible-azure-arc-agent-deploy/README.md`](ansible-azure-arc-agent-deploy/README.md).
+
 ## Matrice fonctionnelle
 
 | Projet | VMware | Hyper-V natif | SCVMM | Accès invité | Mutation destructive |
@@ -300,6 +317,7 @@ Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/READ
 | `vmware-vcenter-removevlan` | vCenter | — | — | API | Oui |
 | `ansible-veeam-conf` | — | — | — | API | Configuration |
 | `ansible-netbackup-conf` | — | — | — | API | Configuration |
+| `ansible-azure-arc-agent-deploy` | — | — | — | SSH/WinRM | Installation/enregistrement |
 
 Le support précis dépend des versions de vSphere, Windows/Hyper-V, SCVMM,
 Ansible et des collections installées. Les fichiers `requirements.yml` de

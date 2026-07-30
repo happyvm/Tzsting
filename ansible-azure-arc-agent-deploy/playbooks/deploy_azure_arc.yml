@@ -1,0 +1,120 @@
+# Onboards a Windows or Linux server to Azure Arc-enabled Servers.
+#
+# Wraps the official azure.azcollection.azure_arc role (documented by
+# Microsoft at
+# https://learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-ansible-playbooks)
+# rather than reimplementing azcmagent install/connect logic - that role
+# already installs the agent, is idempotent (skips already-connected
+# machines), and refuses to silently re-register a machine that's already
+# connected with a different cloud/resource group/location/tenant/
+# subscription (see its tasks/main.yml) - exactly the "refuse to
+# re-register to a different tenant without an explicit transfer" guard
+# rail ENDPOINT-MANAGEMENT-ROADMAP.md asks for.
+#
+# Unlike most projects in this repo, this uses a genuine second play
+# targeting the dynamically added host directly, rather than a single
+# hosts: localhost play with delegate_to on every task: the official role
+# branches internally on gathered facts (ansible_system/ansible_os_family)
+# rather than an explicit input variable, and delegate_to does NOT
+# re-scope fact-based `when:` conditions to the delegated host (verified
+# empirically) - it would silently evaluate the CONTROL NODE's OS instead
+# and break the role's Linux/Windows dispatch. A real second play with
+# hosts: <target> avoids that entirely.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy_azure_arc.yml --vault-password-file .vault_pass
+
+- name: Prepare the Azure Arc onboarding
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Add the Linux target host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: azure_arc_target
+        ansible_host: "{{ azure_arc_deploy_target_hostname }}"
+        ansible_connection: ssh
+        ansible_user: "{{ azure_arc_deploy_ssh_username }}"
+        ansible_password: "{{ azure_arc_deploy_ssh_password | default(omit, true) }}"
+        ansible_ssh_private_key_file: "{{ azure_arc_deploy_ssh_private_key_file | default(omit, true) }}"
+        ansible_port: "{{ azure_arc_deploy_ssh_port }}"
+        ansible_become: "{{ azure_arc_deploy_become | bool }}"
+        ansible_become_password: "{{ azure_arc_deploy_become_password | default(omit, true) }}"
+        ansible_python_interpreter: "{{ azure_arc_deploy_python_interpreter }}"
+      no_log: true
+      when: azure_arc_deploy_target_os_family == 'linux'
+
+    - name: Add the Windows target host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: azure_arc_target
+        ansible_host: "{{ azure_arc_deploy_target_hostname }}"
+        ansible_connection: winrm
+        ansible_user: "{{ azure_arc_deploy_winrm_username }}"
+        ansible_password: "{{ azure_arc_deploy_winrm_password }}"
+        ansible_port: "{{ azure_arc_deploy_winrm_port }}"
+        ansible_winrm_transport: "{{ azure_arc_deploy_winrm_transport }}"
+        ansible_winrm_server_cert_validation: "{{ 'validate' if azure_arc_deploy_winrm_validate_certs | bool else 'ignore' }}"
+      no_log: true
+      when: azure_arc_deploy_target_os_family == 'windows'
+
+- name: Onboard the target host to Azure Arc
+  hosts: azure_arc_target
+  gather_facts: true
+
+  tasks:
+    - name: Run the official Azure Arc onboarding role (no proxy)
+      check_mode: "{{ hostvars['localhost']['azure_arc_deploy_operation'] == 'audit' }}"
+      when: hostvars['localhost']['azure_arc_proxy_hostname'] is not defined
+      block:
+        - name: Include azure.azcollection.azure_arc
+          ansible.builtin.include_role:
+            name: azure.azcollection.azure_arc
+          vars:
+            azure_arc_resource_group: "{{ hostvars['localhost']['azure_arc_resource_group'] }}"
+            azure_arc_subscription_id: "{{ hostvars['localhost']['azure_arc_subscription_id'] }}"
+            azure_arc_tenant_id: "{{ hostvars['localhost']['azure_arc_tenant_id'] }}"
+            azure_arc_location: "{{ hostvars['localhost']['azure_arc_location'] }}"
+            azure_arc_cloud: "{{ hostvars['localhost']['azure_arc_cloud'] }}"
+            azure_arc_tags: "{{ hostvars['localhost']['azure_arc_tags'] }}"
+            azure_arc_application_id: "{{ hostvars['localhost']['azure_arc_application_id'] }}"
+            azure_arc_client_secret: "{{ hostvars['localhost']['azure_arc_client_secret'] }}"
+
+    - name: Run the official Azure Arc onboarding role (with proxy)
+      check_mode: "{{ hostvars['localhost']['azure_arc_deploy_operation'] == 'audit' }}"
+      when: hostvars['localhost']['azure_arc_proxy_hostname'] is defined
+      block:
+        - name: Include azure.azcollection.azure_arc
+          ansible.builtin.include_role:
+            name: azure.azcollection.azure_arc
+          vars:
+            azure_arc_resource_group: "{{ hostvars['localhost']['azure_arc_resource_group'] }}"
+            azure_arc_subscription_id: "{{ hostvars['localhost']['azure_arc_subscription_id'] }}"
+            azure_arc_tenant_id: "{{ hostvars['localhost']['azure_arc_tenant_id'] }}"
+            azure_arc_location: "{{ hostvars['localhost']['azure_arc_location'] }}"
+            azure_arc_cloud: "{{ hostvars['localhost']['azure_arc_cloud'] }}"
+            azure_arc_tags: "{{ hostvars['localhost']['azure_arc_tags'] }}"
+            azure_arc_application_id: "{{ hostvars['localhost']['azure_arc_application_id'] }}"
+            azure_arc_client_secret: "{{ hostvars['localhost']['azure_arc_client_secret'] }}"
+            proxy:
+              hostname: "{{ hostvars['localhost']['azure_arc_proxy_hostname'] }}"
+              port: "{{ hostvars['localhost']['azure_arc_proxy_port'] }}"
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          azure_arc_agent_deploy_summary:
+            target: "{{ hostvars['localhost']['azure_arc_deploy_target_hostname'] }}"
+            operation: "{{ hostvars['localhost']['azure_arc_deploy_operation'] }}"
+            os_family: "{{ ansible_facts['os_family'] }}"
+            resource_group: "{{ hostvars['localhost']['azure_arc_resource_group'] }}"
+            subscription_id: "{{ hostvars['localhost']['azure_arc_subscription_id'] }}"
+            tenant_id: "{{ hostvars['localhost']['azure_arc_tenant_id'] }}"
+            location: "{{ hostvars['localhost']['azure_arc_location'] }}"
+            cloud: "{{ hostvars['localhost']['azure_arc_cloud'] }}"
+            resource_id: "{{ azure_arc_resource_id | default('') }}"
+        aggregate: false

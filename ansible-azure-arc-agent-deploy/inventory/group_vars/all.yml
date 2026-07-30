@@ -1,0 +1,52 @@
+---
+# Secrets must be provided through Ansible Vault or an AAP credential.
+
+# --- Connection to the target host that will be Azure Arc-enabled -------
+azure_arc_deploy_operation: audit  # deploy | audit - see README
+azure_arc_deploy_target_os_family: linux  # linux | windows
+azure_arc_deploy_target_hostname: srv-example.example.net
+azure_arc_deploy_python_interpreter: auto
+
+# Linux (SSH) - provide either the password or the private key file.
+azure_arc_deploy_ssh_username: "{{ vault_azure_arc_deploy_ssh_username | default('') }}"
+azure_arc_deploy_ssh_password: "{{ vault_azure_arc_deploy_ssh_password | default('') }}"
+azure_arc_deploy_ssh_private_key_file: "{{ vault_azure_arc_deploy_ssh_private_key_file | default('') }}"
+azure_arc_deploy_ssh_port: 22
+azure_arc_deploy_become: true
+azure_arc_deploy_become_password: "{{ vault_azure_arc_deploy_become_password | default('') }}"
+
+# Windows (WinRM)
+azure_arc_deploy_winrm_username: "{{ vault_azure_arc_deploy_winrm_username | default('') }}"
+azure_arc_deploy_winrm_password: "{{ vault_azure_arc_deploy_winrm_password | default('') }}"
+azure_arc_deploy_winrm_port: 5986
+azure_arc_deploy_winrm_transport: ntlm
+azure_arc_deploy_winrm_validate_certs: true
+
+# --- Passed straight through to the official azure.azcollection.azure_arc
+# role - variable names match its own documentation exactly, see
+# https://learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-ansible-playbooks
+# and the role's own README/argument_specs shipped in the collection.
+azure_arc_resource_group: ""
+azure_arc_subscription_id: ""
+azure_arc_tenant_id: ""
+# The official role can auto-detect this from the resource group when
+# left unset, but this project always requires it explicitly instead -
+# simpler, and avoids an extra Azure lookup call. See README.
+azure_arc_location: ""
+azure_arc_cloud: AzureCloud  # AzureCloud | AzureUSGovernment | AzureChinaCloud
+azure_arc_tags:
+  ArcSQLServerExtensionDeployment: "Disabled"
+
+# Service principal authentication - the option this project supports,
+# matching ENDPOINT-MANAGEMENT-ROADMAP.md's stated preference
+# ("authentification par service principal...fourni via Credential AAP")
+# and this repo's Vault/AAP-credential convention. The official role also
+# supports interactive Azure CLI login, Azure CLI session reuse and
+# managed identity (auth_source: msi) - not modelled here since none of
+# them fit a Vault-supplied-secret flow as directly; see README.
+azure_arc_application_id: "{{ vault_azure_arc_application_id | default('') }}"
+azure_arc_client_secret: "{{ vault_azure_arc_client_secret | default('') }}"
+
+# Optional proxy - only set when the target needs one to reach Azure.
+# azure_arc_proxy_hostname: proxy.example.local
+# azure_arc_proxy_port: 8080

@@ -1,0 +1,14 @@
+---
+profile: basic
+
+skip_list:
+  # This project deliberately uses the official azure.azcollection.azure_arc
+  # role's own variable names verbatim (azure_arc_resource_group,
+  # azure_arc_subscription_id, etc. - see
+  # https://learn.microsoft.com/en-us/azure/azure-arc/servers/onboard-ansible-playbooks)
+  # rather than reprefixing them, so operators can cross-reference the
+  # official documentation directly.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml
