@@ -22,8 +22,23 @@ modèle Vault/Credential AAP du dépôt). `azcmagent check` (validation
 réseau préalable) n'est pas exposé par le rôle officiel et n'est donc pas
 automatisé. `ansible-centreon-nrpe-agent-deploy` (étape 2, Linux
 uniquement) et `ansible-flexera-agent-deploy` (étape 1) restent
-respectivement partiel et à faire ; tout le catalogue SCCM/WSUS (Lots
-2-3) reste à faire.
+respectivement partiel et à faire.
+
+🟡 **`ansible-sccm-device-collection-add`** (Lot 2, étape 7) et
+**`ansible-sccm-device-collection-remove`** (étape 8) implémentés via le
+vrai module PowerShell `ConfigurationManager` (celui livré avec la
+console SCCM), exécuté sur un hôte Windows qui l'a déjà installé :
+résolution exacte du device et de la collection, ajout/suppression d'une
+direct membership rule idempotents, mise à jour facultative de la
+collection. Pour les deux, le mode `audit` s'appuie sur le support natif
+`-WhatIf` des cmdlets, pas sur le check mode Ansible, puisque chaque
+projet utilise un unique script PowerShell personnalisé (voir leurs
+README). Les avertissements sur les règles query/include/exclude sont
+publiés plutôt que bloquants, car les cmdlets utilisés pour ce contrôle
+suivent une convention de nommage cohérente avec les cmdlets confirmés
+mais n'ont pas été vérifiés individuellement. `ansible-sccm-conf` (étape
+5) et `ansible-sccm-client-deploy` (étape 6) restent à faire ; tout WSUS
+(Lot 3) reste à faire.
 
 ## Principes communs
 
@@ -115,6 +130,14 @@ Ajout idempotent d'une machine dans une device collection SCCM existante :
 
 Artefact AAP : `sccm_device_collection_add_summary`.
 
+🟡 Implémenté dans [`ansible-sccm-device-collection-add`](../ansible-sccm-device-collection-add) :
+résolution exacte du device (ResourceId ou nom exact,
+`-DisableWildcardHandling`) et de la collection, ajout d'une direct
+membership rule idempotent, avertissement non bloquant sur les règles
+query/include/exclude existantes, mise à jour facultative de la
+collection. Non couvert : installation du client, création de la
+collection.
+
 ### `ansible-sccm-device-collection-remove`
 
 Retrait contrôlé d'une machine d'une device collection SCCM :
@@ -132,6 +155,14 @@ Retrait contrôlé d'une machine d'une device collection SCCM :
 - confirmation `confirm_remove_from_collection=true`.
 
 Artefact AAP : `sccm_device_collection_remove_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-device-collection-remove`](../ansible-sccm-device-collection-remove) :
+suppression d'une direct membership rule idempotente, vérification
+immédiate après suppression, publication de trois indicateurs distincts
+(`query_rule_present`/`include_rule_present`/`exclude_rule_present`)
+plutôt qu'un blocage, confirmation `confirm_remove_from_collection=true`
+obligatoire. Non couvert : suppression de l'objet device, désinstallation
+du client, suppression Active Directory/CMDB.
 
 ---
 

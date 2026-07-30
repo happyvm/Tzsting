@@ -1,0 +1,41 @@
+---
+- name: Validate the console host connection settings
+  ansible.builtin.assert:
+    that:
+      - sccm_console_host | length > 0
+      - sccm_conn_winrm_username | length > 0
+      - sccm_conn_winrm_password | length > 0
+    fail_msg: "sccm_console_host, sccm_conn_winrm_username and sccm_conn_winrm_password are all mandatory."
+
+- name: Validate the Configuration Manager site settings
+  ansible.builtin.assert:
+    that:
+      - sccm_site_code | length > 0
+      - sccm_site_server | length > 0
+    fail_msg: "sccm_site_code and sccm_site_server are both mandatory."
+
+- name: Validate the operation and confirmation
+  ansible.builtin.assert:
+    that:
+      - sccm_dcr_operation in ['remove', 'audit']
+      - sccm_dcr_operation != 'remove' or confirm_remove_from_collection | bool
+    fail_msg: >-
+      sccm_dcr_operation must be remove or audit; removing requires
+      confirm_remove_from_collection=true since it can stop
+      deployments/policies from applying to the device.
+
+- name: Validate the device resolution criteria
+  ansible.builtin.assert:
+    that:
+      - (sccm_device_resource_id is not none) != (sccm_device_name | length > 0)
+    fail_msg: >-
+      Set exactly one of sccm_device_resource_id or sccm_device_name to
+      resolve the target device unambiguously.
+
+- name: Validate the collection resolution criteria
+  ansible.builtin.assert:
+    that:
+      - (sccm_collection_id | length > 0) != (sccm_collection_name | length > 0)
+    fail_msg: >-
+      Set exactly one of sccm_collection_id or sccm_collection_name to
+      resolve the target collection unambiguously.
