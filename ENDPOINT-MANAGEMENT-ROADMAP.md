@@ -138,6 +138,14 @@ Ajout idempotent d'une machine dans une device collection SCCM existante :
 
 Artefact AAP : `sccm_device_collection_add_summary`.
 
+🟡 Implémenté dans [`ansible-sccm-device-collection-add`](../ansible-sccm-device-collection-add) :
+résolution exacte du device (ResourceId ou nom exact,
+`-DisableWildcardHandling`) et de la collection, ajout d'une direct
+membership rule idempotent, avertissement non bloquant sur les règles
+query/include/exclude existantes, mise à jour facultative de la
+collection. Non couvert : installation du client, création de la
+collection.
+
 ### `ansible-sccm-device-collection-remove`
 
 Retrait contrôlé d'une machine d'une device collection SCCM :
@@ -155,6 +163,14 @@ Retrait contrôlé d'une machine d'une device collection SCCM :
 - confirmation `confirm_remove_from_collection=true`.
 
 Artefact AAP : `sccm_device_collection_remove_summary`.
+
+🟡 Implémenté dans [`ansible-sccm-device-collection-remove`](../ansible-sccm-device-collection-remove) :
+suppression d'une direct membership rule idempotente, vérification
+immédiate après suppression, publication de trois indicateurs distincts
+(`query_rule_present`/`include_rule_present`/`exclude_rule_present`)
+plutôt qu'un blocage, confirmation `confirm_remove_from_collection=true`
+obligatoire. Non couvert : suppression de l'objet device, désinstallation
+du client, suppression Active Directory/CMDB.
 
 ---
 
