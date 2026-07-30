@@ -1,0 +1,6 @@
+# Test-suite dependencies. The suite drives the real Ansible engine rather
+# than re-implementing Jinja, so ansible-core is a hard requirement.
+pytest>=8.0
+pytest-xdist>=3.5
+PyYAML>=6.0
+ansible-core>=2.16

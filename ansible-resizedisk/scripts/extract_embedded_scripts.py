@@ -72,6 +72,9 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
     out_base = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / ".extracted"
 
+    if mode not in ("all", "powershell", "bash"):
+        raise SystemExit(f"Unknown mode: {mode!r} (expected all, powershell or bash)")
+
     if mode in ("all", "powershell"):
         n = extract_powershell(out_base / "powershell")
         print(f"Extracted {n} PowerShell script(s) to {out_base / 'powershell'}")

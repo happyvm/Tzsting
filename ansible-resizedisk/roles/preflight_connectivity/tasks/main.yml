@@ -33,6 +33,19 @@
       (Windows, or Linux password auth) or guest_ssh_private_key_file
       (Linux key-based auth).
 
+- name: Assert guest_username is safe to interpolate into PowerShell
+  ansible.builtin.assert:
+    that:
+      - guest_username is regex('^[A-Za-z0-9._@\\\\-]{1,104}$')
+    fail_msg: >-
+      guest_username '{{ guest_username }}' may only contain letters,
+      digits, dot, underscore, at-sign, backslash and hyphen (1-104
+      chars, the Windows UPN/DOMAIN\user limit) - on the Hyper-V
+      PowerShell Direct path it is interpolated into a single-quoted
+      PowerShell string literal (the PSCredential username in
+      run_guest_command); a stray quote in it would otherwise be a
+      command injection vector on the Hyper-V host itself.
+
 # --- Windows -----------------------------------------------------------------
 
 - name: Register the guest as a dynamic in-memory inventory host (Windows)

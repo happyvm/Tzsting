@@ -1,6 +1,7 @@
 ---
 collections:
   - name: ansible.windows
+    version: ">=2.0.0,<4.0.0"
 # ccmsetup.exe and the SMS_Client WMI class are part of Configuration
 # Manager itself, not an Ansible collection - this project invokes them
 # via ansible.windows.win_powershell on the target Windows machine. See

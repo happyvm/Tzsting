@@ -1,0 +1,31 @@
+name: Repository tests
+
+# Cross-project test suite. Unlike the per-project *-ci.yml workflows, this
+# one has to run on any change: it checks consistency *between* projects
+# (shared layout, CI wiring, declared collections) plus the behaviour of the
+# preflight guards, so a change in one project can break it via another.
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: pytest
+        working-directory: tests
+        run: pytest -n auto
