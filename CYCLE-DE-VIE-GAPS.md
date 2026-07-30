@@ -306,18 +306,24 @@ un rôle de verrou (`create_vm_lock`, `delete_vm_lock`, `compute_lock`,
 
 ### Tests et CI
 
-- **6 workflows pour 25 projets** (les 8 projets Windows/VMware et les 2
-  projets logiciel de sauvegarde ajoutés depuis la rédaction initiale n'ont
-  pas non plus de workflow dédié). Aucune CI pour `inplace-upgrade`,
-  `purestorage-conf`, `purestorage-volhost-create`,
-  `purestorage-volhost-remove`, `synergy-conf`, `synergy-get`,
-  `synergy-vlan-add`, `synergy-vlan-remove`, `quantum-dxi-conf`,
-  `hpe-storeonce-conf`, `vmware-esxi-conf`, `vmware-vcenter-conf`,
-  `vmware-vcenter-addvlan`, `vmware-vcenter-removevlan`,
+- ~~6 workflows pour 25 projets~~ **fait** : les 20 projets qui n'avaient
+  aucun workflow dédié (`inplace-upgrade`, `purestorage-conf`,
+  `purestorage-volhost-create`, `purestorage-volhost-remove`,
+  `synergy-conf`, `synergy-get`, `synergy-vlan-add`, `synergy-vlan-remove`,
+  `quantum-dxi-conf`, `hpe-storeonce-conf`, `vmware-esxi-conf`,
+  `vmware-vcenter-conf`, `vmware-vcenter-addvlan`, `vmware-vcenter-removevlan`,
   `windows-hyperv-conf`, `windows-scvmm-conf`, `windows-scvmm-addvlan`,
-  `windows-scvmm-removevlan`, `ansible-veeam-conf`, `ansible-netbackup-conf`
-  — soit **20 projets sans lint ni syntax-check automatisés**, dont tous
-  les projets matériel et hyperviseur.
+  `windows-scvmm-removevlan`, `ansible-veeam-conf`, `ansible-netbackup-conf`)
+  ont désormais chacun leur workflow `yamllint`/`ansible-lint`/
+  `ansible-playbook --syntax-check`, sur le même modèle que les 5
+  workflows d'origine - 26 workflows au total (25 projets +
+  `powershell-quality.yml`, transverse). `ansible-inplace-upgrade` a aussi
+  été ajouté au scan PSScriptAnalyzer de `powershell-quality.yml`, qui ne
+  le couvrait pas alors que son propre script d'extraction existait déjà.
+  Deux lignes dépassant les 200 caractères de la limite `yamllint` du
+  projet (dans `preflight_platform`/`preflight_upgrade_constraints`) ont
+  été repliées en blocs YAML `>-` pliés - vérifié que la valeur Jinja
+  rendue reste strictement identique avant/après.
 - Pas de Molecule, pas de test d'idempotence, pas de test de préflight en
   `--check`, pas de simulateur (vcsim) : les scénarios listés dans
   `ANSIBLE.md` (« VM jetables ») restent entièrement manuels.
@@ -378,9 +384,9 @@ Priorisation par **risque évité × fréquence d'usage**, pas par difficulté.
 
 ### P0 — À traiter en premier
 
-1. **CI sur les 20 projets non couverts** (S). Les projets matériel et
-   hyperviseur, les plus destructeurs, n'ont aucun garde-fou automatisé
-   aujourd'hui.
+1. ~~CI sur les 20 projets non couverts~~ **fait** (S). Les 20 projets
+   matériel, hyperviseur et logiciel de sauvegarde ont désormais un
+   garde-fou automatisé (yamllint/ansible-lint/syntax-check).
 2. **Préflight « sauvegarde valide » avant `deletevm` et `inplace-upgrade`**
    (S→M, écart 4.16). Le plus grand risque résiduel du dépôt.
 3. **Verrou partagé inter-projets et valide sous AAP** (M, axe 5). Le verrou

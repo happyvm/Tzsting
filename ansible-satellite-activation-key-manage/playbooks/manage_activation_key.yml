@@ -1,0 +1,35 @@
+---
+# Creates, updates or removes a Red Hat Satellite activation key via the
+# real theforeman.foreman.activation_key module. Does not register or
+# unregister any host, does not create/promote content views, and does
+# not touch organizations/locations/lifecycle environments themselves -
+# see README and SATELLITE-ROADMAP.md for the full catalogue this is one
+# piece of.
+#
+# Usage:
+#   ansible-playbook playbooks/manage_activation_key.yml --vault-password-file .vault_pass
+
+- name: Manage a Satellite activation key
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run request preflight
+      ansible.builtin.include_role:
+        name: preflight
+
+    - name: Manage the activation key
+      ansible.builtin.include_role:
+        name: activation_key
+
+    - name: Publish AAP artifact
+      ansible.builtin.set_stats:
+        data:
+          satellite_activation_key_summary:
+            organization: "{{ satellite_organization }}"
+            name: "{{ satellite_ak_name }}"
+            operation: "{{ satellite_ak_operation }}"
+            state: "{{ satellite_ak_state }}"
+            changed: "{{ satellite_ak_result.changed | default(false) }}"
+        aggregate: false

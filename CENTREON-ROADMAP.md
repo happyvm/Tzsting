@@ -20,6 +20,20 @@ opérations de cycle de vie dont il a besoin.
 - un échec de validation interdit le redémarrage ou le rechargement du moteur ;
 - chaque projet publie un artefact `set_stats` stable pour AAP/ServiceNow.
 
+## Statut de réalisation
+
+🟡 **`ansible-centreon-downtime-create`** (étape 4) implémenté en premier,
+avant `ansible-centreon-conf`/`host-add`/`service-add` (étapes 1-3) : les
+opérations runtime downtime/acknowledgement ne dépendent d'aucune
+résolution de configuration, contrairement à la création d'hôtes/services,
+et se prêtaient donc mieux à une confirmation partielle des endpoints REST
+(voir README du projet - le flux d'authentification est corroboré par
+`docs.centreon.com`, mais l'endpoint de création de downtime lui-même est
+laissé vide/obligatoire, à confirmer par l'exploitant sur la documentation
+API vivante de son propre serveur). Résolution de nom hôte/service vers ID
+non implémentée ; détection d'une downtime déjà active non implémentée
+(voir README). Toutes les autres briques du catalogue restent à faire.
+
 ## Catalogue cible
 
 ### `ansible-centreon-conf`
@@ -175,6 +189,13 @@ Création idempotente d'une downtime runtime pour un hôte, un service ou un gro
 - vérification runtime immédiate, sans export de configuration.
 
 Artefact AAP : `centreon_downtime_create_summary`.
+
+🟡 Implémenté dans [`ansible-centreon-downtime-create`](../ansible-centreon-downtime-create) :
+cible hôte/service par ID numérique, durée explicite ou calculée depuis
+début/fin, downtime fixe/flexible, auteur/commentaire/référence de
+changement, propagation optionnelle aux services, refus des durées
+illimitées. Non couvert : résolution nom → ID, downtimes de groupe,
+détection d'une downtime équivalente déjà active.
 
 ### `ansible-centreon-downtime-remove`
 

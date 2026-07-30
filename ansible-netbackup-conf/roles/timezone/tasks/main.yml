@@ -1,0 +1,6 @@
+---
+- name: Configure the NetBackup primary server timezone
+  become: "{{ netbackup_conf_become | bool }}"
+  delegate_to: netbackup_conf_target
+  community.general.timezone:
+    name: "{{ netbackup_conf_timezone }}"

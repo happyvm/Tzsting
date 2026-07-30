@@ -253,20 +253,25 @@ et [`vmware-vcenter-removevlan/README.md`](vmware-vcenter-removevlan/README.md).
 
 ### `ansible-veeam-conf`
 
-Configuration des réglages de notification globaux (email, SNMP) d’un
-serveur **Veeam Backup & Replication**, via son API REST réelle
-(authentification OAuth 2.0 - `POST /api/oauth2/token`, pas d’auth
+Configuration déclarative du serveur Windows hébergeant **Veeam Backup &
+Replication** - jonction AD optionnelle, compte local, NTP, timezone via
+WinRM (même schéma que `windows-hyperv-conf`) - et des réglages de
+notification globaux (email, SNMP) de VBR lui-même via son API REST
+réelle (authentification OAuth 2.0 - `POST /api/oauth2/token`, pas d’auth
 basique). Ne couvre ni les jobs de sauvegarde, ni les repositories, ni les
-restaurations - voir le README pour le périmètre exact et son lien avec
-l’écart 4.15/4.16 de `CYCLE-DE-VIE-GAPS.md`.
+restaurations, ni le RBAC applicatif de VBR - voir le README pour le
+périmètre exact et son lien avec l’écart 4.15/4.16 de
+`CYCLE-DE-VIE-GAPS.md` et [`VEEAM-NETBACKUP-ROADMAP.md`](VEEAM-NETBACKUP-ROADMAP.md).
 
 Documentation : [`ansible-veeam-conf/README.md`](ansible-veeam-conf/README.md).
 
 ### `ansible-netbackup-conf`
 
-Équivalent pour un serveur primaire **Veritas NetBackup** : réglages de
-notification SMTP et SNMP via son API REST réelle (authentification par
-jeton JWT - `POST /netbackup/login`, pas d’auth basique). Même périmètre
+Équivalent pour un serveur primaire **Veritas NetBackup** sur Linux
+standard (les NetBackup Appliances sont hors périmètre) : compte local,
+NTP et timezone via SSH, plus réglages de notification SMTP et SNMP via
+son API REST réelle (authentification par jeton JWT -
+`POST /netbackup/login`, pas d’auth basique). Même périmètre
 volontairement restreint que `ansible-veeam-conf`.
 
 Documentation : [`ansible-netbackup-conf/README.md`](ansible-netbackup-conf/README.md).

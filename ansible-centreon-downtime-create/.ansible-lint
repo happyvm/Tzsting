@@ -1,0 +1,11 @@
+---
+profile: basic
+
+skip_list:
+  # centreon_downtime_token (set in roles/auth) is read by roles/downtime
+  # in the same play, so this project deliberately uses a project-wide
+  # `centreon_downtime_` prefix instead of a per-role one.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  - inventory/hosts.yml

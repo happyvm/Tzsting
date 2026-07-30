@@ -23,6 +23,19 @@ complexité derrière un simple mode d'installation.
 
 ### `ansible-sql-server-install`
 
+**Statut** : étapes 1-2 de l'ordre de réalisation implémentées (audit,
+installation d'une instance standalone Database Engine via
+`setup.exe /ConfigurationFile`, comptes de service/sysadmin, collation,
+répertoires, TempDB, port TCP statique par registre, pare-feu scopé,
+mémoire min/max lorsque fournie, checksum SHA256 obligatoire du média et
+d'un CU approuvé optionnel, mode `repair` gardé par
+`confirm_sql_server_repair`). Restent à faire : détection fine des
+instances existantes/refus de conversion silencieuse d'édition, mode
+`add_features` non encore testé, dimensionnement `auto` de TempDB/mémoire,
+validation de signature du média (le SHA256 est vérifié, pas la
+signature Authenticode), gestion de CU en slipstream avancée. Voir
+[`ansible-sql-server-install/README.md`](ansible-sql-server-install/README.md).
+
 Installation, audit, réparation ou mise à niveau contrôlée d'une instance SQL
 Server standalone sur Windows Server :
 
@@ -149,13 +162,19 @@ sysadmin. Les secrets restent des Credentials AAP.
 
 ## Ordre de réalisation recommandé
 
-1. audit des prérequis et inventaire des instances ;
-2. installation d'une instance standalone Database Engine ;
-3. profils de répertoires, TempDB, mémoire, réseau et pare-feu ;
-4. comptes de service de domaine/gMSA ;
-5. CU approuvé et validation post-install ;
-6. modes `repair` et `add_features` ;
-7. future séparation FCI, Always On et patch récurrent.
+1. audit des prérequis - **fait** (mode `audit`, pas encore d'inventaire
+   détaillé des instances existantes) ;
+2. installation d'une instance standalone Database Engine - **fait** ;
+3. profils de répertoires, TempDB, mémoire, réseau et pare-feu - **fait**
+   (TempDB/mémoire en valeurs explicites uniquement, pas de calcul `auto`) ;
+4. comptes de service de domaine/gMSA - **fait** ;
+5. CU approuvé et validation post-install - **fait** pour l'activation
+   pendant l'installation (checksum + `UPDATESOURCE`) ; le patch récurrent
+   sur une instance déjà installée reste un projet séparé (`ansible-sql-server-cu-update`) ;
+6. modes `repair` - **fait** (gardé par `confirm_sql_server_repair`) ;
+   `add_features` accepté par le code mais **non encore testé** ;
+7. future séparation FCI, Always On et patch récurrent - toujours hors
+   périmètre, inchangé.
 
 ## Validation attendue
 

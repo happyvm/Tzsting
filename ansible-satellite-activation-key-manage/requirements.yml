@@ -1,0 +1,11 @@
+---
+collections:
+  - name: theforeman.foreman
+    version: ">=3.0.0"
+
+# theforeman.foreman is the upstream open-source collection Red Hat's own
+# redhat.satellite collection is built on (redhat.satellite itself is only
+# distributed via Red Hat's private Automation Hub, not public Galaxy) -
+# theforeman.foreman.activation_key is a real, maintained module, verified
+# via `ansible-doc -j` against the installed collection before writing
+# this role.
