@@ -1,0 +1,28 @@
+Collecte de donnees d'activation Windows (WPA)
+================================================
+
+Contenu : collecte_wpa.bat
+
+Utilisation :
+  1. Ouvrir une invite de commandes en administrateur.
+  2. Lancer le script en indiquant une etiquette pour l'etat courant :
+       collecte_wpa.bat avant
+       collecte_wpa.bat apres
+
+     Sans argument, le script demandera l'etiquette de maniere interactive.
+
+  3. A chaque execution, un nouveau sous-dossier horodate est cree dans
+     C:\temp\2k3, par exemple :
+       C:\temp\2k3\POSTE01_avant_20260814_101530\
+           registre\   -> exports .reg des cles WPA / activation
+           fichiers\   -> pidgen.dll, wpa.dbl, oembios.*, etc.
+           dllcache\   -> equivalents trouves dans System32\dllcache
+           info\       -> systeminfo.txt, wmic_WindowsProductActivation.txt,
+                           reg_query_WPA.txt, fichiers_manquants.txt
+
+  4. Repeter l'operation pour chaque etat a comparer (avant/apres une
+     manipulation, une reinstallation, etc.). Chaque execution est isolee
+     dans son propre sous-dossier, rien n'est ecrase.
+
+Remarque : winver.exe s'ouvre pendant l'execution ; fermez la fenetre pour
+que le script continue.
