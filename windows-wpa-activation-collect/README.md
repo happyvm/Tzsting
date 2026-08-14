@@ -17,10 +17,11 @@ n'existe pas de module Ansible dédié.
 - `collecte_wpa.bat` — script de collecte (voir détail ci-dessous).
 - `LISEZMOI.txt` — notice d'utilisation en français, destinée à accompagner
   le script sur la machine cible.
-- `build_iso.sh` — génère `wpa_collecte.iso` (image ISO9660/Joliet
-  contenant le `.bat` et le `LISEZMOI.txt`) à partir de ces fichiers, pour
-  gravure ou montage sur la machine Windows cible. Nécessite
-  `genisoimage`.
+- `wpa_collecte.iso` — image ISO9660/Joliet prête à l'emploi, contenant le
+  `.bat` et le `LISEZMOI.txt`, pour gravure ou montage direct sur la
+  machine Windows cible.
+- `build_iso.sh` — régénère `wpa_collecte.iso` à partir de ces fichiers
+  (par exemple après modification du `.bat`). Nécessite `genisoimage`.
 
 ## Ce que collecte `collecte_wpa.bat`
 
@@ -57,12 +58,9 @@ collectes précédentes.
 
 ## Utilisation
 
-```
-build_iso.sh                      # génère wpa_collecte.iso
-```
-
-Sur la machine Windows cible, graver/monter `wpa_collecte.iso`, puis en
-administrateur :
+Graver/monter directement `wpa_collecte.iso` sur la machine Windows cible
+(régénérer l'ISO avec `build_iso.sh` uniquement si `collecte_wpa.bat` a été
+modifié), puis en administrateur :
 
 ```
 collecte_wpa.bat avant
